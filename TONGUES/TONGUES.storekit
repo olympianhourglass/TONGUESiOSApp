@@ -1,0 +1,188 @@
+{
+  "identifier" : "0A2D0F4F-5E1F-4F6D-B4D9-7F1C2B6A0E11",
+  "nonRenewingSubscriptions" : [],
+  "products" : [],
+  "settings" : {
+    "_compatibilityTimeRate" : 1,
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : []
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "22192397",
+      "localizations" : [],
+      "name" : "TONGUES Membership",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "8.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "B1EAF101",
+          "introductoryOffer" : {
+            "internalID" : "C0FFEE01",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1D",
+            "numberOfPeriods" : 1
+          },
+          "localizations" : [
+            {
+              "description" : "Just enough to get a feel for TONGUES.",
+              "displayName" : "Standard",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.tongues.subscription.beginner.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Standard Monthly",
+          "subscriptionGroupID" : "22192397",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "83.88",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "B1EAF102",
+          "introductoryOffer" : {
+            "internalID" : "C0FFEE02",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1D",
+            "numberOfPeriods" : 1
+          },
+          "localizations" : [
+            {
+              "description" : "Standard tier, billed yearly. Save vs monthly.",
+              "displayName" : "Standard (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.tongues.subscription.beginner.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Standard Yearly",
+          "subscriptionGroupID" : "22192397",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "14.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "B1EAF201",
+          "introductoryOffer" : {
+            "internalID" : "C0FFEE03",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1D",
+            "numberOfPeriods" : 1
+          },
+          "localizations" : [
+            {
+              "description" : "Steady weekly study with TONGUES Pro.",
+              "displayName" : "Pro",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.tongues.subscription.pro.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Pro Monthly",
+          "subscriptionGroupID" : "22192397",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "155.88",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "B1EAF202",
+          "introductoryOffer" : {
+            "internalID" : "C0FFEE04",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1D",
+            "numberOfPeriods" : 1
+          },
+          "localizations" : [
+            {
+              "description" : "Pro tier, billed yearly. Save vs monthly.",
+              "displayName" : "Pro (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.tongues.subscription.pro.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Pro Yearly",
+          "subscriptionGroupID" : "22192397",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "29.99",
+          "familyShareable" : false,
+          "groupNumber" : 3,
+          "internalID" : "B1EAF301",
+          "introductoryOffer" : {
+            "internalID" : "C0FFEE05",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1D",
+            "numberOfPeriods" : 1
+          },
+          "localizations" : [
+            {
+              "description" : "Generate without thinking about it.",
+              "displayName" : "Max",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.tongues.subscription.max.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Max Monthly",
+          "subscriptionGroupID" : "22192397",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        },
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "299.88",
+          "familyShareable" : false,
+          "groupNumber" : 3,
+          "internalID" : "B1EAF302",
+          "introductoryOffer" : {
+            "internalID" : "C0FFEE06",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1D",
+            "numberOfPeriods" : 1
+          },
+          "localizations" : [
+            {
+              "description" : "Max tier, billed yearly. Save vs monthly.",
+              "displayName" : "Max (Yearly)",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.tongues.subscription.max.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Max Yearly",
+          "subscriptionGroupID" : "22192397",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : []
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

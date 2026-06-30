@@ -1,0 +1,166 @@
+import SwiftUI
+
+struct ContentView: View {
+    // Bridges through the shared AppTabRouter so TONGUESApp can read
+    // the active tab when deciding the window's status-bar color
+    // scheme. Reads + writes the same source of truth.
+    @State private var tabRouter = AppTabRouter.shared
+    @State private var isShowingSplash = true
+    @State private var auth = AuthService.shared
+    @State private var router = WidgetDeepLinkRouter.shared
+    // First-run "tap Create New Deck" coach mark. Rendered here, above the
+    // TabView, so the hand floats over the tab bar rather than being
+    // clipped beneath it inside the Study tab.
+    @State private var coach = FirstRunCoachController.shared
+    private var selectedTab: Binding<AppTab> {
+        Binding(get: { tabRouter.current }, set: { tabRouter.current = $0 })
+    }
+    @AppStorage("hasCompletedOnboardingQuestions") private var hasCompletedOnboardingQuestions = false
+    // Latches true the first time the startup chime finishes so subsequent
+    // launches fall back to the silent splash + timer behavior.
+    @AppStorage("hasPlayedStartupChime") private var hasPlayedStartupChime = false
+
+    init() {
+        let appearance = UITabBarAppearance()
+        appearance.configureWithDefaultBackground()
+
+        let itemAppearance = UITabBarItemAppearance()
+        let unselected = UIColor.black.withAlphaComponent(0.3)
+        itemAppearance.normal.iconColor = unselected
+        itemAppearance.normal.titleTextAttributes = [.foregroundColor: unselected]
+        itemAppearance.selected.iconColor = .black
+        itemAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.black]
+
+        appearance.stackedLayoutAppearance = itemAppearance
+        appearance.inlineLayoutAppearance = itemAppearance
+        appearance.compactInlineLayoutAppearance = itemAppearance
+
+        UITabBar.appearance().standardAppearance = appearance
+        UITabBar.appearance().scrollEdgeAppearance = appearance
+    }
+
+    var body: some View {
+        ZStack {
+            if auth.isAuthenticated && hasCompletedOnboardingQuestions {
+                mainTabView
+                    .xpToastOverlay()
+            } else {
+                OnboardingFlow {
+                    hasCompletedOnboardingQuestions = true
+                }
+            }
+
+            if coach.isPresented {
+                firstRunCoachLayer
+            }
+
+            if isShowingSplash {
+                SplashView(
+                    isFirstLaunch: !hasPlayedStartupChime,
+                    onChimeFinished: {
+                        // Latch the flag so this only ever fires once, then
+                        // hand off to the onboarding flow by hiding the
+                        // splash. The OnboardingFlow vs. mainTabView gate
+                        // sitting below already routes correctly.
+                        hasPlayedStartupChime = true
+                        withAnimation(.easeOut(duration: 0.4)) {
+                            isShowingSplash = false
+                        }
+                    }
+                )
+                .transition(.opacity)
+            }
+        }
+        .task {
+            // First launch: the SplashView's chime callback dismisses the
+            // splash when audio + haptics finish, so we skip the legacy
+            // 1.5s timer to avoid racing it.
+            guard hasPlayedStartupChime else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            withAnimation(.easeOut(duration: 0.4)) {
+                isShowingSplash = false
+            }
+        }
+        .onChange(of: router.pendingDeckID) { _, newValue in
+            // Widget tap → flip to the Library tab so its
+            // navigation stack can push DeckDetailView.
+            if newValue != nil { tabRouter.current = .library }
+        }
+        // Status bar override is installed via runtime class-swap on
+        // the window's UIHostingController; see StatusBarStyleSwap.
+        // The didSet on AppTabRouter.current fires it on every tab
+        // change. We additionally call applyStatusBarStyle on every
+        // appearance + after the splash dismisses + after auth /
+        // onboarding lands, because the hosting controller can be
+        // (re)created at any of those moments and the swap has to
+        // run against the new instance.
+        .onChange(of: tabRouter.current) { _, _ in
+            tabRouter.applyStatusBarStyle()
+        }
+        .onChange(of: isShowingSplash) { _, _ in
+            tabRouter.applyStatusBarStyle()
+        }
+        .onChange(of: auth.isAuthenticated) { _, _ in
+            tabRouter.applyStatusBarStyle()
+        }
+        // A fresh interactive login/sign-up routes to the Study tab so the
+        // first-run coach tour can start there. Session restore on launch
+        // doesn't set this flag, so just opening the app never triggers it.
+        .onChange(of: auth.didJustAuthenticate) { _, justAuthed in
+            if justAuthed { tabRouter.current = .study }
+        }
+        .onChange(of: hasCompletedOnboardingQuestions) { _, _ in
+            tabRouter.applyStatusBarStyle()
+        }
+        .onAppear { tabRouter.applyStatusBarStyle() }
+    }
+
+    // Converts the Study tab's globally-measured button frame into this
+    // root overlay's local space (the GeometryReader ignores safe area, so
+    // local == global) and hands it to the coach mark.
+    private var firstRunCoachLayer: some View {
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
+            let f = coach.buttonFrame
+            let local = CGRect(
+                x: f.minX - origin.x,
+                y: f.minY - origin.y,
+                width: f.width,
+                height: f.height
+            )
+            CreateDeckCoachmark(
+                target: local,
+                containerSize: proxy.size,
+                onProceed: { coach.onProceed() },
+                onSkip: { coach.onSkip() }
+            )
+        }
+        .ignoresSafeArea()
+        .transition(.opacity)
+    }
+
+    private var mainTabView: some View {
+        TabView(selection: selectedTab) {
+            ExploreView()
+                .tabItem { Image("Compass") }
+                .tag(AppTab.explore)
+
+            StudyView()
+                .tabItem { Image("PlusSquare") }
+                .tag(AppTab.study)
+
+            ChatView()
+                .tabItem { Image("Chat") }
+                .tag(AppTab.chat)
+
+            LibraryView()
+                .tabItem { Image("Books") }
+                .tag(AppTab.library)
+        }
+        .tint(.black)
+    }
+}
+
+#Preview {
+    ContentView()
+}

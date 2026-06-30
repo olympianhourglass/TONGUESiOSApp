@@ -1,0 +1,32 @@
+# Xcode build artifacts
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Secrets — real API keys live here; never committed.
+# Copy Secrets.example.plist → Secrets.plist and fill it in.
+Secrets.plist
+
+# Firebase config (contains project keys). Each developer supplies their own.
+GoogleService-Info.plist
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# CocoaPods / Carthage (unused, kept for safety)
+Pods/
+Carthage/Build/

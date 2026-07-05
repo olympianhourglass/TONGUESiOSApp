@@ -186,7 +186,9 @@ struct ExploreView: View {
                         .font(.system(size: 11))
                     Text(activePlan == nil ? "GUIDED PLAN" : "TODAY")
                         .font(.custom("NeueHaasDisplay-Mediu", size: 11))
-                        .tracking(1.2)
+                        // "TODAY" reads with normal tracking; the empty-state
+                        // "GUIDED PLAN" label keeps its wider letter-spacing.
+                        .tracking(activePlan == nil ? 1.2 : 0)
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))

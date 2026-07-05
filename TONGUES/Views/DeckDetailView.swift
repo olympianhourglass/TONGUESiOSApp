@@ -20,6 +20,18 @@ struct DeckDetailView: View {
     @State private var showDeleteConfirmation = false
     @State private var showReviewQueueInfo = false
     @State private var showRetentionInfo = false
+    // Export flows: audio (settings sheet → generated .m4a) and CSV. Both
+    // hand a file URL to the share sheet via `exportedFile`.
+    @State private var showAudioExport = false
+    @State private var exportedFile: ExportedFile?
+    // "Merge into…" — copies this deck's items into another deck of the
+    // same language + dialect. `mergeConfirmation` holds the target deck's
+    // title for the post-merge confirmation alert.
+    @State private var showMergeSheet = false
+    @State private var mergeConfirmation: String?
+    // "Rename" — edit the deck's title, with an AI-suggested refresh
+    // drawn from the deck's current contents.
+    @State private var showRenameSheet = false
     // Catches `SubscriptionError.capExceeded` from the audio cap
     // gate; surfaces via the shared cap alert + paywall.
     @State private var capError: SubscriptionError?
@@ -65,6 +77,31 @@ struct DeckDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    Button {
+                        Haptics.light()
+                        showRenameSheet = true
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
+                    }
+                    Button {
+                        Haptics.light()
+                        showMergeSheet = true
+                    } label: {
+                        Label("Merge into", systemImage: "arrow.triangle.merge")
+                    }
+                    Button {
+                        Haptics.light()
+                        showAudioExport = true
+                    } label: {
+                        Label("Download as audio", systemImage: "waveform")
+                    }
+                    Button {
+                        Haptics.light()
+                        exportCSV()
+                    } label: {
+                        Label("Export as CSV", systemImage: "tablecells")
+                    }
+                    Divider()
                     Button(role: .destructive) {
                         Haptics.medium()
                         showDeleteConfirmation = true
@@ -73,8 +110,35 @@ struct DeckDetailView: View {
                     }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .foregroundStyle(.black)
                 }
             }
+        }
+        .sheet(isPresented: $showRenameSheet) {
+            DeckRenameSheet(deck: deck) { newTitle in
+                showRenameSheet = false
+                deck = deck.withTitle(newTitle)
+            }
+        }
+        .sheet(isPresented: $showMergeSheet) {
+            DeckMergeSheet(deck: deck) { targetTitle in
+                showMergeSheet = false
+                mergeConfirmation = targetTitle
+            }
+        }
+        .alert("Merged", isPresented: mergeConfirmationBinding) {
+            Button("OK") { mergeConfirmation = nil }
+        } message: {
+            Text("Added \(deck.items.count) \(deck.contentType.lowercased()) to \"\(mergeConfirmation ?? "")\".")
+        }
+        .sheet(isPresented: $showAudioExport) {
+            DeckAudioExportSheet(deck: deck) { url in
+                showAudioExport = false
+                exportedFile = ExportedFile(url: url)
+            }
+        }
+        .sheet(item: $exportedFile) { file in
+            ShareSheet(items: [file.url])
         }
         .confirmationDialog(
             "Delete this deck?",
@@ -205,6 +269,19 @@ struct DeckDetailView: View {
             async let artifactLoad: Void = loadArtifacts()
             _ = await (urgencyLoad, artifactLoad)
         }
+        // Deck detail has a light backdrop, so force the status bar to dark
+        // (black) content while it's on screen — it stays black even when
+        // arriving from a dark tab (Study/Library). Released on pop and
+        // while a full-screen study/listen cover (dark backdrop) is up so
+        // those keep white content.
+        .onAppear { updateForcedStatusBar() }
+        .onDisappear { AppTabRouter.shared.forceDarkStatusBar = false }
+        .onChange(of: isPlaying) { _, _ in updateForcedStatusBar() }
+        .onChange(of: isListening) { _, _ in updateForcedStatusBar() }
+    }
+
+    private func updateForcedStatusBar() {
+        AppTabRouter.shared.forceDarkStatusBar = !isPlaying && !isListening
     }
 
     // Mirrors the Study page's featured-card slot, but recolored to the
@@ -408,11 +485,10 @@ struct DeckDetailView: View {
     // active pattern used elsewhere (uppercase, gray inactive,
     // black active with a 2pt underline).
     private var tabBar: some View {
-        HStack(spacing: 28) {
+        HStack(spacing: 0) {
             tabButton(title: "CONTENT", tab: .content)
             tabButton(title: "ARTIFACTS", tab: .artifacts)
             tabButton(title: "STATS", tab: .stats)
-            Spacer()
         }
     }
 
@@ -425,12 +501,13 @@ struct DeckDetailView: View {
         } label: {
             VStack(spacing: 6) {
                 Text(title)
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.system(size: 15, weight: .regular))
                     .foregroundStyle(selectedTab == tab ? .black : Color.secondary)
                 Rectangle()
                     .fill(selectedTab == tab ? Color.black : Color.clear)
                     .frame(height: 2)
             }
+            .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -451,44 +528,46 @@ struct DeckDetailView: View {
     private var contentTab: some View {
         VStack(spacing: 0) {
             ForEach(deck.items) { item in
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(item.word)
-                            .font(.system(size: 20, weight: .bold))
-                            .foregroundStyle(.black)
-                        if let t = item.transliteration, !t.isEmpty {
-                            Text(t)
-                                .font(.system(size: 13))
-                                .italic()
+                SwipeToDeleteRow(onDelete: { deleteItem(item) }) {
+                    HStack(alignment: .top) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.word)
+                                .font(.system(size: 20, weight: .bold))
+                                .foregroundStyle(.black)
+                            if let t = item.transliteration, !t.isEmpty {
+                                Text(t)
+                                    .font(.system(size: 13))
+                                    .italic()
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(item.translation)
+                                .font(.system(size: 14))
                                 .foregroundStyle(.secondary)
                         }
-                        Text(item.translation)
-                            .font(.system(size: 14))
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        Haptics.light()
-                        // Phrase/sentence items skip the
-                        // intermediary word-detail sheet and
-                        // go straight to Sentence Studio.
-                        if isPhraseOrSentence(item) {
-                            studioItem = item
-                        } else {
-                            selectedItem = item
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            Haptics.light()
+                            // Phrase/sentence items skip the
+                            // intermediary word-detail sheet and
+                            // go straight to Sentence Studio.
+                            if isPhraseOrSentence(item) {
+                                studioItem = item
+                            } else {
+                                selectedItem = item
+                            }
+                        }
+
+                        SpeakWaveformButton {
+                            SpeechClient.shared.speak(
+                                item.word,
+                                language: item.language ?? deck.language,
+                                allowForvo: true
+                            )
                         }
                     }
-
-                    SpeakWaveformButton {
-                        SpeechClient.shared.speak(
-                            item.word,
-                            language: item.language ?? deck.language,
-                            allowForvo: true
-                        )
-                    }
+                    .padding(.vertical, 10)
                 }
-                .padding(.vertical, 10)
                 Divider()
             }
 
@@ -1081,11 +1160,51 @@ struct DeckDetailView: View {
         }
     }
 
+    // Writes a basic native/foreign CSV to a temp file and opens the
+    // share sheet so the user can save or send it.
+    private func exportCSV() {
+        do {
+            let url = try DeckExporter.makeCSV(for: deck)
+            exportedFile = ExportedFile(url: url)
+        } catch {
+            generationError = error.localizedDescription
+        }
+    }
+
     private var errorAlertBinding: Binding<Bool> {
         Binding(
             get: { generationError != nil },
             set: { if !$0 { generationError = nil } }
         )
+    }
+
+    private var mergeConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { mergeConfirmation != nil },
+            set: { if !$0 { mergeConfirmation = nil } }
+        )
+    }
+
+    // Swipe-to-delete for a single word. Optimistically drops it from the
+    // local list (animated) so the row disappears instantly, then removes
+    // it in Firestore. On failure the item is restored and an error shown.
+    private func deleteItem(_ item: GeneratedItem) {
+        guard let deckId = deck.id else { return }
+        let previous = deck
+        Haptics.medium()
+        withAnimation(.easeInOut(duration: 0.25)) {
+            deck = deck.withItems(deck.items.filter { $0.id != item.id })
+        }
+        Task {
+            do {
+                try await FirebaseDeckService.removeItem(inDeck: deckId, itemId: item.id)
+            } catch {
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.2)) { deck = previous }
+                    generationError = error.localizedDescription
+                }
+            }
+        }
     }
 
     // Generates 5 more items using the same recipe (prompt + interests + tones
@@ -1097,22 +1216,46 @@ struct DeckDetailView: View {
         defer { isGeneratingMore = false }
 
         do {
+            // Feed every existing foreign word in as "words to avoid" so
+            // Generate More never re-issues one the deck already has, and
+            // fold the deck's actual content into the prompt so the new
+            // items stay on the same theme as what's here — not just the
+            // original one-line prompt.
+            let existingForeign = deck.items.map { $0.word }
+            let themedPrompt = generateMorePrompt()
+
             let result = try await DeckGenerator.generate(
-                userPrompt: deck.userPrompt,
+                userPrompt: themedPrompt,
                 interests: deck.interests,
                 language: deck.language,
                 dialect: deck.dialect,
                 contentType: deck.contentType,
                 amount: "5",
                 level: deck.level,
-                tones: deck.tones
+                tones: deck.tones,
+                knownWordsToAvoid: existingForeign
             )
-            let newItems = result.items.map { $0.withLanguage(deck.language) }
+
+            // Belt-and-suspenders de-dupe: drop any returned item whose
+            // foreign word already exists in the deck (or repeats within
+            // this batch), normalized case/whitespace-insensitively — so a
+            // repeat can't slip through even if the model ignores the
+            // avoid-list.
+            var seen = Set(deck.items.map { normalizedWordKey($0.word) })
+            let uniqueItems = result.items.filter { item in
+                let key = normalizedWordKey(item.word)
+                guard !key.isEmpty, !seen.contains(key) else { return false }
+                seen.insert(key)
+                return true
+            }
+            let newItems = uniqueItems.map { $0.withLanguage(deck.language) }
+
+            guard !newItems.isEmpty else { return }
 
             if let deckId = deck.id {
                 try await FirebaseDeckService.addItems(
                     toDeck: deckId,
-                    items: result.items,
+                    items: uniqueItems,
                     sourceLanguage: deck.language
                 )
             }
@@ -1137,6 +1280,32 @@ struct DeckDetailView: View {
         } catch {
             generationError = error.localizedDescription
         }
+    }
+
+    // Normalized key for repeat detection: trimmed + lowercased so trivial
+    // case / whitespace differences still count as the same word.
+    private func normalizedWordKey(_ word: String) -> String {
+        word.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    // Builds the Generate More prompt from the deck's own subject matter:
+    // the original prompt plus a sample of the English meanings already in
+    // the deck, so new items track the combined theme rather than drifting.
+    private func generateMorePrompt() -> String {
+        let themeSample = deck.items
+            .map { $0.translation }
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .prefix(40)
+            .joined(separator: ", ")
+        var lines: [String] = []
+        let base = deck.userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !base.isEmpty { lines.append(base) }
+        if !themeSample.isEmpty {
+            lines.append(
+                "Generate more \(deck.contentType.lowercased()) on the same theme and subject matter as this deck, which so far covers: \(themeSample). Stay within that theme and do not repeat any item already in the deck."
+            )
+        }
+        return lines.joined(separator: "\n\n")
     }
 
     @MainActor
@@ -1659,5 +1828,104 @@ private struct ArtifactReaderSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+// Wraps a deck-list row with iOS-style swipe-to-delete. Swiping left
+// reveals a red trash action; a short swipe snaps it open (tap the trash
+// or tap the row to close), and a long swipe commits the delete outright.
+// The gesture only engages on horizontal travel, so the parent's vertical
+// ScrollView and tab-swipe keep working. Because it's an inner gesture, a
+// swipe that starts on a row takes precedence over the tab-swipe.
+private struct SwipeToDeleteRow<Content: View>: View {
+    let onDelete: () -> Void
+    @ViewBuilder let content: Content
+
+    // Settled position (0 = closed, -buttonWidth = open). Live drag is
+    // layered on top via `dragTranslation`.
+    @State private var settledOffset: CGFloat = 0
+    @GestureState private var dragTranslation: CGFloat = 0
+
+    private let buttonWidth: CGFloat = 76
+    private let openSnap: CGFloat = 76
+    // Past this much left-travel, releasing commits the delete instead of
+    // just snapping open.
+    private let commitThreshold: CGFloat = 200
+
+    private var offset: CGFloat {
+        // Clamp: never past-closed to the right, cap the rubber-band left.
+        min(max(settledOffset + dragTranslation, -commitThreshold - 40), 0)
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            // Trash action, revealed behind the sliding content.
+            Button {
+                commitDelete()
+            } label: {
+                Image(systemName: "trash.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: buttonWidth)
+                    .frame(maxHeight: .infinity)
+                    .background(Color.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            .buttonStyle(.plain)
+            .opacity(offset < -2 ? 1 : 0)
+
+            content
+                // Opaque page-matched background so the trash stays hidden
+                // until the row slides.
+                .background(Color(libraryHex: "F4F4F4"))
+                .offset(x: offset)
+                // When open, a tap anywhere on the row closes it rather
+                // than falling through to the row's own tap handlers.
+                .overlay {
+                    if settledOffset < 0 {
+                        Color.black.opacity(0.0001)
+                            .contentShape(Rectangle())
+                            .onTapGesture { close() }
+                    }
+                }
+                .highPriorityGesture(swipeGesture)
+        }
+        .clipped()
+    }
+
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 14)
+            .updating($dragTranslation) { value, state, _ in
+                // Only track clearly horizontal movement so vertical
+                // scrolling passes through to the ScrollView untouched.
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                state = value.translation.width
+            }
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                let projected = settledOffset + value.translation.width
+                if projected <= -commitThreshold {
+                    commitDelete()
+                } else if projected <= -openSnap / 2 {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                        settledOffset = -openSnap
+                    }
+                } else {
+                    close()
+                }
+            }
+    }
+
+    private func close() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            settledOffset = 0
+        }
+    }
+
+    private func commitDelete() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            settledOffset = 0
+        }
+        onDelete()
     }
 }

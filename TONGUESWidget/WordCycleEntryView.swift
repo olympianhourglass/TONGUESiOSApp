@@ -33,7 +33,7 @@ struct WordCycleEntryView: View {
             // medium widget places its shuffle inline next to the
             // foreign word (see `content(card:)`) so it sits on the
             // same row as the visual anchor.
-            if family == .systemSmall, entry.card != nil {
+            if family == .systemSmall, entry.card != nil, showsShuffle {
                 shuffleButton
                     .padding(.bottom, 8)
             }
@@ -49,6 +49,13 @@ struct WordCycleEntryView: View {
     // affordance. Its tap target takes precedence over the surrounding
     // `.widgetURL`, so tapping outside the button still deep-links
     // into the deck.
+    // FSRS is a risk-ordered mode — shuffling would defeat its purpose —
+    // so the shuffle button is hidden when the source is FSRS. Language
+    // and deck sources keep it.
+    private var showsShuffle: Bool {
+        entry.sourceID != WidgetSourceEntity.fsrs.id
+    }
+
     private var shuffleButton: some View {
         Button(intent: AdvanceWordCycleIntent(sourceID: entry.sourceID)) {
             Image(systemName: "shuffle")
@@ -103,7 +110,7 @@ struct WordCycleEntryView: View {
                     .minimumScaleFactor(0.45)
                     .padding(.top, 2)
 
-                if family != .systemSmall {
+                if family != .systemSmall, showsShuffle {
                     Spacer(minLength: 0)
                     shuffleButton
                 }

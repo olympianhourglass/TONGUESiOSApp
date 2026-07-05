@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var isShowingSplash = true
     @State private var auth = AuthService.shared
     @State private var router = WidgetDeepLinkRouter.shared
+    @State private var quickActionRouter = QuickActionRouter.shared
     // First-run "tap Create New Deck" coach mark. Rendered here, above the
     // TabView, so the hand floats over the tab bar rather than being
     // clipped beneath it inside the Study tab.
@@ -27,9 +28,14 @@ struct ContentView: View {
         let itemAppearance = UITabBarItemAppearance()
         let unselected = UIColor.black.withAlphaComponent(0.3)
         itemAppearance.normal.iconColor = unselected
-        itemAppearance.normal.titleTextAttributes = [.foregroundColor: unselected]
         itemAppearance.selected.iconColor = .black
-        itemAppearance.selected.titleTextAttributes = [.foregroundColor: UIColor.black]
+
+        // No tab-bar titles — icons only. Hide any residual label the
+        // system might vend so nothing shows beneath the icon and it
+        // sits vertically centered in the bar.
+        let hiddenTitle: [NSAttributedString.Key: Any] = [.foregroundColor: UIColor.clear]
+        itemAppearance.normal.titleTextAttributes = hiddenTitle
+        itemAppearance.selected.titleTextAttributes = hiddenTitle
 
         appearance.stackedLayoutAppearance = itemAppearance
         appearance.inlineLayoutAppearance = itemAppearance
@@ -86,6 +92,16 @@ struct ContentView: View {
             // navigation stack can push DeckDetailView.
             if newValue != nil { tabRouter.current = .library }
         }
+        // App-icon quick action → flip to the Study tab so StudyView is
+        // on-screen to consume the pending action and open Create New Deck.
+        .onChange(of: quickActionRouter.pending) { _, newValue in
+            if newValue != nil { tabRouter.current = .study }
+        }
+        .onAppear {
+            // Cold launch via a shortcut: the pending action may already be
+            // set before this appears.
+            if quickActionRouter.pending != nil { tabRouter.current = .study }
+        }
         // Status bar override is installed via runtime class-swap on
         // the window's UIHostingController; see StatusBarStyleSwap.
         // The didSet on AppTabRouter.current fires it on every tab
@@ -139,22 +155,34 @@ struct ContentView: View {
         .transition(.opacity)
     }
 
+    // Tab-bar icons rendered 20% smaller than the system default (~25pt →
+    // 20pt) so there's more apparent vertical breathing room between each
+    // icon and its label. Template rendering preserves the tab bar's
+    // selected/unselected tint from UITabBarItemAppearance.
+    private func tabIcon(_ name: String) -> some View {
+        Image(name)
+            .renderingMode(.template)
+            .resizable()
+            .scaledToFit()
+            .frame(width: 20, height: 20)
+    }
+
     private var mainTabView: some View {
         TabView(selection: selectedTab) {
             ExploreView()
-                .tabItem { Image("Compass") }
+                .tabItem { tabIcon("Compass") }
                 .tag(AppTab.explore)
 
             StudyView()
-                .tabItem { Image("PlusSquare") }
+                .tabItem { tabIcon("PlusSquare") }
                 .tag(AppTab.study)
 
             ChatView()
-                .tabItem { Image("Chat") }
+                .tabItem { tabIcon("Chat") }
                 .tag(AppTab.chat)
 
             LibraryView()
-                .tabItem { Image("Books") }
+                .tabItem { tabIcon("Books") }
                 .tag(AppTab.library)
         }
         .tint(.black)

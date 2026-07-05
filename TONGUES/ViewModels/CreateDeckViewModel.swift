@@ -17,6 +17,11 @@ final class CreateDeckViewModel {
     var level = "A1"
     var selectedTones: Set<String> = ["Casual"]
 
+    // Existing decks the user attached as reference material. Their titles
+    // + sampled items are fed into the generation prompt so the model can
+    // match style, extend themes, or adapt them across languages.
+    var referencedDecks: [DeckDocument] = []
+
     // Picker / navigation state
     var activeAttribute: DeckAttribute?
     var showResults = false
@@ -86,7 +91,8 @@ final class CreateDeckViewModel {
                 contentType: contentType,
                 amount: amount,
                 level: level,
-                tones: Array(selectedTones).sorted()
+                tones: Array(selectedTones).sorted(),
+                referencedDecks: referencedDecks
             )
             generatedDeck = deck
             showResults = true

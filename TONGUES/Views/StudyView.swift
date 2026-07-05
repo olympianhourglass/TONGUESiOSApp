@@ -2,6 +2,23 @@ import SwiftUI
 
 struct StudyView: View {
     @State private var isCreateDeckPresented = false
+    // Which Create New Deck tab to open on, and whether Direct should
+    // start in Conversation mode — set by the long-press quick actions
+    // and the app-icon Home Screen shortcuts.
+    @State private var createDeckInitialPage = 0
+    @State private var createDeckConversation = false
+    @State private var quickActionRouter = QuickActionRouter.shared
+    // Custom long-press quick-actions menu on the Create New Deck pill.
+    @State private var showQuickActions = false
+    // Global frames of each option chip, so a drag from the pill can
+    // hit-test which option the finger is over.
+    @State private var quickActionFrames: [CreateDeckQuickAction: CGRect] = [:]
+    // The option currently under the dragging finger (drives highlight).
+    @State private var highlightedQuickAction: CreateDeckQuickAction?
+    // Set when a long-press opens the quick-actions menu, so the tap
+    // that rides along with the finger lift doesn't also open the full
+    // Create New Deck sheet. Auto-cleared shortly after the gesture ends.
+    @State private var suppressNextCreateTap = false
     // First-run tutorial: a floating hand points new users at the
     // Create New Deck button. Shown once (persisted in AppStorage) when a
     // freshly-onboarded user lands here with an empty library.
@@ -84,23 +101,41 @@ struct StudyView: View {
                 )
             }
             .overlay(alignment: .bottomTrailing) {
-                CreateNewDeckButton {
-                    handleCreateDeckTap()
-                }
-                // Track the button's on-screen frame so the first-run
-                // coach mark can spotlight + point at it precisely.
-                .onGeometryChange(for: CGRect.self) { proxy in
-                    proxy.frame(in: .global)
-                } action: { newValue in
-                    createButtonFrame = newValue
-                }
-                .padding(.trailing, 16)
+                CreateNewDeckButton()
+                    // Tap opens Create New Deck; a long-press opens the
+                    // custom quick-actions menu. Attached here (not a
+                    // Button + contextMenu) so there's no system preview
+                    // border and we control the menu's placement.
+                    .onTapGesture { handleCreateDeckTap() }
+                    // Long-press opens the menu; keeping the finger down and
+                    // dragging onto an option highlights it, and releasing
+                    // over it fires that shortcut. Releasing in place leaves
+                    // the menu up so the user can tap instead.
+                    .gesture(pressDragQuickActionGesture)
+                    // Track the button's on-screen frame so the first-run
+                    // coach mark can spotlight + point at it precisely, and
+                    // so the quick-actions menu can left-align to the pill.
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .global)
+                    } action: { newValue in
+                        createButtonFrame = newValue
+                    }
+                    .padding(.trailing, 16)
                 // Visible button sits 8pt above the tab bar — the button's
                 // 8pt invisible tap halo provides the remaining breathing
                 // room, so no extra outer bottom padding is needed.
             }
+            .overlay {
+                if showQuickActions {
+                    quickActionsMenuOverlay
+                }
+            }
             .fullScreenCover(isPresented: $isCreateDeckPresented) {
-                CreateDeckSheet(startTutorial: deckSheetTutorial) {
+                CreateDeckSheet(
+                    startTutorial: deckSheetTutorial,
+                    initialPage: createDeckInitialPage,
+                    initialDirectConversation: createDeckConversation
+                ) {
                     isCreateDeckPresented = false
                     // First saved deck spends the free-deck grace; the
                     // next Create New Deck tap will hit the paywall.
@@ -122,6 +157,15 @@ struct StudyView: View {
                 await subscription.refresh()
                 await vm.loadDecks()
                 startCoachmarkIfJustLoggedIn()
+                // Cold launch via an app-icon shortcut: the pending action
+                // is already set by the time Study appears.
+                if let action = quickActionRouter.pending {
+                    consumeQuickAction(action)
+                }
+            }
+            // Warm launch: the app-icon shortcut fires while Study is alive.
+            .onChange(of: quickActionRouter.pending) { _, action in
+                if let action { consumeQuickAction(action) }
             }
             // Catches the login flag flipping while Study is already alive
             // (e.g. ContentView routes here right after sign-in).
@@ -147,13 +191,176 @@ struct StudyView: View {
     // one free deck get the paywall instead of the sheet; everyone else
     // opens the generator normally.
     private func handleCreateDeckTap() {
+        // A tap that arrives on the heels of a long-press-drag (opening or
+        // dismissing the quick-actions menu) is spurious — consume it so
+        // the full sheet doesn't open behind the collapsing menu.
+        if suppressNextCreateTap {
+            suppressNextCreateTap = false
+            return
+        }
+        openCreateDeck(page: 0, conversation: false)
+    }
+
+    // Opens the Create New Deck sheet on a specific tab, honoring the
+    // free-deck paywall gate. Used by the plain tap (page 0), the
+    // long-press quick actions, and the app-icon shortcuts.
+    private func openCreateDeck(page: Int, conversation: Bool) {
         guard subscription.canCreateFreeDeck else {
             Haptics.medium()
             showPaywall = true
             return
         }
         deckSheetTutorial = false
+        createDeckInitialPage = page
+        createDeckConversation = conversation
         isCreateDeckPresented = true
+    }
+
+    private func openCreateDeck(_ action: CreateDeckQuickAction) {
+        Haptics.light()
+        openCreateDeck(page: action.page, conversation: action.startsConversation)
+    }
+
+    // MARK: Long-press quick-actions menu
+
+    private func openQuickActions() {
+        Haptics.medium()
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            showQuickActions = true
+        }
+    }
+
+    // Press-drag-release gesture: a long press opens the menu; if the user
+    // keeps holding and drags onto an option, it highlights; releasing over
+    // an option fires it. Releasing not over an option leaves the menu open
+    // for a follow-up tap. A quick tap (never reaches 0.35s) falls through
+    // to the separate .onTapGesture that opens Create New Deck.
+    private var pressDragQuickActionGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.35)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+            .onChanged { value in
+                switch value {
+                case .first(true):
+                    if !showQuickActions {
+                        openQuickActions()
+                        // The finger is still down; block the tap that
+                        // will accompany its release from opening the sheet.
+                        suppressNextCreateTap = true
+                    }
+                case .second(true, let drag):
+                    guard let drag else { return }
+                    let hit = quickAction(at: drag.location)
+                    if hit != highlightedQuickAction {
+                        if hit != nil { Haptics.light() }
+                        highlightedQuickAction = hit
+                    }
+                default:
+                    break
+                }
+            }
+            .onEnded { value in
+                defer { highlightedQuickAction = nil }
+                if case .second(_, let drag?) = value,
+                   let action = quickAction(at: drag.location) {
+                    // Released over an option → fire it (also collapses).
+                    selectQuickAction(action)
+                } else {
+                    // Released anywhere else (empty space, or back over the
+                    // pill) → cancel: collapse the menu rather than leaving
+                    // it lingering. The tap-suppression flag keeps this
+                    // release from opening the Create New Deck sheet.
+                    withAnimation(.easeOut(duration: 0.18)) { showQuickActions = false }
+                }
+                // Clear the suppression just after the release so a tap
+                // riding along with it is swallowed, while a later,
+                // intentional tap on the pill still opens the sheet.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    suppressNextCreateTap = false
+                }
+            }
+    }
+
+    // Which option chip (if any) contains the given global point.
+    private func quickAction(at point: CGPoint) -> CreateDeckQuickAction? {
+        quickActionFrames.first(where: { $0.value.contains(point) })?.key
+    }
+
+    private func selectQuickAction(_ action: CreateDeckQuickAction) {
+        withAnimation(.easeOut(duration: 0.18)) { showQuickActions = false }
+        openCreateDeck(action)
+    }
+
+    // Custom menu that floats above the pill. Options are left-aligned to
+    // the pill's visible left edge (from `createButtonFrame`, offsetting the
+    // pill's 8pt tap halo) and stack bottom→top as Direct, Conversation,
+    // Camera. No system preview border on the pill.
+    private var quickActionsMenuOverlay: some View {
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
+            // Visible pill edges = measured frame inset by the 8pt halo.
+            let pillLeftX = createButtonFrame.minX + 8 - origin.x
+            let pillTopY = createButtonFrame.minY + 8 - origin.y
+
+            ZStack(alignment: .bottomLeading) {
+                // Tap-catcher to dismiss.
+                Color.black.opacity(0.06)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.18)) { showQuickActions = false }
+                    }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    quickActionMenuButton(.camera, "Camera", "camera")
+                    quickActionMenuButton(.conversation, "Conversation", "bubble.left.and.bubble.right")
+                    quickActionMenuButton(.direct, "Direct", "character.bubble")
+                }
+                .padding(.leading, max(0, pillLeftX))
+                // Sit 12pt above the pill's top edge.
+                .padding(.bottom, max(0, proxy.size.height - pillTopY + 12))
+                .transition(.opacity.combined(with: .scale(scale: 0.94, anchor: .bottomLeading)))
+            }
+        }
+    }
+
+    private func quickActionMenuButton(
+        _ action: CreateDeckQuickAction,
+        _ title: String,
+        _ icon: String
+    ) -> some View {
+        let isHighlighted = highlightedQuickAction == action
+        return Button {
+            selectQuickAction(action)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                Text(title)
+                    .font(.custom("NeueHaasDisplay-Light", size: 16))
+            }
+            .foregroundStyle(isHighlighted ? .white : .black)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(isHighlighted ? Color.black : Color.white,
+                        in: RoundedRectangle(cornerRadius: 12))
+            .shadow(color: .black.opacity(0.14), radius: 8, x: 0, y: 4)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
+            .scaleEffect(isHighlighted ? 1.04 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: isHighlighted)
+        }
+        .buttonStyle(.plain)
+        // Report the chip's on-screen frame so a drag from the pill can
+        // hit-test whether the finger is over it.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { newValue in
+            quickActionFrames[action] = newValue
+        }
+    }
+
+    // Consumes an app-icon shortcut: clear it first so it fires once, then
+    // open the sheet on the requested tab.
+    private func consumeQuickAction(_ action: CreateDeckQuickAction) {
+        quickActionRouter.pending = nil
+        openCreateDeck(page: action.page, conversation: action.startsConversation)
     }
 
     // MARK: First-run coach mark
@@ -382,7 +589,7 @@ struct FeaturedDeckHeader: View {
                         Text("\(deck.items.count) Items")
                             .foregroundStyle(.white)
                     }
-                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .padding(.horizontal, 8)
                     .padding(.top, 52)
                     .padding(.bottom, 8)
@@ -762,25 +969,24 @@ struct DeckMiniCard: View {
 
 // MARK: - Floating create button (kept from previous implementation)
 
+// Pure visual of the floating pill. Tap + long-press are attached by the
+// parent (StudyView) so it can disambiguate a tap (open Create New Deck)
+// from a long-press (custom quick-actions menu) without the system
+// context-menu chrome/border.
 struct CreateNewDeckButton: View {
-    let action: () -> Void
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                    .font(.system(size: 18, weight: .semibold))
-                Text("Create new deck")
-                    .font(.custom("NeueHaasDisplay-Light", size: 17))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .glassEffect(.regular.tint(.black).interactive(), in: .capsule)
-            .shadow(color: .black.opacity(0.22), radius: 8, x: 0, y: 8)
-            .padding(8)
-            .contentShape(.capsule)
+        HStack(spacing: 8) {
+            Image(systemName: "plus")
+                .font(.system(size: 18, weight: .semibold))
+            Text("Create new deck")
+                .font(.custom("NeueHaasDisplay-Light", size: 17))
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(.white)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .glassEffect(.regular.tint(.black).interactive(), in: .capsule)
+        .shadow(color: .black.opacity(0.22), radius: 8, x: 0, y: 8)
+        .padding(8)
+        .contentShape(.capsule)
     }
 }

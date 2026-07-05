@@ -12,7 +12,8 @@ struct OnboardingQuestionView: View {
     var showsProgress: Bool = true
 
     @State private var textAnswer: String = ""
-    @State private var selectedOption: String?
+    // Multi-select: questions can have more than one answer.
+    @State private var selectedOptions: Set<String> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -26,6 +27,7 @@ struct OnboardingQuestionView: View {
                 Text("\(questionNumber) of \(totalQuestions)")
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
             }
@@ -57,29 +59,40 @@ struct OnboardingQuestionView: View {
                     ScrollView {
                         VStack(spacing: 10) {
                             ForEach(options, id: \.self) { option in
+                                let isSelected = selectedOptions.contains(option)
                                 Button {
                                     Haptics.light()
-                                    selectedOption = option
+                                    if isSelected {
+                                        selectedOptions.remove(option)
+                                    } else {
+                                        selectedOptions.insert(option)
+                                    }
                                 } label: {
                                     HStack {
                                         Text(option)
                                             .font(.system(size: 16))
                                             .foregroundStyle(.black)
-                                        Spacer()
-                                        if selectedOption == option {
+                                        Spacer(minLength: 12)
+                                        if isSelected {
                                             Image(systemName: "checkmark")
                                                 .foregroundStyle(.black)
                                         }
                                     }
                                     .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
+                                    .padding(.vertical, 16)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                                     .background(
                                         RoundedRectangle(cornerRadius: 8)
                                             .stroke(
-                                                selectedOption == option ? Color.black : Color(white: 0.85),
-                                                lineWidth: selectedOption == option ? 1.5 : 1
+                                                isSelected ? Color.black : Color(white: 0.85),
+                                                lineWidth: isSelected ? 1.5 : 1
                                             )
                                     )
+                                    // Make the WHOLE row reliably tappable —
+                                    // without this the empty gap between the
+                                    // label and checkmark didn't register taps,
+                                    // which is why answers felt "stuck".
+                                    .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -131,15 +144,19 @@ struct OnboardingQuestionView: View {
         case .freeText:
             return !textAnswer.trimmingCharacters(in: .whitespaces).isEmpty
         case .options:
-            return selectedOption != nil
+            return !selectedOptions.isEmpty
         }
     }
 
     private func recordAndAdvance() {
         let answer: String
         switch question.kind {
-        case .freeText: answer = textAnswer
-        case .options: answer = selectedOption ?? ""
+        case .freeText:
+            answer = textAnswer
+        case .options(let options):
+            // Join the selected answers in their displayed order.
+            answer = options.filter { selectedOptions.contains($0) }
+                .joined(separator: ", ")
         }
         state.record(answer: answer, forQuestion: questionNumber)
         onNext()

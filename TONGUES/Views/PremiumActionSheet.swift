@@ -66,10 +66,9 @@ struct PremiumActionSheet: View {
             }
             .scrollIndicators(.hidden)
 
-            // Pinned top bar: X close + vertical "INFINITE" mark stay
-            // glued to the sheet's top edge regardless of scroll
-            // position — they no longer ride the scroll content, which
-            // means they're always reachable.
+            // Pinned top bar: X close button stays glued to the sheet's
+            // top edge regardless of scroll position — it no longer rides
+            // the scroll content, which means it's always reachable.
             heroTopBar
                 .padding(.horizontal, 16)
                 .padding(.top, 8)
@@ -206,32 +205,16 @@ struct PremiumActionSheet: View {
     private var heroTopBar: some View {
         HStack(alignment: .top) {
             Spacer()
-            VStack(alignment: .trailing, spacing: 0) {
-                Button {
-                    Haptics.light()
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .background(Color.white.opacity(0.15))
-                        .clipShape(Circle())
-                }
-                // 14pt rigid spacer (was 6) — gives the X close button
-                // and the INFINITE rail an extra 8pt of breathing room
-                // as the spec calls out.
-                Spacer().frame(height: 14)
-                // Vertical brand tag — matches the Figma's INFINITE
-                // mark on the upper-right rail.
-                Text("INFINITE")
-                    .font(.custom("NeueHaasDisplay-Mediu", size: 9))
-                    .tracking(2)
+            Button {
+                Haptics.light()
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundStyle(.white)
-                    .rotationEffect(.degrees(90))
-                    .fixedSize()
-                    .frame(width: 32)
-                    .padding(.top, 18)
+                    .frame(width: 32, height: 32)
+                    .background(Color.white.opacity(0.15))
+                    .clipShape(Circle())
             }
         }
     }
@@ -303,7 +286,7 @@ struct PremiumActionSheet: View {
     private var infoCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(selectedTier.headline)
-                .font(.custom("PlayfairDisplay-Regular", size: 26))
+                .font(.custom("NeueHaasDisplay-Mediu", size: 26))
                 .tracking(-0.6)
                 .foregroundStyle(.white)
                 .padding(.bottom, 4)
@@ -435,7 +418,7 @@ struct PremiumActionSheet: View {
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text(displayPrice(for: cycle))
-                        .font(.custom("PlayfairDisplay-Regular", size: 22))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 22))
                         .foregroundStyle(.white)
                     Text("/month")
                         .font(.custom("NeueHaasDisplay-Light", size: 11))

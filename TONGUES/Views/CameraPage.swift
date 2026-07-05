@@ -133,7 +133,32 @@ struct CameraPage: View {
     let onAttributeTap: (DeckAttribute) -> Void
     let onSaved: () -> Void
 
+    // Two ways to turn the viewfinder into a card: identify a physical
+    // object (Haiku vision) or read the text off a sign (on-device OCR).
+    // The shutter behaves differently per mode; the picker below the
+    // preview lets the learner switch, mirroring the native Camera app's
+    // mode selector.
+    enum CaptureMode: String, CaseIterable, Identifiable {
+        case object
+        case sign
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .object: return "Object"
+            case .sign: return "Sign"
+            }
+        }
+        var systemImage: String {
+            switch self {
+            case .object: return "cube"
+            case .sign: return "text.viewfinder"
+            }
+        }
+    }
+
     @State private var camera = CameraController()
+    @State private var mode: CaptureMode = .object
     @State private var identifiedItem: GeneratedItem?
     @State private var identifiedEnglish: String?
     @State private var isIdentifying = false
@@ -156,6 +181,7 @@ struct CameraPage: View {
             .padding(.top, 80)
             .padding(.bottom, 120) // leave room for the bottom toggle
         }
+        .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
         .task { await camera.startIfPermitted() }
         .onDisappear { camera.stop() }
@@ -216,13 +242,55 @@ struct CameraPage: View {
                 ProgressView()
                     .tint(.white)
             }
-            VStack {
+            VStack(spacing: 14) {
                 Spacer()
+                if camera.authState == .authorized {
+                    modePicker
+                }
                 shutterButton
                     .padding(.bottom, 18)
             }
         }
         .frame(height: 360)
+    }
+
+    // Segmented Object / Sign selector floating over the bottom of the
+    // viewfinder. Tinted glass capsule so it reads on any camera feed.
+    private var modePicker: some View {
+        HStack(spacing: 4) {
+            ForEach(CaptureMode.allCases) { candidate in
+                Button {
+                    guard mode != candidate else { return }
+                    Haptics.light()
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        mode = candidate
+                    }
+                    // A pending result from the other mode would read as
+                    // stale, so clear it when the learner switches intent.
+                    clearIdentification()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: candidate.systemImage)
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(candidate.title)
+                            .font(.custom("NeueHaasDisplay-Medium", size: 13))
+                    }
+                    .foregroundStyle(mode == candidate ? .black : .white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background {
+                        if mode == candidate {
+                            Capsule().fill(.white)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isIdentifying)
+            }
+        }
+        .padding(4)
+        .background(Capsule().fill(.black.opacity(0.35)))
+        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
     }
 
     private var permissionDeniedView: some View {
@@ -318,10 +386,10 @@ struct CameraPage: View {
             if let item = identifiedItem, let english = identifiedEnglish {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(english)
-                        .font(.custom("PlayfairDisplay-Regular", size: 22))
+                        .font(.custom("NeueHaasDisplay-Light", size: 22))
                         .foregroundStyle(.black)
                     Text(item.word)
-                        .font(.custom("PlayfairDisplay-Regular", size: 28))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 28))
                         .foregroundStyle(.black)
                     if let translit = item.transliteration, !translit.isEmpty {
                         Text(translit)
@@ -338,7 +406,7 @@ struct CameraPage: View {
                         .stroke(Color(white: 0.88), lineWidth: 1)
                 )
             } else {
-                Text(isIdentifying ? "Identifying…" : "Tap the shutter to identify what you're pointing at.")
+                Text(placeholderText)
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -349,6 +417,16 @@ struct CameraPage: View {
                             .stroke(Color(white: 0.92), lineWidth: 1)
                     )
             }
+        }
+    }
+
+    private var placeholderText: String {
+        if isIdentifying {
+            return mode == .sign ? "Reading the sign…" : "Identifying…"
+        }
+        switch mode {
+        case .object: return "Tap the shutter to identify what you're pointing at."
+        case .sign: return "Tap the shutter to read the text on a sign."
         }
     }
 
@@ -384,15 +462,42 @@ struct CameraPage: View {
                 errorText = "Couldn't read the photo. Try again."
                 return
             }
-            // Match the existing avatar pipeline: ~1024px JPEG keeps
-            // upload + token cost small without losing identifiable
-            // detail.
+            // Both modes send a ~1024px JPEG to the vision model — small
+            // enough to keep upload + token cost down, detailed enough to
+            // read an object or the text on a sign.
             guard let jpeg = image.tongues_downscaledJPEG(maxDimension: 1024, quality: 0.85) else {
                 isIdentifying = false
                 errorText = "Couldn't encode the photo. Try again."
                 return
             }
-            Task { await identify(imageData: jpeg) }
+            switch mode {
+            case .object:
+                Task { await identify(imageData: jpeg) }
+            case .sign:
+                Task { await readSignage(imageData: jpeg) }
+            }
+        }
+    }
+
+    // Sign mode: read the sign's text and translate it in one vision call
+    // (robust across scripts, unlike on-device OCR). Produces the same
+    // GeneratedItem shape the object path does, so every downstream save
+    // flow just works.
+    @MainActor
+    private func readSignage(imageData: Data) async {
+        defer { isIdentifying = false }
+        do {
+            let result = try await DeckGenerator.readSign(
+                imageData: imageData,
+                language: language,
+                dialect: dialect
+            )
+            Haptics.success()
+            identifiedItem = result.item
+            identifiedEnglish = result.englishLabel
+        } catch {
+            Haptics.error()
+            errorText = error.localizedDescription
         }
     }
 
@@ -424,7 +529,8 @@ struct CameraPage: View {
         // user doesn't have to invent one. They can override it in the
         // cover customization sheet.
         let label = identifiedEnglish?.capitalized ?? item.translation.capitalized
-        return "\(label) – Camera Find"
+        let suffix = mode == .sign ? "Sign" : "Camera Find"
+        return "\(label) – \(suffix)"
     }
 
     @MainActor

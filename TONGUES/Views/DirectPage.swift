@@ -1,6 +1,7 @@
 import SwiftUI
 import Speech
 import AVFoundation
+import UIKit
 
 // Direct page (Create New Deck → page 3). A lightweight translator
 // surface: type or speak something in either English or the user's
@@ -137,10 +138,16 @@ struct DirectPage: View {
     let level: String
     let onAttributeTap: (DeckAttribute) -> Void
     let onSaved: () -> Void
+    // When true, the page opens directly in Conversation mode (used by the
+    // "Conversation" quick action). Applied once on first appear.
+    var startInConversation: Bool = false
+    @State private var didApplyInitialMode = false
 
     @State private var inputText: String = ""
     @State private var translated: DeckGenerator.DirectTranslateResult?
     @State private var isTranslating = false
+    // Transient "Copied" confirmation on the translate result.
+    @State private var didCopyResult = false
     @State private var errorText: String?
     @State private var showDeckPicker = false
     @State private var showCreateCover = false
@@ -194,6 +201,12 @@ struct DirectPage: View {
                 .contentShape(Rectangle())
                 .onTapGesture { isInputFocused = false }
         )
+        .onAppear {
+            // Honor the "Conversation" quick action's initial mode, once.
+            guard !didApplyInitialMode else { return }
+            didApplyInitialMode = true
+            if startInConversation { mode = .conversation }
+        }
         .alert("Something went wrong", isPresented: errorBinding) {
             Button("OK") { errorText = nil }
         } message: {
@@ -429,6 +442,19 @@ struct DirectPage: View {
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
                         .tracking(0.5)
+                    Spacer(minLength: 0)
+                    Button {
+                        copyResult(result)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: didCopyResult ? "checkmark" : "doc.on.doc")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text(didCopyResult ? "Copied" : "Copy")
+                                .font(.custom("NeueHaasDisplay-Light", size: 12))
+                        }
+                        .foregroundStyle(.black)
+                    }
+                    .buttonStyle(.plain)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text(item.translation)
@@ -445,6 +471,9 @@ struct DirectPage: View {
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Long-press any line to select + copy (matches the
+                // Conversation transcript/translation blocks).
+                .textSelection(.enabled)
                 .padding(.vertical, 16)
                 .padding(.horizontal, 18)
                 .overlay(
@@ -500,6 +529,22 @@ struct DirectPage: View {
         } catch {
             Haptics.error()
             errorText = error.localizedDescription
+        }
+    }
+
+    // Copies the translated output to the clipboard — the foreign word
+    // when translating from English, otherwise the English meaning — and
+    // shows a brief "Copied" confirmation.
+    private func copyResult(_ result: DeckGenerator.DirectTranslateResult) {
+        let primary = result.direction == .fromEnglish
+            ? result.item.word
+            : result.item.translation
+        UIPasteboard.general.string = primary
+        Haptics.light()
+        didCopyResult = true
+        Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            didCopyResult = false
         }
     }
 

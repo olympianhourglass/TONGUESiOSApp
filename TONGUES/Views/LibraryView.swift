@@ -4,7 +4,6 @@ struct LibraryView: View {
     @State private var vm = LibraryViewModel()
     @State private var showProfile = false
     @State private var headerHeight: CGFloat = 0
-    @State private var scrollOffsetY: CGFloat = 0
     @State private var onboardingName: String?
     @State private var avatarImageData: Data?
     @State private var router = WidgetDeepLinkRouter.shared
@@ -13,6 +12,15 @@ struct LibraryView: View {
     @State private var sortOption: SortOption = .recent
     @State private var languageFilter: String?
     @State private var levelFilter: String?
+    // Content-type filter: nil = All, "Words", or "Sentences" (the latter
+    // also matches phrase decks). Applies to both the Decks and Content
+    // sections.
+    @State private var contentFilter: String?
+    // Memoized Words list. Flattening every item across every deck +
+    // sorting is expensive, so we compute it only when its inputs change
+    // (decks / filters / sort) rather than on every scroll-driven body
+    // re-render — which was tanking scroll performance on the Words tab.
+    @State private var wordsToShow: [LibraryWordEntry] = []
     // Library is split into two horizontally-swipeable sections that sit
     // beneath the header and above the filters — mirroring the Deck Detail
     // page's Content/Artifacts/Stats tabs. Decks lists the user's decks;
@@ -50,7 +58,7 @@ struct LibraryView: View {
         var title: String {
             switch self {
             case .decks: return "DECKS"
-            case .words: return "WORDS"
+            case .words: return "CONTENT"
             }
         }
     }
@@ -60,6 +68,22 @@ struct LibraryView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     profileHeader
+                        // The scroll view extends under the status bar (see
+                        // .ignoresSafeArea below) so the gradient can reach
+                        // the very top edge. Pad the header's content back
+                        // down by the status-bar height so the avatar/name
+                        // still clear the status bar — the dark gradient fills
+                        // that padded strip.
+                        .padding(.top, statusBarInset)
+                        // Stretchy, top-pinned dark header. The gradient's
+                        // top sticks to the top of the scroll view and its
+                        // bottom stays glued to the header's bottom edge, so
+                        // it never slides away (no black sliding in) and the
+                        // white "View Statistics" text is never cropped. It's
+                        // driven by GeometryReader — not a per-frame @State
+                        // write — so the lazy lists below don't churn while
+                        // scrolling.
+                        .background { headerBackground }
                         .onGeometryChange(for: CGFloat.self) { proxy in
                             proxy.size.height
                         } action: { newValue in
@@ -72,7 +96,12 @@ struct LibraryView: View {
             .onScrollGeometryChange(for: CGFloat.self) { geometry in
                 geometry.contentOffset.y
             } action: { _, newValue in
-                scrollOffsetY = newValue
+                // NOTE: deliberately NOT storing the offset in @State —
+                // doing so re-rendered the whole body on every scroll frame,
+                // which churned the lazy lists and caused the jittery
+                // "rows jump to the top" behavior. The header gradient below
+                // is a fixed band that the white deck list scrolls over, so
+                // it needs no live offset.
                 // Pull-down past the top reveals the search pill;
                 // scrolling back toward the top collapses it again.
                 if searchArmed, newValue < -70, !searchRevealed {
@@ -85,33 +114,16 @@ struct LibraryView: View {
                     }
                 }
             }
-            .background {
-                // Dark gradient tracks the header's on-screen bottom edge so
-                // it stretches with overscroll and shrinks as the deck list
-                // scrolls up over it. White fills everything below.
-                VStack(spacing: 0) {
-                    let bandHeight = max(0, headerHeight - scrollOffsetY)
-                    // Radial gradient matching the audio (Listen) page —
-                    // spreads from the top center through three warm stops.
-                    // `endRadius` is anchored to the (stable) header height,
-                    // NOT the live band height, so scrolling only *clips*
-                    // the fixed gradient via the frame instead of rescaling
-                    // the whole pattern each frame (which looked glitchy).
-                    RadialGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: Color(red: 14/255, green: 12/255, blue: 12/255), location: 0.0),
-                            .init(color: Color(red: 70/255, green: 61/255, blue: 58/255), location: 0.5),
-                            .init(color: Color(red: 102/255, green: 102/255, blue: 102/255), location: 1.0)
-                        ]),
-                        center: .top,
-                        startRadius: 0,
-                        endRadius: max(1, headerHeight) * 1.3
-                    )
-                    .frame(height: bandHeight)
-                    Color.white
-                }
-                .ignoresSafeArea()
-            }
+            // Let the scroll content run under the top safe area so the
+            // header gradient reaches the very top edge (a ScrollView clips
+            // its content to its bounds, which otherwise stop at the status
+            // bar — leaving a white strip above the gradient).
+            .ignoresSafeArea(.container, edges: .top)
+            // Everything below the header (and any bottom overscroll) is
+            // white. The header carries its own dark gradient as scroll
+            // content, so there's no viewport-fixed band to fall out of sync
+            // with the scrolling header.
+            .background(Color.white.ignoresSafeArea())
             .navigationDestination(for: DeckDocument.self) { deck in
                 DeckDetailView(deck: deck)
             }
@@ -145,6 +157,7 @@ struct LibraryView: View {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 avatarImageData = profile?.avatarImage
                 resolvePendingWidgetDeepLink()
+                recomputeWords()
             }
             .refreshable { await vm.loadDecks() }
             // Two triggers: the deckID arriving (warm app) and the deck
@@ -156,6 +169,13 @@ struct LibraryView: View {
             .onChange(of: vm.decks.count) { _, _ in
                 resolvePendingWidgetDeepLink()
             }
+            // Recompute the memoized Words list only when its inputs change
+            // (not on scroll). vm.decks covers loads/edits/seeded decks.
+            .onChange(of: vm.decks) { _, _ in recomputeWords() }
+            .onChange(of: sortOption) { _, _ in recomputeWords() }
+            .onChange(of: languageFilter) { _, _ in recomputeWords() }
+            .onChange(of: contentFilter) { _, _ in recomputeWords() }
+            .onChange(of: levelFilter) { _, _ in recomputeWords() }
         }
     }
 
@@ -171,7 +191,63 @@ struct LibraryView: View {
         router.pendingDeckID = nil
     }
 
+    // Height of the top safe area (status bar / Dynamic Island). Constant
+    // per device+orientation, so reading it from the key window is stable
+    // and involves no per-frame state. Used to pad the header content below
+    // the status bar now that the scroll view draws under it.
+    private var statusBarInset: CGFloat {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }?
+            .safeAreaInsets.top ?? 0
+    }
+
     // MARK: Profile header (dark gradient)
+
+    // Dark backdrop for the profile header, implemented as a stretchy,
+    // top-pinned band. Reading the header's live offset within the scroll
+    // view (minY) lets us keep:
+    //   • the TOP edge pinned to the top of the scroll view (it never
+    //     scrolls away — so no black slides into view), and
+    //   • the BOTTOM edge glued to the header's bottom (so the white
+    //     "View Statistics" text is always over dark — never cropped).
+    // On a pull-down overscroll (minY > 0) the band simply grows taller,
+    // giving the stretchy feel. A solid near-black region above the radial
+    // (the radial's own top-stop color, invisible seam) covers the status
+    // bar and any extra slack. GeometryReader recomputes only this
+    // background — it writes no @State — so the lazy lists never churn.
+    private var headerBackground: some View {
+        GeometryReader { geo in
+            let minY = geo.frame(in: .scrollView).minY
+            // Distance from the scroll view's top down to the header's
+            // bottom edge — the band's on-screen height at this moment.
+            let fillHeight = max(1, headerHeight + minY)
+            // Extra dark drawn ABOVE the pinned top to cover the status bar
+            // and any pull-down slack; it never moves the bottom edge.
+            let topExtra: CGFloat = 260
+            VStack(spacing: 0) {
+                Color(red: 14/255, green: 12/255, blue: 12/255)
+                RadialGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: Color(red: 14/255, green: 12/255, blue: 12/255), location: 0.0),
+                        .init(color: Color(red: 70/255, green: 61/255, blue: 58/255), location: 0.5),
+                        .init(color: Color(red: 102/255, green: 102/255, blue: 102/255), location: 1.0)
+                    ]),
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: fillHeight * 1.3
+                )
+                .frame(height: fillHeight)
+            }
+            .frame(width: geo.size.width, height: fillHeight + topExtra)
+            // Pin the top to the scroll view's top (and lift by topExtra so
+            // the solid black fills the status bar). The bottom lands exactly
+            // at the header's bottom edge regardless of scroll position.
+            .offset(y: -minY - topExtra)
+        }
+        .ignoresSafeArea(edges: .top)
+    }
 
     private var profileHeader: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -440,11 +516,10 @@ struct LibraryView: View {
     // Underline-on-active tab bar matching the Deck Detail page's
     // Content/Artifacts/Stats treatment.
     private var sectionBar: some View {
-        HStack(spacing: 28) {
+        HStack(spacing: 0) {
             ForEach(LibrarySection.allCases) { item in
                 sectionButton(item)
             }
-            Spacer()
         }
         .padding(.horizontal, 8)
         // Gap between the header area and the section titles.
@@ -466,6 +541,7 @@ struct LibraryView: View {
                     .fill(section == item ? Color.black : Color.clear)
                     .frame(height: 2)
             }
+            .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -484,24 +560,32 @@ struct LibraryView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 40)
         } else {
-            ForEach(decks) { deck in
-                // Tap-driven navigation (instead of NavigationLink) so a
-                // horizontal swipe isn't swallowed as a row tap — it falls
-                // through to the section-switch drag gesture.
-                LibraryDeckRow(deck: deck)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        Haptics.light()
-                        path.append(deck)
+            // Lazy so only on-screen rows are built.
+            LazyVStack(spacing: 0) {
+                ForEach(decks) { deck in
+                    // Tap-driven navigation (instead of NavigationLink) so a
+                    // horizontal swipe isn't swallowed as a row tap — it falls
+                    // through to the section-switch drag gesture.
+                    LibraryDeckRow(deck: deck)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            Haptics.light()
+                            path.append(deck)
+                        }
+                    // Thin divider between rows (not after the last), inset
+                    // to the same 8pt margin as the row content.
+                    if deck.id != decks.last?.id {
+                        Divider()
+                            .padding(.horizontal, 8)
                     }
+                }
             }
         }
     }
 
     @ViewBuilder
     private var wordsSection: some View {
-        let words = visibleWords
-        if words.isEmpty {
+        if wordsToShow.isEmpty {
             Text("No words match this filter.")
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.secondary)
@@ -509,13 +593,23 @@ struct LibraryView: View {
                 .padding(.horizontal, 24)
                 .padding(.vertical, 40)
         } else {
-            ForEach(words) { entry in
-                LibraryWordRow(entry: entry)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        Haptics.light()
-                        path.append(entry.deck)
+            // Lazy + memoized: only visible rows render, and the list isn't
+            // recomputed on every scroll frame.
+            LazyVStack(spacing: 0) {
+                ForEach(wordsToShow) { entry in
+                    LibraryWordRow(entry: entry)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            Haptics.light()
+                            path.append(entry.deck)
+                        }
+                    // Thin divider between rows (not after the last), inset
+                    // to the same 8pt margin as the row content.
+                    if entry.id != wordsToShow.last?.id {
+                        Divider()
+                            .padding(.horizontal, 8)
                     }
+                }
             }
         }
     }
@@ -531,21 +625,26 @@ struct LibraryView: View {
                 selection: $languageFilter
             )
             filterMenu(
+                title: "Content",
+                options: ["Words", "Sentences"],
+                selection: $contentFilter
+            )
+            filterMenu(
                 title: "Level",
                 options: availableLevels,
                 selection: $levelFilter
             )
             Spacer(minLength: 0)
-            if languageFilter != nil || levelFilter != nil {
+            if languageFilter != nil || levelFilter != nil || contentFilter != nil {
                 Button {
                     Haptics.light()
                     languageFilter = nil
                     levelFilter = nil
+                    contentFilter = nil
                 } label: {
                     Text("Clear")
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.secondary)
-                        .underline()
                 }
                 .buttonStyle(.plain)
             }
@@ -652,6 +751,18 @@ struct LibraryView: View {
         Array(Set(vm.decks.map { $0.level })).sorted()
     }
 
+    // Content-type match for the Content filter. "Words" matches word
+    // decks; "Sentences" matches both sentence and phrase decks so nothing
+    // is orphaned. nil (All) matches everything.
+    private func matchesContentFilter(_ deck: DeckDocument) -> Bool {
+        guard let contentFilter else { return true }
+        switch contentFilter {
+        case "Words":     return deck.contentType == "Words"
+        case "Sentences": return deck.contentType == "Sentences" || deck.contentType == "Phrases"
+        default:          return true
+        }
+    }
+
     // Single computed pipeline: apply filters first (since they're
     // cheaper than the urgency sort), then order. Falls back to
     // forgetting-score sort if scores aren't loaded yet for some
@@ -660,6 +771,7 @@ struct LibraryView: View {
     private var visibleDecks: [DeckDocument] {
         let filtered = vm.decks.filter { deck in
             (languageFilter == nil || deck.language == languageFilter!)
+                && matchesContentFilter(deck)
                 && (levelFilter == nil || deck.level == levelFilter!)
         }
         switch sortOption {
@@ -678,13 +790,16 @@ struct LibraryView: View {
         }
     }
 
-    // Every item across all (filtered) decks, flattened and paired with
-    // its parent deck so a tap routes to the containing deck. Defaults to
-    // most-recently-added first, using the item's own `addedAt` when set
-    // and falling back to the deck's `createdAt` for legacy items.
-    private var visibleWords: [LibraryWordEntry] {
+    // Recomputes the memoized Words list (`wordsToShow`). Flattens every
+    // item across all filtered decks, pairs each with its parent deck, and
+    // sorts. Called only when the inputs change — NOT on every body render
+    // — so scroll stays smooth. Defaults to most-recently-added first,
+    // using the item's own `addedAt` when set and falling back to the
+    // deck's `createdAt` for legacy items.
+    private func recomputeWords() {
         let filtered = vm.decks.filter { deck in
             (languageFilter == nil || deck.language == languageFilter!)
+                && matchesContentFilter(deck)
                 && (levelFilter == nil || deck.level == levelFilter!)
         }
         let entries = filtered.flatMap { deck in
@@ -692,13 +807,13 @@ struct LibraryView: View {
         }
         switch sortOption {
         case .alphabetical:
-            return entries.sorted {
+            wordsToShow = entries.sorted {
                 $0.item.word.localizedCaseInsensitiveCompare($1.item.word) == .orderedAscending
             }
         case .recent, .forgetting:
             // Forgetting urgency is deck-level, so for the word list it
             // falls back to the recency ordering.
-            return entries.sorted { ($0.addedDate) > ($1.addedDate) }
+            wordsToShow = entries.sorted { ($0.addedDate) > ($1.addedDate) }
         }
     }
 }

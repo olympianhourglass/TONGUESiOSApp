@@ -23,11 +23,36 @@ struct CreateDeckSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var vm = CreateDeckViewModel()
     @State private var didApplyProfileDefaults = false
+    // Presents the multi-select picker for attaching existing decks as
+    // reference material for generation.
+    @State private var showReferencePicker = false
     var preset: CreateDeckPreset? = nil
     // When true (first-run path from the Study tab coach mark), the sheet
     // runs a guided hand tour over the parameters + Generate button.
     var startTutorial: Bool = false
+    // Opens the Direct tab straight in Conversation mode (the "Conversation"
+    // quick action). The initial page itself is seeded into `currentPage`
+    // via the custom init below.
+    var initialDirectConversation: Bool = false
     let onComplete: () -> Void
+
+    init(
+        preset: CreateDeckPreset? = nil,
+        startTutorial: Bool = false,
+        initialPage: Int = 0,
+        initialDirectConversation: Bool = false,
+        onComplete: @escaping () -> Void
+    ) {
+        self.preset = preset
+        self.startTutorial = startTutorial
+        self.initialDirectConversation = initialDirectConversation
+        self.onComplete = onComplete
+        // Seed the paged TabView + its bottom toggle to the requested tab
+        // (Camera / Direct) so a quick action lands there with no visible
+        // swipe from page 0.
+        _currentPage = State(initialValue: initialPage)
+        _togglePosition = State(initialValue: initialPage)
+    }
 
     // Coach-tour state: collected control frames, the control the tour is
     // currently focusing (drives scroll-to-reveal), and whether it's live.
@@ -93,7 +118,8 @@ struct CreateDeckSheet: View {
                         Haptics.success()
                         onComplete()
                         dismiss()
-                    }
+                    },
+                    startInConversation: initialDirectConversation
                 )
                 .tag(2)
                 SongVideoLinkPage(
@@ -130,6 +156,19 @@ struct CreateDeckSheet: View {
             // `indexDisplayMode: .never` hides the system dots since
             // the custom toggle below is the source of truth.
             .tabViewStyle(.page(indexDisplayMode: .never))
+            // Full-bleed white backdrop behind the paged TabView — the same
+            // technique the Study tab uses for its status bar. The backdrop
+            // ignores the safe area so it fills the status-bar strip with the
+            // page background color, turning the old white *clipping* bar into
+            // a seamless continuation of the page. Crucially this is a
+            // BACKGROUND layer, not `.ignoresSafeArea` on the TabView itself
+            // (which blanks the non-initial pages), so paging stays intact.
+            .background {
+                Color.white.ignoresSafeArea()
+            }
+            // The nav bar carries no title/items (the close X is a custom
+            // overlay), so hide it outright.
+            .toolbar(.hidden, for: .navigationBar)
             // Custom close button (replaces the prior ToolbarItem). We
             // own positioning here so the X + its circular background
             // can sit exactly 8pt from the screen's leading edge —
@@ -150,6 +189,8 @@ struct CreateDeckSheet: View {
                         .glassEffect(.regular.interactive(), in: .circle)
                 }
                 .padding(.leading, 8)
+                // Sit just below the top safe area, where a navigational
+                // close button would normally live.
                 .padding(.top, 8)
             }
             .safeAreaInset(edge: .bottom) {
@@ -413,6 +454,8 @@ struct CreateDeckSheet: View {
                     }
                     .scrollClipDisabled()
 
+                    referenceDecksSection
+
                     ScrollViewReader { hProxy in
                         ScrollView(.horizontal, showsIndicators: false) {
                             AttributesRow(
@@ -497,6 +540,61 @@ struct CreateDeckSheet: View {
             )
             .onAppear { vScrollProxy = vProxy }
         }
+        .sheet(isPresented: $showReferencePicker) {
+            DeckReferencePickerSheet(initiallySelected: vm.referencedDecks) { chosen in
+                vm.referencedDecks = chosen
+            }
+        }
+    }
+
+    // "Reference decks" affordance: attached decks show as removable
+    // chips, followed by an add pill that opens the multi-select picker.
+    // Feeds vm.referencedDecks into the generation prompt.
+    private var referenceDecksSection: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(vm.referencedDecks) { deck in
+                    HStack(spacing: 6) {
+                        Text(deck.title)
+                            .font(.custom("NeueHaasDisplay-Mediu", size: 14))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                        Button {
+                            Haptics.light()
+                            vm.referencedDecks.removeAll { $0.id == deck.id }
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.8))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.leading, 14)
+                    .padding(.trailing, 10)
+                    .padding(.vertical, 8)
+                    .background(Capsule().fill(Color.black))
+                }
+
+                Button {
+                    Haptics.light()
+                    isInterestFieldFocused = false
+                    showReferencePicker = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 12, weight: .medium))
+                        Text(vm.referencedDecks.isEmpty ? "Reference a deck" : "Add")
+                            .font(.custom("NeueHaasDisplay-Mediu", size: 14))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .overlay(Capsule().stroke(Color(white: 0.82), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .scrollClipDisabled()
     }
 
     // Display names for each page. Page 0 ("Generate") is the existing
@@ -601,12 +699,18 @@ struct CreateDeckSheet: View {
     // and shows interest chips drawn from their own Q8 selections
     // (instead of the legacy medical sample list). Runs once per sheet
     // lifetime; never overwrites a value the user picked.
+    // Tracks what the last seeding pass wrote so a later Firestore
+    // reconcile can tell whether the user has since changed a field by
+    // hand (and must not be overwritten).
+    private struct AttributeSeed {
+        var language: String?
+        var seededInterests = false
+    }
+
     @MainActor
     private func applyProfileDefaultsIfNeeded() async {
         guard !didApplyProfileDefaults else { return }
         didApplyProfileDefaults = true
-
-        let profile = try? await UserService.fetchProfile()
 
         // Preset prefill (Explore tab "You might like these topics"):
         // overrides the random-9-chip draw and the first-language default
@@ -614,51 +718,101 @@ struct CreateDeckSheet: View {
         // as the only selected chip; any additional onboarding chips fill
         // the rest of the row so the user can still expand the selection.
         if let preset {
-            let canonical = canonicalLanguageName(preset.language)
-            vm.language = canonical
-            let validDialects = dialects(for: canonical)
-            vm.dialect = validDialects.first ?? vm.dialect
-            let validLevels = levels(for: canonical)
-            vm.level = validLevels.contains(preset.level) ? preset.level : (validLevels.first ?? vm.level)
-
-            var options: [String] = [preset.topic]
-            if let interests = profile?.onboarding?.interests {
-                for interest in interests.shuffled() where interest != preset.topic && options.count < 9 {
-                    options.append(interest)
-                }
+            // Language/level come from the preset synchronously, so there's
+            // no cold-start flash here. Fill extra interest chips from the
+            // cache instantly; only hit the network if the cache is empty.
+            let cachedInterests = UserService.cachedOnboarding()?.interests
+            applyPreset(preset, interests: cachedInterests)
+            if cachedInterests == nil {
+                let profile = try? await UserService.fetchProfile()
+                applyPreset(preset, interests: profile?.onboarding?.interests)
             }
-            vm.interestOptions = options
-            vm.selectedInterests = [preset.topic]
             return
         }
 
-        guard let profile else { return }
+        // Seed instantly from the on-device cache so the AttributesRow
+        // shows the user's real language immediately instead of flashing
+        // the generic "Arabic · MSA · A1" default while Firestore loads.
+        let seed = applyOnboardingDefaults(UserService.cachedOnboarding(), previousSeed: nil)
 
-        // Interest chips — random 9 from the user's onboarding "What
-        // are you most interested in?" picks. Shuffled once per sheet
-        // open so chips stay stable while the user interacts, but a
-        // fresh draw appears on the next open. If the user has fewer
-        // than 9 interests, show all of them. If they have none on
-        // file (legacy pre-Q8 users), the VM's medical fallback stays
-        // in place.
-        if let interests = profile.onboarding?.interests, !interests.isEmpty {
+        // Reconcile with the authoritative Firestore copy when it lands.
+        // Fields the user has since changed by hand are left alone.
+        let profile = try? await UserService.fetchProfile()
+        _ = applyOnboardingDefaults(profile?.onboarding, previousSeed: seed)
+    }
+
+    @MainActor
+    private func applyPreset(_ preset: CreateDeckPreset, interests: [String]?) {
+        let canonical = canonicalLanguageName(preset.language)
+        vm.language = canonical
+        let validDialects = dialects(for: canonical)
+        vm.dialect = validDialects.first ?? vm.dialect
+        let validLevels = levels(for: canonical)
+        vm.level = validLevels.contains(preset.level) ? preset.level : (validLevels.first ?? vm.level)
+
+        var options: [String] = [preset.topic]
+        if let interests {
+            for interest in interests.shuffled() where interest != preset.topic && options.count < 9 {
+                options.append(interest)
+            }
+        }
+        vm.interestOptions = options
+        vm.selectedInterests = [preset.topic]
+    }
+
+    // Applies language / dialect / level / interest defaults from an
+    // onboarding-answers source. `previousSeed` is nil on the first
+    // (cache) pass and carries the cache result on the second (network)
+    // pass so we only overwrite fields the user hasn't touched. Returns
+    // what it seeded so the caller can thread it into the next pass.
+    @MainActor
+    @discardableResult
+    private func applyOnboardingDefaults(
+        _ answers: OnboardingAnswers?,
+        previousSeed: AttributeSeed?
+    ) -> AttributeSeed {
+        var seed = AttributeSeed()
+        guard let answers else { return previousSeed ?? seed }
+
+        // Interest chips — random 9 from the user's onboarding picks.
+        // Seed once (cache pass); the network pass leaves them be so the
+        // chips don't visibly reshuffle a beat after the sheet opens. Only
+        // seed while the user hasn't selected any, so an in-progress
+        // selection is never wiped.
+        let alreadySeededInterests = previousSeed?.seededInterests == true
+        if alreadySeededInterests {
+            seed.seededInterests = true
+        } else if let interests = answers.interests, !interests.isEmpty, vm.selectedInterests.isEmpty {
             vm.interestOptions = Array(interests.shuffled().prefix(9))
             vm.selectedInterests = []
+            seed.seededInterests = true
         }
 
-        guard let pref = profile.onboarding?.languagePreferences?.first else {
-            return
+        guard let pref = answers.languagePreferences?.first else {
+            seed.language = previousSeed?.language
+            return seed
         }
         // Normalize Claude-style shorthand ("Mandarin" → "Chinese (Mandarin)")
         // so the AttributesRow shows it and the dialect/level pickers find
         // matching options.
-        vm.language = canonicalLanguageName(pref.language)
+        let canonical = canonicalLanguageName(pref.language)
+        // Only overwrite the language if the user hasn't changed it away
+        // from what the previous pass seeded (on the first pass there's no
+        // prior seed, so we always apply).
+        let mayOverwrite = previousSeed == nil || vm.language == previousSeed?.language
+        guard mayOverwrite else {
+            seed.language = previousSeed?.language
+            return seed
+        }
+        vm.language = canonical
         // Snap dialect / level to options valid for that language; falls
         // back to the user's onboarding choice when it's already valid.
-        let validDialects = dialects(for: vm.language)
+        let validDialects = dialects(for: canonical)
         vm.dialect = validDialects.contains(pref.dialect) ? pref.dialect : (validDialects.first ?? vm.dialect)
-        let validLevels = levels(for: vm.language)
+        let validLevels = levels(for: canonical)
         vm.level = validLevels.contains(pref.level) ? pref.level : (validLevels.first ?? vm.level)
+        seed.language = canonical
+        return seed
     }
 
     // Split out of the navigationDestination closure to keep the

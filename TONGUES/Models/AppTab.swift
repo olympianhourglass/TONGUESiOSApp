@@ -40,6 +40,24 @@ final class AppTabRouter {
         didSet { applyStatusBarStyle() }
     }
 
+    // When true, the status bar shows dark (black) content regardless of
+    // the current tab. Pushed detail screens with a light backdrop — e.g.
+    // DeckDetailView — set this so the bar stays legible over their light
+    // surface, then clear it when they leave.
+    var forceDarkStatusBar: Bool = false {
+        didSet { applyStatusBarStyle() }
+    }
+
+    // When true, the status bar shows light (white) content regardless of
+    // the current tab or `forceDarkStatusBar`. Full-screen dark surfaces
+    // that can be reached from any tab — e.g. the audio ListenSessionView,
+    // which may be presented over DeckDetailView arrived at from a
+    // light-content tab like Explore — set this so the bar stays white no
+    // matter where it was launched from, then clear it when they leave.
+    var forceLightStatusBar: Bool = false {
+        didSet { applyStatusBarStyle() }
+    }
+
     func applyStatusBarStyle() {
         StatusBarStyleSwap.installAndRefresh()
     }

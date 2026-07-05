@@ -60,6 +60,11 @@ enum DeckGenerator {
         // call site behaves identically.
         knownWordsToAvoid: [String] = [],
         recycleWords: [String] = [],
+        // Existing decks the learner attached as reference material on the
+        // Generate form. Their titles + a sample of items are injected
+        // into the prompt so the model can match style, extend themes, or
+        // adapt them cross-language. Empty for every non-referencing path.
+        referencedDecks: [DeckDocument] = [],
         // When true, the cap pre-check + usage consumption are skipped
         // entirely. Used for the onboarding starter-deck seeding, which is
         // free and must never touch the paywall or the free-deck grace.
@@ -76,8 +81,8 @@ enum DeckGenerator {
             await SubscriptionService.shared.refresh()
             try await SubscriptionService.shared.ensureCapacity(in: bucket, requested: requestedCount)
         }
-        // Model laddered to tier: Beginner → Haiku, Pro → Sonnet,
-        // Max → Opus. Captured here before the API call so a mid-flight
+        // Model laddered to tier: Standard + Pro → Sonnet, Max → Opus
+        // (free falls back to Haiku). Captured here before the API call so a mid-flight
         // tier change can't swap models inside one generation.
         let model = await SubscriptionService.shared.currentTier.generationModel
 
@@ -92,7 +97,8 @@ enum DeckGenerator {
             level: level,
             tones: tones,
             knownWordsToAvoid: knownWordsToAvoid,
-            recycleWords: recycleWords
+            recycleWords: recycleWords,
+            referencedDecks: referencedDecks
         )
         let (decoded, rawJSON) = try await AnthropicClient.sendStructuredOutput(
             toolName: "submit_deck",
@@ -172,7 +178,8 @@ enum DeckGenerator {
         level: String,
         tones: [String],
         knownWordsToAvoid: [String] = [],
-        recycleWords: [String] = []
+        recycleWords: [String] = [],
+        referencedDecks: [DeckDocument] = []
     ) -> String {
         var personalization = ""
         if !knownWordsToAvoid.isEmpty {
@@ -183,6 +190,7 @@ enum DeckGenerator {
             let list = recycleWords.prefix(8).joined(separator: ", ")
             personalization += "\n\nThe learner keeps forgetting these — deliberately work a few back in where they fit the topic (as items themselves, or inside phrases/sentences):\n\(list)"
         }
+        personalization += referenceDecksBlock(referencedDecks, language: language, dialect: dialect)
         let interestsLine = interests.isEmpty ? "(none specified)" : interests.joined(separator: ", ")
         let userText = userPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let userPromptLine = userText.isEmpty ? "(none)" : userText
@@ -221,6 +229,41 @@ enum DeckGenerator {
           - If the language has grammatical gender but no comparable article (Russian, Polish, Czech, Ukrainian, most Slavic; Arabic, etc.), still leave "word" as the bare noun, but append a short gender tag in parentheses to "translation": "(m.)", "(f.)", "(n.)", or "(m. pl.)" / "(f. pl.)" when plurality differs from English.
           - Pick the canonical lemma — singular for nouns, masculine singular for adjectives — unless the user prompt explicitly asks otherwise.
         • For non-nouns (verbs, adjectives, adverbs), do NOT prepend articles.
+        """
+    }
+
+    // Builds the "referenced decks" context block appended to the prompt
+    // when the learner attaches existing decks on the Generate form. Caps
+    // both the number of decks and items per deck so a large library
+    // can't blow the token budget.
+    private static func referenceDecksBlock(
+        _ decks: [DeckDocument],
+        language: String,
+        dialect: String
+    ) -> String {
+        guard !decks.isEmpty else { return "" }
+        let maxDecks = 3
+        let maxItemsPerDeck = 40
+        let blocks = decks.prefix(maxDecks).map { deck -> String in
+            let sample = deck.items.prefix(maxItemsPerDeck).map { item -> String in
+                let translit = item.transliteration.map { " (\($0))" } ?? ""
+                return "  • \(item.word)\(translit) — \(item.translation)"
+            }.joined(separator: "\n")
+            let more = deck.items.count > maxItemsPerDeck
+                ? "\n  … and \(deck.items.count - maxItemsPerDeck) more"
+                : ""
+            return "Deck \"\(deck.title)\" (\(deck.dialect) \(deck.language), \(deck.contentType)):\n\(sample)\(more)"
+        }.joined(separator: "\n\n")
+
+        return """
+
+
+        The learner attached these existing decks of theirs as reference material for this generation. Use them as context:
+        • Match their style, register, and difficulty where it fits the request above.
+        • Build on or extend these themes. Do NOT duplicate items that already appear below unless the user's prompt explicitly asks to expand or continue one of these decks.
+        • If a referenced deck is in a language other than \(dialect) \(language), treat it as meaning-level inspiration — adapt or translate the concepts into \(dialect) \(language) rather than copying the foreign words verbatim.
+
+        \(blocks)
         """
     }
 
@@ -779,6 +822,62 @@ enum DeckGenerator {
         } catch {
             return []
         }
+    }
+
+    // Suggests one refreshed deck title that reflects the deck's CURRENT
+    // contents — used by the Rename sheet, where a deck's items may have
+    // drifted from what its original title described (merges, camera
+    // finds, generate-more). Haiku 4.5 with a tight token cap keeps the
+    // call ~free. Falls back to the existing title on any failure so the
+    // sheet always has something to show.
+    static func suggestDeckTitle(for deck: DeckDocument) async throws -> String {
+        // Sample the deck so a large deck doesn't blow the prompt; the
+        // first ~30 items are plenty to characterize the theme.
+        let sample = deck.items.prefix(30).map { item -> String in
+            let translit = item.transliteration.map { " (\($0))" } ?? ""
+            return "• \(item.word)\(translit) — \(item.translation)"
+        }.joined(separator: "\n")
+        let interestsLine = deck.interests.isEmpty
+            ? "(none specified)"
+            : deck.interests.joined(separator: ", ")
+        let prompt = """
+        A language learner wants a refreshed title for one of their \(deck.dialect) \(deck.language) vocabulary decks. Read the deck's CURRENT contents below and propose a single title that accurately captures what the deck now covers — its contents may have drifted from the old title.
+
+        Current title: "\(deck.title)"
+        Content type: \(deck.contentType)
+        Topic categories: \(interestsLine)
+        Sample of the deck's \(deck.items.count) items:
+        \(sample)
+
+        Submit exactly one title by calling `submit_deck_title`.
+
+        Rules:
+        • 3 to 6 words, in English (never in \(deck.language)).
+        • Specific and evocative — name the actual theme ("Neapolitan Street Food", not "Food Words").
+        • Title Case, no surrounding quotes, no trailing punctuation.
+        • If the current title already fits the contents well, you may return a polished version of it.
+        """
+        struct Response: Codable { let title: String }
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "title": .schemaString("A 3-6 word English deck title in Title Case, no quotes.")
+            ],
+            required: ["title"]
+        )
+        let decoded: Response = try await AnthropicClient.sendStructured(
+            toolName: "submit_deck_title",
+            toolDescription: "Submit one refreshed deck title.",
+            schema: schema,
+            userPrompt: prompt,
+            system: audiencePolicy,
+            model: "claude-haiku-4-5-20251001",
+            maxTokens: 128,
+            as: Response.self
+        )
+        let cleaned = decoded.title
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'“”‘’"))
+        return cleaned.isEmpty ? deck.title : cleaned
     }
 
     // Asks Claude Haiku to map a user's dream destinations to language
@@ -2352,6 +2451,7 @@ enum DeckGenerator {
             let foreign: String
             let transliteration: String?
             let partsOfSpeech: [String]?
+            let confidence: String?
         }
         let schema = JSONValue.schemaObject(
             properties: [
@@ -2365,6 +2465,10 @@ enum DeckGenerator {
                 "partsOfSpeech": .schemaArray(
                     items: .schemaString("Standard English grammatical category."),
                     description: "One or more of: Noun, Verb, Adjective, Adverb, Phrase, Sentence, Interjection."
+                ),
+                "confidence": .schemaEnum(
+                    ["HIGH", "MEDIUM", "LOW"],
+                    description: "Your honest confidence that the translation is fully correct — the meaning, and (for nouns) the article/gender and dialect authenticity. Use LOW/MEDIUM whenever the input is ambiguous, a rare term, or you're unsure of the article or dialect-specific wording."
                 )
             ],
             required: ["detected", "english", "foreign"]
@@ -2380,10 +2484,23 @@ enum DeckGenerator {
             as: Decoded.self
         )
 
-        let item = GeneratedItem(
-            word: decoded.foreign,
-            translation: decoded.english,
+        // Confidence-gated review: only pay for a proofreading pass when
+        // the first call wasn't sure. The user's exact input anchors the
+        // audit (one side should match it closely).
+        let reviewed = await reviewIfUncertain(
+            confidence: decoded.confidence,
+            english: decoded.english,
+            foreign: decoded.foreign,
             transliteration: decoded.transliteration,
+            sourceText: trimmed,
+            language: foreignLanguage,
+            dialect: dialect
+        )
+
+        let item = GeneratedItem(
+            word: reviewed.foreign,
+            translation: reviewed.english,
+            transliteration: reviewed.transliteration,
             language: foreignLanguage,
             partsOfSpeech: decoded.partsOfSpeech
         )
@@ -2424,6 +2541,7 @@ enum DeckGenerator {
             let word: String
             let transliteration: String?
             let partsOfSpeech: [String]?
+            let confidence: String?
         }
         let schema = JSONValue.schemaObject(
             properties: [
@@ -2433,6 +2551,10 @@ enum DeckGenerator {
                 "partsOfSpeech": .schemaArray(
                     items: .schemaString("Standard English grammatical category."),
                     description: "Usually [\"Noun\"]."
+                ),
+                "confidence": .schemaEnum(
+                    ["HIGH", "MEDIUM", "LOW"],
+                    description: "Your honest confidence in the \(language) translation — the word choice, and the article/gender and dialect authenticity. Use LOW/MEDIUM when the object is ambiguous or unusual, or when you're unsure of the article or the \(dialect)-specific word."
                 )
             ],
             required: ["english", "word"]
@@ -2447,14 +2569,221 @@ enum DeckGenerator {
             as: Decoded.self
         )
 
-        let item = GeneratedItem(
-            word: decoded.word,
-            translation: decoded.english,
+        // Confidence-gated review. The English label is the object the
+        // vision model saw, so we anchor the audit to it and let the
+        // proofreader correct the \(language) side (article/gender/dialect)
+        // only when the first pass wasn't confident.
+        let reviewed = await reviewIfUncertain(
+            confidence: decoded.confidence,
+            english: decoded.english,
+            foreign: decoded.word,
             transliteration: decoded.transliteration,
+            sourceText: decoded.english,
+            language: language,
+            dialect: dialect
+        )
+
+        let item = GeneratedItem(
+            word: reviewed.foreign,
+            translation: reviewed.english,
+            transliteration: reviewed.transliteration,
             language: language,
             partsOfSpeech: decoded.partsOfSpeech ?? ["Noun"]
         )
-        return IdentifyObjectResult(item: item, englishLabel: decoded.english)
+        return IdentifyObjectResult(item: item, englishLabel: reviewed.english)
+    }
+
+    // Camera "Sign" mode. Reads the text off a photographed sign/menu/
+    // label with a single Haiku 4.5 vision call and translates it in the
+    // same shot. Uses the vision model rather than on-device OCR because
+    // Apple's Vision text recognition is unreliable for non-Latin scripts
+    // (Chinese/Japanese/Arabic), whereas the vision model transcribes any
+    // script robustly. Returns the same IdentifyObjectResult shape as the
+    // object path so every downstream save flow just works.
+    static func readSign(
+        imageData: Data,
+        language: String,
+        dialect: String
+    ) async throws -> IdentifyObjectResult {
+        let prompt = """
+        Look at the attached photo of a sign, label, menu, storefront, or other text. Transcribe the most prominent block of text exactly as written, then translate it to English.
+
+        The learner is studying \(dialect) \(language), so the sign is most likely in that language.
+
+        Submit your reading by calling `submit_sign_reading`.
+
+        Content rules:
+        • "original" must be the text exactly as it appears, in its native script (do NOT romanize it here). If the text spans multiple lines, join them into one natural phrase in reading order.
+        • "english" must be a natural English translation of that text — not a word-for-word gloss.
+        • "transliteration" is a Latin-script romanization for non-Latin scripts (pinyin with tone marks for Chinese, romaji for Japanese, etc.); null when the text is already in Latin script.
+        • If the photo genuinely contains no legible text, return empty strings for "original" and "english".
+        """
+
+        struct Decoded: Decodable {
+            let original: String
+            let english: String
+            let transliteration: String?
+            let partsOfSpeech: [String]?
+            let confidence: String?
+        }
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "original": .schemaString("The sign's text exactly as written, in its native script. Empty string if no legible text."),
+                "english": .schemaString("Natural English translation of the text. Empty string if no legible text."),
+                "transliteration": .schemaNullableString("Latin-script romanization for non-Latin scripts (pinyin/romaji/etc.); null for Latin-script text."),
+                "partsOfSpeech": .schemaArray(
+                    items: .schemaString("Standard English grammatical category."),
+                    description: "Usually [\"Phrase\"] or [\"Sentence\"] for signage; [\"Noun\"] for a single-word sign."
+                ),
+                "confidence": .schemaEnum(
+                    ["HIGH", "MEDIUM", "LOW"],
+                    description: "Your honest confidence in the transcription + translation. Use LOW/MEDIUM when the text is blurry, partially obscured, stylized, or ambiguous."
+                )
+            ],
+            required: ["original", "english"]
+        )
+        let base64 = imageData.base64EncodedString()
+        let decoded: Decoded = try await AnthropicClient.sendStructuredVision(
+            toolName: "submit_sign_reading",
+            toolDescription: "Submit the transcribed sign text and its English translation.",
+            schema: schema,
+            imageBase64: base64,
+            userPrompt: prompt,
+            as: Decoded.self
+        )
+
+        let original = decoded.original.trimmingCharacters(in: .whitespacesAndNewlines)
+        let english = decoded.english.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !original.isEmpty, !english.isEmpty else {
+            throw NSError(
+                domain: "DeckGenerator", code: 41,
+                userInfo: [NSLocalizedDescriptionKey: "No readable text found. Aim at a sign and try again."]
+            )
+        }
+
+        // Confidence-gated review, anchored to the transcribed original so
+        // the proofreader fixes the translation without drifting from what
+        // the sign actually says.
+        let reviewed = await reviewIfUncertain(
+            confidence: decoded.confidence,
+            english: english,
+            foreign: original,
+            transliteration: decoded.transliteration,
+            sourceText: original,
+            language: language,
+            dialect: dialect
+        )
+
+        let item = GeneratedItem(
+            word: reviewed.foreign,
+            translation: reviewed.english,
+            transliteration: reviewed.transliteration,
+            language: language,
+            partsOfSpeech: decoded.partsOfSpeech ?? ["Phrase"]
+        )
+        return IdentifyObjectResult(item: item, englishLabel: reviewed.english)
+    }
+
+    // MARK: - Confidence-gated translation review
+
+    // Shared, token-frugal proofreading layer for the camera pipelines.
+    // The primary model self-reports confidence; this only spends tokens
+    // when that confidence is missing or below HIGH, so the common case
+    // adds nothing. It's a small, text-only adversarial audit of the
+    // English↔foreign pair — the errors the cheap first pass most often
+    // makes (wrong article/gender, un-idiomatic dialect wording, a
+    // meaning that drifts from the source) — and returns corrected forms.
+    // Any failure falls back to the original values so review can never
+    // break the feature.
+    struct ReviewedTranslation {
+        let english: String
+        let foreign: String
+        let transliteration: String?
+    }
+
+    private static func reviewIfUncertain(
+        confidence: String?,
+        english: String,
+        foreign: String,
+        transliteration: String?,
+        sourceText: String?,
+        language: String,
+        dialect: String
+    ) async -> ReviewedTranslation {
+        let original = ReviewedTranslation(english: english, foreign: foreign, transliteration: transliteration)
+        // HIGH (or an unexpected value we can't act on) → no extra call.
+        guard let confidence, confidence.uppercased() != "HIGH" else { return original }
+        do {
+            return try await reviewTranslation(
+                english: english,
+                foreign: foreign,
+                transliteration: transliteration,
+                sourceText: sourceText,
+                language: language,
+                dialect: dialect
+            )
+        } catch {
+            return original
+        }
+    }
+
+    private static func reviewTranslation(
+        english: String,
+        foreign: String,
+        transliteration: String?,
+        sourceText: String?,
+        language: String,
+        dialect: String
+    ) async throws -> ReviewedTranslation {
+        let sourceLine = sourceText.map {
+            "\nThis pair was derived from the learner's original input — one of the two sides should match it faithfully:\nOriginal input: |||\($0)|||"
+        } ?? ""
+        let translitLine = (transliteration?.isEmpty == false)
+            ? "\nTransliteration: |||\(transliteration!)|||"
+            : ""
+        let prompt = """
+        You are a strict bilingual proofreader for a \(dialect) \(language) vocabulary app. Audit the translation pair below and fix any error you find.
+
+        English: |||\(english)|||
+        \(dialect) \(language): |||\(foreign)|||\(translitLine)\(sourceLine)
+
+        Check, in order:
+        • Meaning: the two sides must mean the same thing. If they don't, correct whichever side is wrong (when an original input is given, keep the side that matches it and fix the other).
+        • Article & gender: for a single noun in a language that uses definite articles, the correct singular definite article must be present and match the noun's grammatical gender.
+        • Dialect authenticity: the \(language) must be the word a native \(dialect) speaker would actually use — not a stiff, wrong-register, or wrong-region choice.
+        • Transliteration: if present, it must match the (possibly corrected) foreign form. If the language uses Latin script, it should be null.
+
+        If everything is already correct, return the values unchanged. Submit via `submit_reviewed_translation`.
+        """
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "english": .schemaString("The corrected (or unchanged) natural English form."),
+                "foreign": .schemaString("The corrected (or unchanged) \(dialect) \(language) form in its native script, with the correct definite article where applicable."),
+                "transliteration": .schemaNullableString("Latin-script romanization matching the foreign form; null for Latin-script languages.")
+            ],
+            required: ["english", "foreign"]
+        )
+        struct Decoded: Decodable {
+            let english: String
+            let foreign: String
+            let transliteration: String?
+        }
+        let decoded: Decoded = try await AnthropicClient.sendStructured(
+            toolName: "submit_reviewed_translation",
+            toolDescription: "Submit the audited, corrected translation pair.",
+            schema: schema,
+            userPrompt: prompt,
+            system: audiencePolicy,
+            model: "claude-haiku-4-5-20251001",
+            maxTokens: 512,
+            as: Decoded.self
+        )
+        let trimmedTranslit = decoded.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return ReviewedTranslation(
+            english: decoded.english.trimmingCharacters(in: .whitespacesAndNewlines),
+            foreign: decoded.foreign.trimmingCharacters(in: .whitespacesAndNewlines),
+            transliteration: (trimmedTranslit?.isEmpty == false) ? trimmedTranslit : nil
+        )
     }
 
     static func extractJSON(from text: String) -> String {

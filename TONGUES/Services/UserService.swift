@@ -8,6 +8,46 @@ enum UserService {
 
     static var currentUID: String? { Auth.auth().currentUser?.uid }
 
+    // MARK: - Local cache
+
+    // On-device mirror of the user's onboarding answers (which carry
+    // their language preferences). Reading Firestore on cold start takes
+    // long enough to visibly flash generic defaults in the UI — the
+    // Create New sheet, for one — so we persist the answers to
+    // UserDefaults and seed instantly from there, then reconcile with the
+    // authoritative Firestore copy when it lands. Keyed per-UID so a
+    // second account on the same device never reads the first's cache.
+    private static let onboardingCachePrefix = "cachedOnboardingAnswers_"
+
+    private static func onboardingCacheKey(for uid: String) -> String {
+        onboardingCachePrefix + uid
+    }
+
+    // Synchronous read of the cached onboarding answers for the signed-in
+    // user. Returns nil when signed-out or nothing has been cached yet.
+    static func cachedOnboarding() -> OnboardingAnswers? {
+        guard let uid = currentUID,
+              let data = UserDefaults.standard.data(forKey: onboardingCacheKey(for: uid))
+        else { return nil }
+        return try? JSONDecoder().decode(OnboardingAnswers.self, from: data)
+    }
+
+    private static func cacheOnboarding(_ answers: OnboardingAnswers?) {
+        guard let uid = currentUID else { return }
+        let key = onboardingCacheKey(for: uid)
+        guard let answers, let data = try? JSONEncoder().encode(answers) else {
+            UserDefaults.standard.removeObject(forKey: key)
+            return
+        }
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    // Clears the cached answers for a specific user. Called when wiping
+    // an account so a re-signup on the same device starts clean.
+    static func clearOnboardingCache(for uid: String) {
+        UserDefaults.standard.removeObject(forKey: onboardingCacheKey(for: uid))
+    }
+
     static func userDoc(uid: String) -> DocumentReference {
         db.collection(collection).document(uid)
     }
@@ -34,13 +74,19 @@ enum UserService {
         }
 
         try await ref.setData(payload, merge: true)
+        // Keep the on-device cache in lock-step so the next cold start
+        // seeds the freshly-saved language preferences instantly.
+        cacheOnboarding(answers)
     }
 
     static func fetchProfile() async throws -> UserProfile? {
         guard let uid = currentUID else { throw AuthError.notAuthenticated }
         let snapshot = try await userDoc(uid: uid).getDocument()
         guard snapshot.exists else { return nil }
-        return try snapshot.data(as: UserProfile.self)
+        let profile = try snapshot.data(as: UserProfile.self)
+        // Refresh the local cache from the authoritative copy.
+        cacheOnboarding(profile.onboarding)
+        return profile
     }
 
     // Writes only the bio field on the user document. Empty / blank
@@ -165,5 +211,9 @@ enum UserService {
         // gates onboarding routing on the next launch — disappears only
         // after the data it summarizes is already gone.
         try await userRef.delete()
+
+        // Drop the on-device onboarding cache too so a re-signup on this
+        // device doesn't inherit the deleted account's language prefs.
+        clearOnboardingCache(for: uid)
     }
 }

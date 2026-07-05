@@ -406,12 +406,65 @@ enum FirebaseDeckService {
         try await ref.setData(from: updated)
     }
 
+    // Removes a single item from a deck. Used by the deck detail list's
+    // swipe-to-delete. Rewrites the doc with the item filtered out; the
+    // deck's other fields are preserved verbatim.
+    static func removeItem(inDeck deckId: String, itemId: UUID) async throws {
+        let collection = try userDecks()
+        let ref = collection.document(deckId)
+        let snapshot = try await ref.getDocument()
+        let existing = try snapshot.data(as: DeckDocument.self)
+
+        let remaining = existing.items.filter { $0.id != itemId }
+        // Nothing matched — no write needed.
+        guard remaining.count != existing.items.count else { return }
+
+        let updated = DeckDocument(
+            id: existing.id,
+            title: existing.title,
+            language: existing.language,
+            dialect: existing.dialect,
+            level: existing.level,
+            contentType: existing.contentType,
+            amount: existing.amount,
+            tones: existing.tones,
+            interests: existing.interests,
+            userPrompt: existing.userPrompt,
+            items: remaining,
+            languages: existing.languages,
+            coverStyle: existing.coverStyle,
+            targetRetention: existing.targetRetention,
+            isPublic: existing.isPublic,
+            planUnitId: existing.planUnitId,
+            source: existing.source,
+            createdAt: existing.createdAt
+        )
+        try await ref.setData(from: updated)
+    }
+
     /// Updates only the FSRS target retention for a deck. Used by the deck
     /// detail view's retention adjuster — leaves everything else untouched.
     static func updateTargetRetention(deckId: String, retention: Double) async throws {
         let collection = try userDecks()
         try await collection.document(deckId).updateData([
             "targetRetention": retention
+        ])
+    }
+
+    // Renames a deck. Public decks live in this same per-user collection
+    // (surfaced via a collection-group query on `isPublic`), so updating
+    // the single document changes the title everywhere it appears.
+    static func renameDeck(deckId: String, title: String) async throws {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw NSError(
+                domain: "FirebaseDeckService", code: 40,
+                userInfo: [NSLocalizedDescriptionKey: "A deck needs a title."]
+            )
+        }
+        let collection = try userDecks()
+        try await collection.document(deckId).updateData([
+            "title": trimmed
         ])
     }
 

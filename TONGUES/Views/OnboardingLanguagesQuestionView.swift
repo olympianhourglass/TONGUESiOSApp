@@ -72,6 +72,7 @@ struct OnboardingLanguagesQuestionView: View {
                 Text("\(questionNumber) of \(totalQuestions)")
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
             }

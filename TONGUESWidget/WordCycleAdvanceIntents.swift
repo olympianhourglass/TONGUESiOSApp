@@ -27,7 +27,9 @@ struct AdvanceWordCycleIntent: AppIntent {
     init(sourceID: String) { self.sourceID = sourceID }
 
     func perform() async throws -> some IntentResult {
-        WidgetShuffleOffsetStore.advance(.home(sourceID: sourceID))
+        // True shuffle: reseed so the provider reshuffles the whole pool
+        // and lands on a random card, not the next one in order.
+        WidgetShuffleOffsetStore.randomize(.home(sourceID: sourceID))
         WidgetCenter.shared.reloadTimelines(ofKind: "WordCycleWidget")
         return .result()
     }
@@ -41,7 +43,7 @@ struct AdvanceLockScreenWordIntent: AppIntent {
     static var isDiscoverable = false
 
     func perform() async throws -> some IntentResult {
-        WidgetShuffleOffsetStore.advance(.lockScreen)
+        WidgetShuffleOffsetStore.randomize(.lockScreen)
         WidgetCenter.shared.reloadTimelines(ofKind: "LockScreenWordWidget")
         return .result()
     }

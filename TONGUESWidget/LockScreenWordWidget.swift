@@ -77,6 +77,11 @@ struct LockScreenWordProvider: TimelineProvider {
             timeIntervalSince1970: Double(firstSlot) * Self.stepInterval
         )
         let offset = WidgetShuffleOffsetStore.read(.lockScreen)
+        // True shuffle: deterministic permutation seeded by the stored
+        // value. Tapping shuffle reseeds → a random word; hourly steps walk
+        // the shuffled order rather than the raw pool order.
+        var generator = WidgetSeededGenerator(seed: UInt64(bitPattern: Int64(offset)))
+        let sequence = pool.shuffled(using: &generator)
 
         var entries: [LockScreenWordEntry] = []
         entries.reserveCapacity(Self.entriesPerTimeline)
@@ -85,10 +90,10 @@ struct LockScreenWordProvider: TimelineProvider {
                 Double(step) * Self.stepInterval
             )
             let slot = firstSlot + step
-            let index = ((slot + offset) % pool.count + pool.count) % pool.count
+            let index = ((slot) % sequence.count + sequence.count) % sequence.count
             entries.append(LockScreenWordEntry(
                 date: date,
-                card: pool[index]
+                card: sequence[index]
             ))
         }
         let nextRefresh = entries.last?.date.addingTimeInterval(Self.stepInterval)

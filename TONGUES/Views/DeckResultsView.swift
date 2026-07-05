@@ -121,7 +121,7 @@ struct DeckResultsView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
 
-                HStack(spacing: 12) {
+                HStack(spacing: 8) {
                     ActionCard(title: "Regenerate", systemImage: "arrow.2.circlepath", isPrimary: false) {
                         Haptics.light()
                         onRegenerate()
@@ -543,10 +543,10 @@ struct ActionCard: View {
             .frame(height: 92)
             .background(isPrimary ? Color.black : Color.white)
             .overlay(
-                RoundedRectangle(cornerRadius: 18)
+                RoundedRectangle(cornerRadius: 8)
                     .stroke(isPrimary ? Color.clear : Color(white: 0.88), lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
     }
@@ -726,6 +726,28 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+// Groups the cover styles into four swipeable categories shown in the
+// customization sheet. Keeps the picker compact — one category's worth of
+// swatches at a time — so the Save button stays above the fold.
+enum DeckCoverCategory: String, CaseIterable, Identifiable {
+    case colors = "Colors"
+    case graphics = "Graphics"
+    case art = "Art"
+    case medieval = "Medieval"
+
+    var id: String { rawValue }
+
+    var styles: [DeckCoverStyle] {
+        switch self {
+        case .colors:   return [.gradient, .audioGradient, .black, .white]
+        case .graphics: return [.mouths1, .mouths2, .peopleSpeaking, .peopleSpeaking2]
+        case .art:      return [.porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife]
+        // Not uploaded yet — renders a "coming soon" placeholder.
+        case .medieval: return []
+        }
+    }
+}
+
 // Renders the deck cardback. For static styles it's just the fill; for
 // video styles it shows a cached first-frame thumbnail as a poster while
 // idle, and mounts a real `AVPlayer` only while `isPlaying` is true.
@@ -802,6 +824,58 @@ extension DeckDocument {
         let hash = key.unicodeScalars.reduce(0) { $0 + Int($1.value) }
         return pool[hash % pool.count]
     }
+
+    // Returns a copy with a new title. Used after a rename so the detail
+    // view can reflect the change locally without a re-fetch (the fields
+    // are all `let`, so we rebuild through the memberwise init).
+    func withTitle(_ newTitle: String) -> DeckDocument {
+        DeckDocument(
+            id: id,
+            title: newTitle,
+            language: language,
+            dialect: dialect,
+            level: level,
+            contentType: contentType,
+            amount: amount,
+            tones: tones,
+            interests: interests,
+            userPrompt: userPrompt,
+            items: items,
+            languages: languages,
+            coverStyle: coverStyle,
+            targetRetention: targetRetention,
+            isPublic: isPublic,
+            planUnitId: planUnitId,
+            source: source,
+            createdAt: createdAt
+        )
+    }
+
+    // Returns a copy with a new items array. Used for optimistic local
+    // updates (e.g. swipe-to-delete) so the list reflects the change
+    // before Firestore confirms.
+    func withItems(_ newItems: [GeneratedItem]) -> DeckDocument {
+        DeckDocument(
+            id: id,
+            title: title,
+            language: language,
+            dialect: dialect,
+            level: level,
+            contentType: contentType,
+            amount: amount,
+            tones: tones,
+            interests: interests,
+            userPrompt: userPrompt,
+            items: newItems,
+            languages: languages,
+            coverStyle: coverStyle,
+            targetRetention: targetRetention,
+            isPublic: isPublic,
+            planUnitId: planUnitId,
+            source: source,
+            createdAt: createdAt
+        )
+    }
 }
 
 struct DeckCoverCustomizationSheet: View {
@@ -814,6 +888,7 @@ struct DeckCoverCustomizationSheet: View {
     @State private var title: String
     @State private var selectedStyle: DeckCoverStyle?
     @State private var isPublic: Bool = false
+    @State private var selectedCategory: DeckCoverCategory = .colors
 
     init(
         initialTitle: String,
@@ -865,6 +940,74 @@ struct DeckCoverCustomizationSheet: View {
         }
     }
 
+    // Horizontal strip of category names above the swatch pager. Tapping
+    // one animates the pager to that category; swiping the pager updates
+    // the highlight in turn (both bind to `selectedCategory`).
+    private var categoryTabs: some View {
+        HStack(spacing: 18) {
+            ForEach(DeckCoverCategory.allCases) { category in
+                Button {
+                    Haptics.light()
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        selectedCategory = category
+                    }
+                } label: {
+                    Text(category.rawValue)
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 14))
+                        .foregroundStyle(selectedCategory == category ? .black : .secondary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    // One page of the cover pager: a 3-column grid of that category's
+    // swatches, or a "coming soon" placeholder for empty categories
+    // (Medieval, whose art hasn't been uploaded yet).
+    @ViewBuilder
+    private func categoryPage(_ category: DeckCoverCategory) -> some View {
+        if category.styles.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "hourglass")
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundStyle(.secondary)
+                Text("Coming soon")
+                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            // Top-aligned so 1- and 2-row categories both hug the top of
+            // the fixed-height page instead of centering. The 24pt margin
+            // lives here (not on the pager) so it shows at rest but the
+            // swipe itself runs edge-to-edge.
+            VStack {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 12),
+                        GridItem(.flexible(), spacing: 12),
+                        GridItem(.flexible(), spacing: 12)
+                    ],
+                    spacing: 12
+                ) {
+                    ForEach(category.styles) { style in
+                        DeckCoverSwatch(
+                            style: style,
+                            isSelected: selectedStyle == style
+                        ) {
+                            Haptics.light()
+                            selectedStyle = style
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 24)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -889,24 +1032,29 @@ struct DeckCoverCustomizationSheet: View {
                             .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                             .tracking(0.8)
                             .foregroundStyle(.secondary)
-                        LazyVGrid(
-                            columns: [
-                                GridItem(.flexible(), spacing: 12),
-                                GridItem(.flexible(), spacing: 12),
-                                GridItem(.flexible(), spacing: 12)
-                            ],
-                            spacing: 12
-                        ) {
-                            ForEach(DeckCoverStyle.allCases) { style in
-                                DeckCoverSwatch(
-                                    style: style,
-                                    isSelected: selectedStyle == style
-                                ) {
-                                    Haptics.light()
-                                    selectedStyle = style
-                                }
+
+                        categoryTabs
+
+                        // Horizontally swipeable pager — one category of
+                        // swatches per page. Fixed height keeps the sheet
+                        // compact so Save stays above the fold.
+                        //
+                        // The pager runs full-bleed to the screen edges
+                        // (negating the parent's 24pt margin) so the swipe
+                        // travels edge-to-edge. Each page re-adds that 24pt
+                        // margin internally, so at rest the swatches stay
+                        // inset — and between two adjacent pages the two
+                        // inner margins combine into a 48pt gap so card sets
+                        // don't touch mid-swipe.
+                        TabView(selection: $selectedCategory) {
+                            ForEach(DeckCoverCategory.allCases) { category in
+                                categoryPage(category)
+                                    .tag(category)
                             }
                         }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                        .frame(height: 200)
+                        .padding(.horizontal, -24)
                     }
 
                     visibilityRow

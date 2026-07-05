@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import UIKit
 import FirebaseCore
 import CoreText
 import AVFoundation
@@ -13,6 +14,87 @@ import AVFoundation
 #if canImport(GoogleSignIn)
 import GoogleSignIn
 #endif
+
+// App delegate: registers the app-icon Home Screen quick actions (long-press
+// the icon) and installs a scene delegate to deliver taps on them. The
+// shortcuts are set dynamically so no Info.plist entry is needed; order here
+// is the order shown in the menu, top to bottom: Direct, Conversation,
+// Camera.
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        application.shortcutItems = [
+            UIApplicationShortcutItem(
+                type: "com.tongues.shortcut.direct",
+                localizedTitle: "Direct",
+                localizedSubtitle: nil,
+                icon: UIApplicationShortcutIcon(systemImageName: "character.bubble")
+            ),
+            UIApplicationShortcutItem(
+                type: "com.tongues.shortcut.conversation",
+                localizedTitle: "Conversation",
+                localizedSubtitle: nil,
+                icon: UIApplicationShortcutIcon(systemImageName: "bubble.left.and.bubble.right")
+            ),
+            UIApplicationShortcutItem(
+                type: "com.tongues.shortcut.camera",
+                localizedTitle: "Camera",
+                localizedSubtitle: nil,
+                icon: UIApplicationShortcutIcon(systemImageName: "camera")
+            )
+        ]
+        return true
+    }
+
+    func application(
+        _ application: UIApplication,
+        configurationForConnecting connectingSceneSession: UISceneSession,
+        options: UIScene.ConnectionOptions
+    ) -> UISceneConfiguration {
+        let config = UISceneConfiguration(
+            name: nil,
+            sessionRole: connectingSceneSession.role
+        )
+        config.delegateClass = QuickActionSceneDelegate.self
+        return config
+    }
+}
+
+// Scene delegate whose only job is delivering app-icon shortcut taps into
+// QuickActionRouter. SwiftUI's WindowGroup still owns the window/content;
+// we never create one here.
+final class QuickActionSceneDelegate: NSObject, UIWindowSceneDelegate {
+    func scene(
+        _ scene: UIScene,
+        willConnectTo session: UISceneSession,
+        options connectionOptions: UIScene.ConnectionOptions
+    ) {
+        // Cold launch from a shortcut: the item arrives in the connection
+        // options.
+        if let item = connectionOptions.shortcutItem {
+            handle(item)
+        }
+    }
+
+    func windowScene(
+        _ windowScene: UIWindowScene,
+        performActionFor shortcutItem: UIApplicationShortcutItem,
+        completionHandler: @escaping (Bool) -> Void
+    ) {
+        // Warm launch: app already running when the shortcut is tapped.
+        handle(shortcutItem)
+        completionHandler(true)
+    }
+
+    private func handle(_ item: UIApplicationShortcutItem) {
+        guard let action = CreateDeckQuickAction(shortcutType: item.type) else { return }
+        Task { @MainActor in
+            QuickActionRouter.shared.pending = action
+        }
+    }
+}
 
 // Shared bus between the URL handler in App scope and the navigation
 // targets in ContentView + LibraryView. ContentView observes it to
@@ -28,6 +110,8 @@ final class WidgetDeepLinkRouter {
 
 @main
 struct TONGUESApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     init() {
         FirebaseApp.configure()
         registerCustomFonts()

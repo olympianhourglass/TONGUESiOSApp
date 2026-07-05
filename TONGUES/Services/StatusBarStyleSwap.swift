@@ -87,7 +87,12 @@ enum StatusBarStyleSwap {
             // how imp_implementationWithBlock bridges block ABI to
             // Objective-C method ABI.
             let styleBlock: @convention(block) (UIViewController) -> UIStatusBarStyle = { _ in
-                AppTabRouter.shared.current.needsLightStatusBarContent
+                // Light override wins outright — dark full-screen surfaces
+                // reachable from any tab need white content regardless of
+                // the tab-derived style or the dark override.
+                if AppTabRouter.shared.forceLightStatusBar { return .lightContent }
+                if AppTabRouter.shared.forceDarkStatusBar { return .darkContent }
+                return AppTabRouter.shared.current.needsLightStatusBarContent
                     ? .lightContent
                     : .darkContent
             }

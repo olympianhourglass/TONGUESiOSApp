@@ -63,6 +63,7 @@ struct OnboardingInterestsQuestionView: View {
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             Text("What are you most interested in?")
                 .font(.custom("PlayfairDisplay-Regular", size: 28))

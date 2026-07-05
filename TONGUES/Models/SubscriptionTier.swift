@@ -54,7 +54,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     var monthlyWords: Int {
         switch self {
         case .free:     return 0
-        case .beginner: return 30
+        case .beginner: return 200
         case .pro:      return 1_000
         case .max:      return 5_000
         }
@@ -96,14 +96,15 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     }
 
     // Total cap on saved languages on the user's profile (NOT monthly —
-    // a snapshot count). Beginner and Pro share the 3-language ceiling;
-    // Max removes it. Free reuses the Beginner cap so a brand-new
-    // onboarding user can complete language selection without paying.
+    // a snapshot count). Beginner keeps the 3-language ceiling; Pro
+    // raises it to 5; Max removes it. Free reuses the Beginner cap so a
+    // brand-new onboarding user can complete language selection without
+    // paying.
     var maxLanguages: Int {
         switch self {
         case .free:     return 3
         case .beginner: return 3
-        case .pro:      return 3
+        case .pro:      return 5
         case .max:      return Int.max
         }
     }
@@ -165,17 +166,17 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     }
 
     // Anthropic model the deck generator should use for this tier.
-    // Three-step ladder so the price ladder reflects a quality ladder:
-    // • Beginner → Haiku (fastest + cheapest)
-    // • Pro      → Sonnet (balanced)
-    // • Max      → Opus (highest quality)
+    // The paid ladder reflects the price ladder as a quality ladder:
+    // • Standard (Just Exploring) → Sonnet (balanced quality)
+    // • Pro                       → Sonnet (balanced)
+    // • Max                       → Opus (highest quality)
     // Free reuses Haiku for the rare path where a deck generation
     // somehow reaches the API before a cap check (it never should, but
     // the cheapest model keeps the blast radius small).
     var generationModel: String {
         switch self {
-        case .free, .beginner: return "claude-haiku-4-5-20251001"
-        case .pro:             return "claude-sonnet-4-6"
+        case .free:            return "claude-haiku-4-5-20251001"
+        case .beginner, .pro:  return "claude-sonnet-4-6"
         case .max:             return "claude-opus-4-7"
         }
     }
@@ -184,8 +185,8 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // the user can see the model upgrade is part of the value prop.
     var generationModelLabel: String {
         switch self {
-        case .free, .beginner: return "Haiku"
-        case .pro:             return "Sonnet"
+        case .free:            return "Haiku"
+        case .beginner, .pro:  return "Sonnet"
         case .max:             return "Opus"
         }
     }

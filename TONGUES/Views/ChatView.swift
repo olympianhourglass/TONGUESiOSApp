@@ -109,7 +109,7 @@ struct ChatView: View {
                             Label("Clear conversation", systemImage: "trash")
                         }
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Image(systemName: "ellipsis")
                             .foregroundStyle(.black)
                     }
                 }

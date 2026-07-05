@@ -215,6 +215,40 @@ public enum WidgetShuffleOffsetStore {
         let current = defaults.integer(forKey: kind.storageKey)
         defaults.set(current &+ max(1, amount), forKey: kind.storageKey)
     }
+
+    // True shuffle: store a fresh random seed so the provider reshuffles
+    // the whole pool and lands on a random card — rather than stepping to
+    // the next word (what `advance` did). The stored value seeds a
+    // deterministic permutation in the provider, so the choice stays
+    // stable across timeline rebuilds within the same shuffle.
+    public static func randomize(_ kind: Kind) {
+        guard let defaults = UserDefaults(suiteName: WidgetSharedContainer.appGroupID) else {
+            return
+        }
+        defaults.set(Int.random(in: Int.min...Int.max), forKey: kind.storageKey)
+    }
+}
+
+// Small seedable PRNG (splitmix64) so the widget providers can produce a
+// deterministic pool permutation from a stored shuffle seed. Deterministic
+// per seed means every timeline rebuild within one shuffle yields the same
+// order (no mid-hour jumps); a new seed (set by the shuffle button)
+// reshuffles everything.
+public struct WidgetSeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    public init(seed: UInt64) {
+        // Avoid the degenerate all-zero state.
+        state = seed == 0 ? 0x9E3779B97F4A7C15 : seed
+    }
+
+    public mutating func next() -> UInt64 {
+        state = state &+ 0x9E3779B97F4A7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
+    }
 }
 
 // User-selectable background color for the widget. Stored separately

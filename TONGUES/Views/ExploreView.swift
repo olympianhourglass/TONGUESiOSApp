@@ -227,15 +227,18 @@ struct ExploreView: View {
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.white)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.black.opacity(0.15), lineWidth: 0.5)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 14))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
+        // Halve the outer VStack's 28pt gap to the cultural-insight card
+        // below (28 → 14) without touching every other section's spacing.
+        .padding(.bottom, -14)
     }
 
     private func todaySubtitle(plan: CurriculumPlan, unit: CurriculumUnit) -> String {

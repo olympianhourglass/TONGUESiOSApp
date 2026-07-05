@@ -101,6 +101,19 @@ struct WordCycleProvider: AppIntentTimelineProvider {
         )
         let offset = WidgetShuffleOffsetStore.read(.home(sourceID: source.id))
 
+        // FSRS keeps the snapshot's descending-risk order (no shuffle
+        // button is shown for it). Language / deck sources are a TRUE
+        // shuffle: a deterministic permutation seeded by the stored value,
+        // so tapping shuffle reseeds → a random card, and the hourly steps
+        // walk that shuffled order (not the raw pool order).
+        let sequence: [WidgetCard]
+        if source.kind == .fsrs {
+            sequence = pool
+        } else {
+            var generator = WidgetSeededGenerator(seed: UInt64(bitPattern: Int64(offset)))
+            sequence = pool.shuffled(using: &generator)
+        }
+
         var entries: [WordCycleEntry] = []
         entries.reserveCapacity(Self.entriesPerTimeline)
         for step in 0..<Self.entriesPerTimeline {
@@ -108,11 +121,10 @@ struct WordCycleProvider: AppIntentTimelineProvider {
                 Double(step) * Self.stepInterval
             )
             let slot = firstSlot + step
-            // Wrap the combined index into the pool's bounds. The extra
-            // `+ pool.count) %` guards against negative offsets if the
-            // store ever wraps past Int.max.
-            let index = ((slot + offset) % pool.count + pool.count) % pool.count
-            let card = pool[index]
+            // Step through the (already shuffled, for language/deck) sequence
+            // by absolute hour slot. The `+ count) %` guards negatives.
+            let index = ((slot) % sequence.count + sequence.count) % sequence.count
+            let card = sequence[index]
             entries.append(
                 WordCycleEntry(
                     date: date,
@@ -162,17 +174,29 @@ struct WordCycleProvider: AppIntentTimelineProvider {
         case .language:
             guard let target = source.value else { return [] }
             base = snapshot.cards
-                .filter { $0.language == target && $0.contentType == "Words" }
+                .filter { $0.language == target && Self.isSingleWord($0) }
         case .deck:
             guard let target = source.value else { return [] }
             base = snapshot.cards.filter {
-                $0.deckID == target && $0.contentType == "Words"
+                $0.deckID == target && Self.isSingleWord($0)
             }
         }
         if allowSentences {
             return base
         }
         return base.filter { $0.contentType != "Sentences" }
+    }
+
+    // A single-word card: content type "Words" AND a foreign string with no
+    // internal whitespace. "Words" decks can still contain multi-word entries
+    // (e.g. "good morning" filed as one vocab item), so the content-type check
+    // alone lets phrase-shaped cards leak into the language/deck sources — this
+    // guards against ever surfacing a phrase or full sentence there. CJK
+    // strings (你好, おはよう) pass because they carry no whitespace.
+    private static func isSingleWord(_ card: WidgetCard) -> Bool {
+        guard card.contentType == "Words" else { return false }
+        let trimmed = card.foreign.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !trimmed.contains(where: { $0.isWhitespace })
     }
 
     private func headerLabel(

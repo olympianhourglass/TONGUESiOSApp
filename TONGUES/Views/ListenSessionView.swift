@@ -36,7 +36,10 @@ struct ListenSessionView: View {
 
     // Listening session preferences. Persisted via @AppStorage so they carry
     // across sessions; the user surfaces them in the Options panel.
-    @AppStorage("listenContinuousByDefault") private var continuousByDefault = false
+    // Continuous is the persisted state of the in-session Continuous toggle
+    // (the icon on the transport bar) — flipping that button saves here, so
+    // the choice carries across sessions. Defaults to ON for new users.
+    @AppStorage("listenContinuousByDefault") private var continuousEnabled = true
     @AppStorage("listenReadTranslation") private var readTranslation = false
     @AppStorage("listenTranslationOrder") private var translationOrderRaw = "before"
     @AppStorage("listenGapSeconds") private var gapSeconds: Int = 2
@@ -166,8 +169,16 @@ struct ListenSessionView: View {
                 }
         )
         .onAppear {
+            // This view always has a dark radial backdrop, so its status
+            // bar must read as white content no matter which surface
+            // presented it — including a DeckDetailView reached from a
+            // light-content tab like Explore. Force the light override on
+            // (it wins over both the tab style and the dark override) and
+            // re-run the runtime swap against the freshly-presented
+            // fullScreenCover hosting controller.
+            AppTabRouter.shared.forceLightStatusBar = true
             volume = Double(AVAudioSession.sharedInstance().outputVolume)
-            autoPlay = continuousByDefault
+            autoPlay = continuousEnabled
             if playOrder.isEmpty {
                 playOrder = Array(0..<deck.items.count)
             }
@@ -180,6 +191,10 @@ struct ListenSessionView: View {
             playCurrent()
         }
         .onDisappear {
+            // Release the white-bar override so the presenter (a tab or
+            // DeckDetailView) reclaims its own status-bar style. That view's
+            // own onChange/onDisappear then restores the correct bar.
+            AppTabRouter.shared.forceLightStatusBar = false
             advanceTask?.cancel()
             advanceTask = nil
             chainTask?.cancel()
@@ -345,6 +360,11 @@ struct ListenSessionView: View {
                 Button {
                     Haptics.light()
                     autoPlay.toggle()
+                    // Persist the user's explicit choice so it carries across
+                    // sessions. The end-of-playlist auto-stop deliberately
+                    // does NOT write here, so finishing a playlist never
+                    // flips the saved preference off.
+                    continuousEnabled = autoPlay
                 } label: {
                     Image("Continuous")
                         .resizable()
@@ -708,19 +728,11 @@ struct ListenSessionView: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     optionRow(
-                        label: "Continuous by default?",
-                        isOn: continuousByDefault,
-                        onYes: { continuousByDefault = true },
-                        onNo: { continuousByDefault = false }
-                    )
-
-                    optionRow(
                         label: "Native language read out loud:",
                         isOn: readTranslation,
                         onYes: { readTranslation = true },
                         onNo: { readTranslation = false }
                     )
-                    .padding(.top, 32)
 
                     if readTranslation {
                         optionRow(

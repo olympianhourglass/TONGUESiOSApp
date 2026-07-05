@@ -417,13 +417,22 @@ struct PremiumActionSheet: View {
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(displayPrice(for: cycle))
+                    Text(mainPriceString(for: cycle))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 22))
                         .foregroundStyle(.white)
                     Text("/month")
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.white.opacity(0.55))
                 }
+                // Subtle billing-cadence caption. The price above is always
+                // the monthly-equivalent; this clarifies the true charge —
+                // the full annual amount for yearly, or a plain note for
+                // monthly — and keeps both panes the same height.
+                Text(billingCaption(for: cycle))
+                    .font(.custom("NeueHaasDisplay-Light", size: 10))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
@@ -443,11 +452,43 @@ struct PremiumActionSheet: View {
         .buttonStyle(.plain)
     }
 
-    // Prefer live StoreKit price; fall back to the App Store Connect
-    // value baked into SubscriptionTier so the sheet never shows "—".
-    private func displayPrice(for cycle: SubscriptionBillingCycle) -> String {
-        store.product(for: selectedTier, cycle: cycle)?.displayPrice
-            ?? selectedTier.fallbackPrice(for: cycle)
+    // The big number shown on a pricing pane — always the monthly-
+    // equivalent so both cadences read in the same "$X / month" format.
+    // For yearly this divides the live annual price by 12 (the StoreKit
+    // product's own currency format keeps the locale/symbol correct);
+    // the fallback yearly value is already stored per-month.
+    private func mainPriceString(for cycle: SubscriptionBillingCycle) -> String {
+        switch cycle {
+        case .monthly:
+            return store.product(for: selectedTier, cycle: .monthly)?.displayPrice
+                ?? selectedTier.fallbackPrice(for: .monthly)
+        case .yearly:
+            if let product = store.product(for: selectedTier, cycle: .yearly) {
+                return (product.price / 12).formatted(product.priceFormatStyle)
+            }
+            return selectedTier.fallbackPrice(for: .yearly)
+        }
+    }
+
+    // The full amount actually charged for the yearly plan (e.g. "$83.88"),
+    // used in the subtle "…billed yearly" caption. Prefers the live
+    // StoreKit total; the fallback reconstructs it from the per-month value.
+    private var annualTotalString: String {
+        if let product = store.product(for: selectedTier, cycle: .yearly) {
+            return product.displayPrice
+        }
+        if let perMonth = parsedPrice(selectedTier.fallbackPrice(for: .yearly)) {
+            return String(format: "$%.2f", perMonth * 12)
+        }
+        return ""
+    }
+
+    // Subtle line under the price clarifying the real billing cadence.
+    private func billingCaption(for cycle: SubscriptionBillingCycle) -> String {
+        switch cycle {
+        case .monthly: return "Billed monthly"
+        case .yearly:  return "\(annualTotalString) billed yearly"
+        }
     }
 
     // Computes "Save 22%" off the monthly-equivalent prices so the
@@ -548,7 +589,7 @@ struct PremiumActionSheet: View {
     }
 
     private var trialFinePrint: String {
-        "Then \(displayPrice(for: selectedCycle))/month. Cancel anytime."
+        "Then \(mainPriceString(for: selectedCycle))/month. Cancel anytime."
     }
 
     // MARK: - Footer

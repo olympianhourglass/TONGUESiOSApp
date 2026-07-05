@@ -15,10 +15,13 @@ struct StudyView: View {
     @State private var quickActionFrames: [CreateDeckQuickAction: CGRect] = [:]
     // The option currently under the dragging finger (drives highlight).
     @State private var highlightedQuickAction: CreateDeckQuickAction?
-    // Set when a long-press opens the quick-actions menu, so the tap
-    // that rides along with the finger lift doesn't also open the full
-    // Create New Deck sheet. Auto-cleared shortly after the gesture ends.
-    @State private var suppressNextCreateTap = false
+    // Quick-actions long-press bookkeeping. A cancellable work item opens
+    // the menu once the hold threshold passes; if the finger lifts before
+    // then it was a tap (→ Generate). Deterministic timing so a tap vs. a
+    // long-press can never be misarbitrated by nested SwiftUI gestures.
+    @State private var pressOpenWork: DispatchWorkItem?
+    @State private var didOpenMenuThisPress = false
+    @State private var isPressActive = false
     // First-run tutorial: a floating hand points new users at the
     // Create New Deck button. Shown once (persisted in AppStorage) when a
     // freshly-onboarded user lands here with an empty library.
@@ -102,15 +105,14 @@ struct StudyView: View {
             }
             .overlay(alignment: .bottomTrailing) {
                 CreateNewDeckButton()
-                    // Tap opens Create New Deck; a long-press opens the
-                    // custom quick-actions menu. Attached here (not a
-                    // Button + contextMenu) so there's no system preview
-                    // border and we control the menu's placement.
-                    .onTapGesture { handleCreateDeckTap() }
-                    // Long-press opens the menu; keeping the finger down and
-                    // dragging onto an option highlights it, and releasing
-                    // over it fires that shortcut. Releasing in place leaves
-                    // the menu up so the user can tap instead.
+                    // A quick TAP goes straight to the Generate screen; a
+                    // LONG-PRESS opens the custom quick-actions menu (hold,
+                    // then drag onto an option to fire it — releasing
+                    // elsewhere cancels and collapses). One DragGesture with
+                    // a manual hold timer drives both, so the tap vs.
+                    // long-press decision is fully deterministic. Attached
+                    // here (not a Button + contextMenu) so there's no system
+                    // preview border and we control the menu's placement.
                     .gesture(pressDragQuickActionGesture)
                     // Track the button's on-screen frame so the first-run
                     // coach mark can spotlight + point at it precisely, and
@@ -191,13 +193,6 @@ struct StudyView: View {
     // one free deck get the paywall instead of the sheet; everyone else
     // opens the generator normally.
     private func handleCreateDeckTap() {
-        // A tap that arrives on the heels of a long-press-drag (opening or
-        // dismissing the quick-actions menu) is spurious — consume it so
-        // the full sheet doesn't open behind the collapsing menu.
-        if suppressNextCreateTap {
-            suppressNextCreateTap = false
-            return
-        }
         openCreateDeck(page: 0, conversation: false)
     }
 
@@ -230,52 +225,66 @@ struct StudyView: View {
         }
     }
 
-    // Press-drag-release gesture: a long press opens the menu; if the user
-    // keeps holding and drags onto an option, it highlights; releasing over
-    // an option fires it. Releasing not over an option leaves the menu open
-    // for a follow-up tap. A quick tap (never reaches 0.35s) falls through
-    // to the separate .onTapGesture that opens Create New Deck.
+    // How long the finger must stay down before the quick-actions menu
+    // opens. Shorter than this on release counts as a tap.
+    private let quickActionHoldThreshold: TimeInterval = 0.35
+
+    // Single-gesture press/drag/release, timed by hand so tap vs.
+    // long-press is unambiguous:
+    // • Finger down starts a hold timer. If it fires (≥ threshold), the
+    //   menu opens; dragging then highlights the option under the finger.
+    // • Release BEFORE the timer fires → it was a tap → open Generate.
+    // • Release AFTER the menu opened → fire the option under the finger,
+    //   or collapse the menu if released anywhere else.
     private var pressDragQuickActionGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.35)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .onChanged { value in
-                switch value {
-                case .first(true):
-                    if !showQuickActions {
+                if !isPressActive {
+                    // Touch down: begin a fresh press cycle and arm the
+                    // hold timer that opens the menu.
+                    isPressActive = true
+                    didOpenMenuThisPress = false
+                    highlightedQuickAction = nil
+                    pressOpenWork?.cancel()
+                    let work = DispatchWorkItem {
+                        guard isPressActive, !showQuickActions else { return }
+                        didOpenMenuThisPress = true
                         openQuickActions()
-                        // The finger is still down; block the tap that
-                        // will accompany its release from opening the sheet.
-                        suppressNextCreateTap = true
                     }
-                case .second(true, let drag):
-                    guard let drag else { return }
-                    let hit = quickAction(at: drag.location)
+                    pressOpenWork = work
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + quickActionHoldThreshold,
+                        execute: work
+                    )
+                }
+                // Once open, track which option the finger is over.
+                if didOpenMenuThisPress {
+                    let hit = quickAction(at: value.location)
                     if hit != highlightedQuickAction {
                         if hit != nil { Haptics.light() }
                         highlightedQuickAction = hit
                     }
-                default:
-                    break
                 }
             }
             .onEnded { value in
+                pressOpenWork?.cancel()
+                pressOpenWork = nil
+                let openedMenu = didOpenMenuThisPress
+                isPressActive = false
+                didOpenMenuThisPress = false
                 defer { highlightedQuickAction = nil }
-                if case .second(_, let drag?) = value,
-                   let action = quickAction(at: drag.location) {
-                    // Released over an option → fire it (also collapses).
-                    selectQuickAction(action)
+
+                if openedMenu {
+                    if let action = quickAction(at: value.location) {
+                        // Released over an option → fire it (also collapses).
+                        selectQuickAction(action)
+                    } else {
+                        // Released anywhere else → cancel + collapse.
+                        withAnimation(.easeOut(duration: 0.18)) { showQuickActions = false }
+                    }
                 } else {
-                    // Released anywhere else (empty space, or back over the
-                    // pill) → cancel: collapse the menu rather than leaving
-                    // it lingering. The tap-suppression flag keeps this
-                    // release from opening the Create New Deck sheet.
-                    withAnimation(.easeOut(duration: 0.18)) { showQuickActions = false }
-                }
-                // Clear the suppression just after the release so a tap
-                // riding along with it is swallowed, while a later,
-                // intentional tap on the pill still opens the sheet.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                    suppressNextCreateTap = false
+                    // Released before the menu opened → a tap → Generate.
+                    handleCreateDeckTap()
                 }
             }
     }
@@ -571,6 +580,7 @@ struct FeaturedDeckHeader: View {
             Button(action: onShowDetail) {
                 VStack(alignment: .leading, spacing: 0) {
                     FeaturedCardImage(coverStyle: deck.resolvedCoverStyle)
+                        .scrollHeaderScale()
                         .frame(maxWidth: .infinity)
                         .padding(.top, 28)
 
@@ -626,6 +636,41 @@ struct FeaturedDeckHeader: View {
         }
         .padding(.top, 12)
     }
+}
+
+// Scroll-driven scale for a header element: shrinks as the page scrolls
+// up, grows on pull-down overscroll — keeping its aspect ratio (uniform).
+// Implemented with `visualEffect` so it runs at render time and never
+// invalidates the enclosing view's body, which is essential for scroll
+// performance on a busy screen. A one-time baseline, captured on first
+// appear at the resting scroll position, anchors the resting scale to
+// exactly 1 so the look is unchanged when not scrolling.
+struct ScrollHeaderScaleEffect: ViewModifier {
+    @State private var restMinY: CGFloat?
+
+    func body(content: Content) -> some View {
+        let baseline = restMinY
+        return content
+            .background(
+                GeometryReader { geo in
+                    Color.clear.onAppear {
+                        if restMinY == nil {
+                            restMinY = geo.frame(in: .scrollView).minY
+                        }
+                    }
+                }
+            )
+            .visualEffect { view, proxy in
+                let currentY = proxy.frame(in: .scrollView).minY
+                let delta = currentY - (baseline ?? currentY)
+                let scale = min(1.12, max(0.9, 1 + delta * 0.0006))
+                return view.scaleEffect(scale, anchor: .center)
+            }
+    }
+}
+
+extension View {
+    func scrollHeaderScale() -> some View { modifier(ScrollHeaderScaleEffect()) }
 }
 
 struct FeaturedCardImage: View {

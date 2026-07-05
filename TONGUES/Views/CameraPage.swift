@@ -23,6 +23,50 @@ final class CameraController {
     enum AuthState { case unknown, authorized, denied }
     var authState: AuthState = .unknown
 
+    // Current optical/digital zoom factor of the active camera. Observable
+    // so the on-screen indicator can track it. 1.0 = no zoom.
+    var zoomFactor: CGFloat = 1.0
+
+    // The active back-camera device, pulled from the session's inputs so we
+    // don't have to thread a separate reference out of the detached
+    // configuration task.
+    @ObservationIgnored
+    private var videoDevice: AVCaptureDevice? {
+        for input in session.inputs {
+            if let deviceInput = input as? AVCaptureDeviceInput,
+               deviceInput.device.hasMediaType(.video) {
+                return deviceInput.device
+            }
+        }
+        return nil
+    }
+
+    // Upper zoom bound — the device's own ceiling, capped to a usable
+    // digital range (beyond ~8× the image is too degraded to recognize).
+    var maxZoom: CGFloat {
+        guard let device = videoDevice else { return 5 }
+        return min(device.maxAvailableVideoZoomFactor, 8)
+    }
+
+    // Applies a clamped zoom factor to the capture device. Both the live
+    // preview and any subsequently captured photo reflect it, so a learner
+    // can zoom in on a distant object or sign before tapping the shutter.
+    func setZoom(_ factor: CGFloat) {
+        guard let device = videoDevice else { return }
+        let clamped = min(max(factor, 1.0), min(device.maxAvailableVideoZoomFactor, 8))
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = clamped
+            device.unlockForConfiguration()
+            zoomFactor = clamped
+        } catch {
+            // Zoom is a best-effort enhancement — ignore a transient lock
+            // failure rather than surfacing an error.
+        }
+    }
+
+    func resetZoom() { setZoom(1.0) }
+
     func startIfPermitted() async {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
@@ -166,6 +210,9 @@ struct CameraPage: View {
     @State private var showDeckPicker = false
     @State private var showCreateCover = false
     @State private var isSavingNewDeck = false
+    // Zoom level captured at the start of a pinch, so each MagnifyGesture
+    // scales relative to where the previous one left off.
+    @State private var gestureBaseZoom: CGFloat = 1.0
 
     var body: some View {
         ScrollView {
@@ -184,7 +231,12 @@ struct CameraPage: View {
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
         .task { await camera.startIfPermitted() }
-        .onDisappear { camera.stop() }
+        .onDisappear {
+            // Reset zoom so re-opening the camera starts framed at 1×.
+            camera.resetZoom()
+            gestureBaseZoom = 1.0
+            camera.stop()
+        }
         .alert("Something went wrong", isPresented: errorBinding) {
             Button("OK") { errorText = nil }
         } message: {
@@ -236,6 +288,16 @@ struct CameraPage: View {
             case .authorized:
                 CameraPreview(session: camera.session)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
+                    .contentShape(RoundedRectangle(cornerRadius: 18))
+                    // Pinch to zoom the lens in on a distant object or sign;
+                    // the zoom carries through to the captured photo. Double-
+                    // tap resets to 1×.
+                    .gesture(zoomGesture)
+                    .onTapGesture(count: 2) {
+                        Haptics.light()
+                        gestureBaseZoom = 1.0
+                        camera.resetZoom()
+                    }
             case .denied:
                 permissionDeniedView
             case .unknown:
@@ -252,6 +314,32 @@ struct CameraPage: View {
             }
         }
         .frame(height: 360)
+        // Zoom read-out, shown only while zoomed in. Matches the mode
+        // picker's tinted-glass capsule so it reads on any camera feed.
+        .overlay(alignment: .top) {
+            if camera.authState == .authorized, camera.zoomFactor > 1.05 {
+                Text(String(format: "%.1f×", camera.zoomFactor))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 13))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(.black.opacity(0.35)))
+                    .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+                    .padding(.top, 14)
+            }
+        }
+    }
+
+    // Pinch-to-zoom over the viewfinder. Each gesture scales relative to the
+    // zoom level it started at; the controller clamps to the device range.
+    private var zoomGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                camera.setZoom(gestureBaseZoom * value.magnification)
+            }
+            .onEnded { _ in
+                gestureBaseZoom = camera.zoomFactor
+            }
     }
 
     // Segmented Object / Sign selector floating over the bottom of the

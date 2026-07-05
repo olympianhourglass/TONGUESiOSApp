@@ -713,11 +713,13 @@ struct FlashcardView: View {
                         .buttonStyle(.plain)
                         .id(lang)
                     }
-                    // Reserve enough trailing space that any language —
-                    // even the last in the list — can be scrolled to the
-                    // leading edge of the strip.
+                    // Reserve a full viewport of trailing space so even the
+                    // last (and shortest) language can scroll all the way to
+                    // the leading edge and stay snapped there under
+                    // .viewAligned — a smaller reserve let short final items
+                    // bounce back to the second-to-last.
                     Color.clear
-                        .frame(width: max(0, proxy.size.width - 120), height: 1)
+                        .frame(width: proxy.size.width, height: 1)
                 }
                 .padding(.leading, 20)
                 .scrollTargetLayout()

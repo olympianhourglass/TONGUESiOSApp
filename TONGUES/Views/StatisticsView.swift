@@ -625,10 +625,19 @@ struct StatisticsView: View {
                             }
                     }
                 }
-                .chartXScale(domain: 0...6)
+                // Pad the domain by half a day on each side so the Monday(0)
+                // and Sunday(6) points sit inset from the plot edges — this
+                // gives their centered weekday labels room to align under the
+                // dots and keeps the last label (Sat/Sun) from clipping.
+                .chartXScale(domain: -0.5...6.5)
                 .chartXAxis {
                     AxisMarks(values: Array(0...6)) { value in
-                        AxisValueLabel {
+                        // anchor: .top pins the label's top-CENTER to its
+                        // value, so each weekday letter sits horizontally
+                        // centered under its dot. Without it the label
+                        // attaches by its leading edge and hangs to the
+                        // right, making every dot look skewed left of its day.
+                        AxisValueLabel(centered: false, anchor: .top) {
                             if let idx = value.as(Int.self), idx >= 0, idx < weekdayLabels.count {
                                 Text(weekdayLabels[idx])
                                     .font(.custom("NeueHaasDisplay-Light", size: 12))

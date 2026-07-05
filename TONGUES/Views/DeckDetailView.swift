@@ -291,6 +291,7 @@ struct DeckDetailView: View {
         HStack {
             Spacer()
             FeaturedCardImage(coverStyle: deck.resolvedCoverStyle)
+                .scrollHeaderScale()
             Spacer()
         }
         .frame(maxWidth: .infinity)

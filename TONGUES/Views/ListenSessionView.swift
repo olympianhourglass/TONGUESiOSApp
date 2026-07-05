@@ -44,6 +44,14 @@ struct ListenSessionView: View {
     @AppStorage("listenTranslationOrder") private var translationOrderRaw = "before"
     @AppStorage("listenGapSeconds") private var gapSeconds: Int = 2
     @AppStorage("listenTurtle") private var turtle: Bool = false
+    // Selected background tracks (resource filename, "" = none) for the two
+    // ambient channels. Persisted so the choice carries across sessions.
+    @AppStorage("listenAmbientSound") private var ambientSoundId: String = ""
+    @AppStorage("listenAmbientMusic") private var ambientMusicId: String = ""
+
+    // Looping ambient players layered under the study audio. Held as a
+    // stable reference for the lifetime of the session view.
+    @State private var ambient = AmbientAudioPlayer()
 
     private var translationBefore: Bool { translationOrderRaw == "before" }
     private var playbackRate: Float { turtle ? 0.5 : 1.0 }
@@ -189,6 +197,10 @@ struct ListenSessionView: View {
             configureRemoteCommands()
             updateNowPlayingInfo()
             playCurrent()
+            // Resume any previously-chosen ambient tracks, layered under
+            // the study audio.
+            ambient.set(ambientSoundId, for: .sound)
+            ambient.set(ambientMusicId, for: .music)
         }
         .onDisappear {
             // Release the white-bar override so the presenter (a tab or
@@ -200,6 +212,7 @@ struct ListenSessionView: View {
             chainTask?.cancel()
             chainTask = nil
             SpeechClient.shared.stop()
+            ambient.stopAll()
             clearNowPlayingInfo()
             awardAudioSessionXP()
         }
@@ -217,8 +230,10 @@ struct ListenSessionView: View {
             updateNowPlayingInfo()
             playCurrent()
         }
-        .onChange(of: isPaused) { _, _ in
+        .onChange(of: isPaused) { _, paused in
             updateNowPlayingInfo()
+            // Keep the ambient bed in lock-step with play/pause.
+            if paused { ambient.pause() } else { ambient.resume() }
         }
         .onChange(of: autoPlay) { _, newValue in
             if newValue {
@@ -718,53 +733,16 @@ struct ListenSessionView: View {
                 .ignoresSafeArea()
                 .onTapGesture { /* swallow taps so they don't pass through */ }
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text("OPTIONS")
-                    .font(.custom("NeueHaasDisplay-Black", size: 22))
-                    .foregroundStyle(.white)
-                    .padding(.top, 96)
-
-                Spacer(minLength: 0)
-
-                VStack(alignment: .leading, spacing: 0) {
-                    optionRow(
-                        label: "Native language read out loud:",
-                        isOn: readTranslation,
-                        onYes: { readTranslation = true },
-                        onNo: { readTranslation = false }
-                    )
-
-                    if readTranslation {
-                        optionRow(
-                            label: "Before or after translated text?",
-                            firstTitle: "BEFORE",
-                            secondTitle: "AFTER",
-                            firstSelected: translationBefore,
-                            onFirst: { translationOrderRaw = "before" },
-                            onSecond: { translationOrderRaw = "after" }
-                        )
-                        .padding(.top, 32)
-                    }
-
-                    optionChoiceRow(
-                        label: "Seconds between audio:",
-                        options: [2, 4, 8],
-                        selected: gapSeconds,
-                        onSelect: { gapSeconds = $0 }
-                    )
-                    .padding(.top, 32)
-
-                    optionRow(
-                        label: "Turtle (2× slower):",
-                        isOn: turtle,
-                        onYes: { turtle = true },
-                        onNo: { turtle = false }
-                    )
-                    .padding(.top, 32)
+            VStack(spacing: 0) {
+                // Swipeable settings: page 1 is the original playback
+                // options; page 2 layers ambient background audio. Page dots
+                // hint that a second page exists.
+                TabView {
+                    optionsPageOne
+                    ambientPage
                 }
-                .offset(y: -32)
-
-                Spacer(minLength: 0)
+                .tabViewStyle(.page(indexDisplayMode: .always))
+                .indexViewStyle(.page(backgroundDisplayMode: .interactive))
 
                 Button {
                     Haptics.light()
@@ -779,8 +757,154 @@ struct ListenSessionView: View {
                 .buttonStyle(.plain)
                 .padding(.bottom, 40)
             }
-            .padding(.horizontal, 24)
         }
+    }
+
+    // Page 1 — the original playback options.
+    private var optionsPageOne: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("OPTIONS")
+                .font(.custom("NeueHaasDisplay-Black", size: 22))
+                .foregroundStyle(.white)
+                .padding(.top, 96)
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 0) {
+                optionRow(
+                    label: "Native language read out loud:",
+                    isOn: readTranslation,
+                    onYes: { readTranslation = true },
+                    onNo: { readTranslation = false }
+                )
+
+                if readTranslation {
+                    optionRow(
+                        label: "Before or after translated text?",
+                        firstTitle: "BEFORE",
+                        secondTitle: "AFTER",
+                        firstSelected: translationBefore,
+                        onFirst: { translationOrderRaw = "before" },
+                        onSecond: { translationOrderRaw = "after" }
+                    )
+                    .padding(.top, 32)
+                }
+
+                optionChoiceRow(
+                    label: "Seconds between audio:",
+                    options: [2, 4, 8],
+                    selected: gapSeconds,
+                    onSelect: { gapSeconds = $0 }
+                )
+                .padding(.top, 32)
+
+                optionRow(
+                    label: "Turtle (2× slower):",
+                    isOn: turtle,
+                    onYes: { turtle = true },
+                    onNo: { turtle = false }
+                )
+                .padding(.top, 32)
+            }
+            .offset(y: -32)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // Page 2 — ambient background audio. Two independent channels; the
+    // user picks None or one track per channel, looped under the session.
+    private var ambientPage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("BACKGROUND")
+                .font(.custom("NeueHaasDisplay-Black", size: 22))
+                .foregroundStyle(.white)
+                .padding(.top, 96)
+
+            Text("Layer a looping sound or music track under your session.")
+                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.top, 8)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+
+            VStack(alignment: .leading, spacing: 28) {
+                ambientRow(
+                    title: "Ambient Sound",
+                    tracks: AmbientCatalog.sounds,
+                    selectedId: ambientSoundId
+                ) { id in
+                    ambientSoundId = id
+                    ambient.set(id, for: .sound)
+                }
+                ambientRow(
+                    title: "Ambient Music",
+                    tracks: AmbientCatalog.music,
+                    selectedId: ambientMusicId
+                ) { id in
+                    ambientMusicId = id
+                    ambient.set(id, for: .music)
+                }
+            }
+            .offset(y: -32)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // One ambient channel: a label above a horizontal strip of pills —
+    // "None" plus every track. The selected pill is filled; tapping swaps
+    // or clears the channel live.
+    private func ambientRow(
+        title: String,
+        tracks: [AmbientTrack],
+        selectedId: String,
+        onSelect: @escaping (String) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.custom("NeueHaasDisplay-Mediu", size: 17.6))
+                .foregroundStyle(.white.opacity(0.85))
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ambientChip(label: "None", isSelected: selectedId.isEmpty) {
+                        onSelect("")
+                    }
+                    ForEach(tracks) { track in
+                        ambientChip(label: track.displayName, isSelected: selectedId == track.id) {
+                            onSelect(track.id)
+                        }
+                    }
+                }
+            }
+            .scrollClipDisabled()
+        }
+    }
+
+    private func ambientChip(
+        label: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
+            Text(label)
+                .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                .foregroundStyle(isSelected ? .black : .white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule().fill(isSelected ? Color.white : Color.white.opacity(0.12))
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func optionRow(

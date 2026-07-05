@@ -626,6 +626,7 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
     case byzantine1
     case byzantine2
     case stillLife
+    case chineseVillage
 
     var id: String { rawValue }
 
@@ -644,6 +645,7 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .byzantine1:      return "Byzantine"
         case .byzantine2:      return "Byzantine 2"
         case .stillLife:       return "Still Life"
+        case .chineseVillage:  return "Chinese Village"
         }
     }
 
@@ -660,6 +662,7 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .byzantine1:      return "Byzantine1"
         case .byzantine2:      return "Byzantine2"
         case .stillLife:       return "StillLife"
+        case .chineseVillage:  return "ChineseVillage"
         case .gradient, .audioGradient, .black, .white: return nil
         }
     }
@@ -702,7 +705,8 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .white:
             Color.white
         case .mouths1, .mouths2, .peopleSpeaking, .peopleSpeaking2,
-             .porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife:
+             .porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife,
+             .chineseVillage:
             // Solid backing while the video layer loads / mounts. The
             // first frame of the video covers this once ready.
             Color.black
@@ -716,7 +720,7 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .white: return .black
         case .gradient, .audioGradient, .black, .mouths1, .mouths2,
              .peopleSpeaking, .peopleSpeaking2, .porcelain1, .porcelain2,
-             .byzantine1, .byzantine2, .stillLife:
+             .byzantine1, .byzantine2, .stillLife, .chineseVillage:
             return .white
         }
     }
@@ -741,7 +745,7 @@ enum DeckCoverCategory: String, CaseIterable, Identifiable {
         switch self {
         case .colors:   return [.gradient, .audioGradient, .black, .white]
         case .graphics: return [.mouths1, .mouths2, .peopleSpeaking, .peopleSpeaking2]
-        case .art:      return [.porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife]
+        case .art:      return [.porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife, .chineseVillage]
         // Not uploaded yet — renders a "coming soon" placeholder.
         case .medieval: return []
         }

@@ -431,11 +431,11 @@ struct ResultRow: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.word)
-                        .font(.system(size: 22, weight: .bold))
+                        .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(.black)
                     if let translit = item.transliteration, !translit.isEmpty {
                         Text(translit)
-                            .font(.system(size: 13))
+                            .font(.system(size: 9))
                             .italic()
                             .foregroundStyle(.secondary)
                     }
@@ -617,6 +617,8 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
     case audioGradient
     case black
     case white
+    case darkCherry
+    case pleasant
     case mouths1
     case mouths2
     case peopleSpeaking
@@ -636,6 +638,8 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .audioGradient:   return "Audio"
         case .black:           return "Black"
         case .white:           return "White"
+        case .darkCherry:      return "Dark Cherry"
+        case .pleasant:        return "Pleasant"
         case .mouths1:         return "Mouths"
         case .mouths2:         return "Mouths 2"
         case .peopleSpeaking:  return "Speakers"
@@ -663,7 +667,8 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .byzantine2:      return "Byzantine2"
         case .stillLife:       return "StillLife"
         case .chineseVillage:  return "ChineseVillage"
-        case .gradient, .audioGradient, .black, .white: return nil
+        case .gradient, .audioGradient, .black, .white,
+             .darkCherry, .pleasant: return nil
         }
     }
 
@@ -704,6 +709,10 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
             Color.black
         case .white:
             Color.white
+        case .darkCherry:
+            Color(libraryHex: "180805")
+        case .pleasant:
+            Color(libraryHex: "C6EFFF")
         case .mouths1, .mouths2, .peopleSpeaking, .peopleSpeaking2,
              .porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife,
              .chineseVillage:
@@ -717,10 +726,13 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
     // "TONGUES" wordmark on the featured card.
     var labelColor: Color {
         switch self {
-        case .white: return .black
+        // White + the light "Pleasant" blue take a dark wordmark; the dark
+        // "Dark Cherry" reads with a white one.
+        case .white, .pleasant: return .black
         case .gradient, .audioGradient, .black, .mouths1, .mouths2,
              .peopleSpeaking, .peopleSpeaking2, .porcelain1, .porcelain2,
-             .byzantine1, .byzantine2, .stillLife, .chineseVillage:
+             .byzantine1, .byzantine2, .stillLife, .chineseVillage,
+             .darkCherry:
             return .white
         }
     }
@@ -743,7 +755,7 @@ enum DeckCoverCategory: String, CaseIterable, Identifiable {
 
     var styles: [DeckCoverStyle] {
         switch self {
-        case .colors:   return [.gradient, .audioGradient, .black, .white]
+        case .colors:   return [.gradient, .audioGradient, .black, .white, .darkCherry, .pleasant]
         case .graphics: return [.mouths1, .mouths2, .peopleSpeaking, .peopleSpeaking2]
         case .art:      return [.porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife, .chineseVillage]
         // Not uploaded yet — renders a "coming soon" placeholder.
@@ -840,6 +852,35 @@ extension DeckDocument {
             dialect: dialect,
             level: level,
             contentType: contentType,
+            amount: amount,
+            tones: tones,
+            interests: interests,
+            userPrompt: userPrompt,
+            items: items,
+            languages: languages,
+            coverStyle: coverStyle,
+            targetRetention: targetRetention,
+            isPublic: isPublic,
+            planUnitId: planUnitId,
+            source: source,
+            createdAt: createdAt
+        )
+    }
+
+    // Returns a copy whose contentType is the canonical value (folds the
+    // retired "Phrases" into "Sentences"). Applied on fetch so the whole
+    // app — display labels, routing, widgets — treats old phrase decks as
+    // sentences without a Firestore migration.
+    func canonicalizingContentType() -> DeckDocument {
+        let canonical = canonicalContentType(contentType)
+        guard canonical != contentType else { return self }
+        return DeckDocument(
+            id: id,
+            title: title,
+            language: language,
+            dialect: dialect,
+            level: level,
+            contentType: canonical,
             amount: amount,
             tones: tones,
             interests: interests,

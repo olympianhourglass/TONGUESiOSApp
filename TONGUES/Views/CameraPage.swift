@@ -93,6 +93,21 @@ final class CameraController {
         }
     }
 
+    // Awaitable stop used by the AR handoff: the ARKit session can't take
+    // the camera until AVCapture has actually released it, so the caller
+    // must be able to wait for stopRunning() to finish rather than guess
+    // with a fixed delay.
+    func stopAndWait() async {
+        guard session.isRunning else { return }
+        let session = session
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task.detached(priority: .userInitiated) {
+                session.stopRunning()
+                continuation.resume()
+            }
+        }
+    }
+
     private func startSession() {
         let session = session
         let photoOutput = photoOutput
@@ -177,32 +192,43 @@ struct CameraPage: View {
     let onAttributeTap: (DeckAttribute) -> Void
     let onSaved: () -> Void
 
-    // Two ways to turn the viewfinder into a card: identify a physical
-    // object (Haiku vision) or read the text off a sign (on-device OCR).
-    // The shutter behaves differently per mode; the picker below the
-    // preview lets the learner switch, mirroring the native Camera app's
-    // mode selector.
+    // Three ways to turn the viewfinder into cards: identify a physical
+    // object (Haiku vision), read the text off a sign, or sweep the room
+    // in AR and label every recognized object at once. The shutter
+    // behaves differently per mode; the picker below the preview lets
+    // the learner switch, mirroring the native Camera app's mode
+    // selector. Object/Sign run on the AVCapture session; AR swaps in an
+    // ARKit session — the mode switch hands the camera between the two
+    // (they can't both hold it, which is why AR lives here rather than
+    // on its own page).
+    // Order here drives the on-screen tab order: AR first, then Sign,
+    // then Object.
     enum CaptureMode: String, CaseIterable, Identifiable {
-        case object
+        case ar
         case sign
+        case object
 
         var id: String { rawValue }
         var title: String {
             switch self {
             case .object: return "Object"
             case .sign: return "Sign"
+            case .ar: return "AR"
             }
         }
         var systemImage: String {
             switch self {
             case .object: return "cube"
             case .sign: return "text.viewfinder"
+            case .ar: return "arkit"
             }
         }
     }
 
     @State private var camera = CameraController()
-    @State private var mode: CaptureMode = .object
+    @State private var arManager = ARSceneManager()
+    // AR is the primary capture mode — the camera opens straight into it.
+    @State private var mode: CaptureMode = .ar
     @State private var identifiedItem: GeneratedItem?
     @State private var identifiedEnglish: String?
     @State private var isIdentifying = false
@@ -230,43 +256,63 @@ struct CameraPage: View {
         }
         .scrollIndicators(.hidden)
         .scrollDismissesKeyboard(.interactively)
-        .task { await camera.startIfPermitted() }
+        .task {
+            if mode == .ar {
+                await arManager.start(language: language, dialect: dialect)
+            } else {
+                await camera.startIfPermitted()
+            }
+        }
+        // Keep the auto-scan loop labeling in the current target language
+        // if the learner changes it while AR is open.
+        .onChange(of: language) { _, newValue in
+            arManager.updateLocale(language: newValue, dialect: dialect)
+        }
+        .onChange(of: dialect) { _, newValue in
+            arManager.updateLocale(language: language, dialect: newValue)
+        }
         .onDisappear {
             // Reset zoom so re-opening the camera starts framed at 1×.
             camera.resetZoom()
             gestureBaseZoom = 1.0
             camera.stop()
+            arManager.pause()
         }
         .alert("Something went wrong", isPresented: errorBinding) {
-            Button("OK") { errorText = nil }
+            Button("OK") {
+                errorText = nil
+                arManager.errorText = nil
+            }
         } message: {
-            Text(errorText ?? "")
+            Text(errorText ?? arManager.errorText ?? "")
         }
         .sheet(isPresented: $showDeckPicker) {
-            if let item = identifiedItem {
+            if !itemsForSave.isEmpty {
                 DeckPickerSheet(
-                    itemsToAdd: [item],
+                    itemsToAdd: itemsForSave,
                     sourceLanguage: language,
                     sourceDialect: dialect,
                     onAdded: {
                         showDeckPicker = false
                         clearIdentification()
+                        if mode == .ar { arManager.clearLabels() }
                         onSaved()
                     }
                 )
             }
         }
         .sheet(isPresented: $showCreateCover) {
-            if let item = identifiedItem {
+            if !itemsForSave.isEmpty {
                 DeckCoverCustomizationSheet(
-                    initialTitle: deckTitle(for: item),
+                    initialTitle: defaultDeckTitle,
                     language: language,
                     level: level
                 ) { newTitle, chosenStyle, isPublic in
                     showCreateCover = false
+                    let items = itemsForSave
                     Task {
                         await saveAsNewDeck(
-                            item: item,
+                            items: items,
                             title: newTitle,
                             style: chosenStyle,
                             isPublic: isPublic
@@ -278,46 +324,107 @@ struct CameraPage: View {
         }
     }
 
+    // What the save flows operate on: the single identified item in
+    // Object/Sign mode, or everything collected in AR mode.
+    private var itemsForSave: [GeneratedItem] {
+        if mode == .ar {
+            return arManager.collectedItems
+        }
+        return identifiedItem.map { [$0] } ?? []
+    }
+
+    // Hands the camera between the AVCapture session (Object/Sign) and
+    // the ARKit session (AR). Only one can own the device at a time —
+    // running them together is exactly the "camera isn't ready" failure
+    // the old standalone AR page hit. The brief sleep lets the outgoing
+    // session actually release the camera before the incoming one runs.
+    private func switchSessions(toAR: Bool) async {
+        if toAR {
+            // Show the spinner (not a paused/black ARView) during the
+            // handoff; start() flips it back to .supported once the AR
+            // session is actually running.
+            arManager.supportState = .checking
+            // Wait for AVCapture to fully release the camera, then a short
+            // buffer for the OS to hand it over, before ARKit claims it.
+            await camera.stopAndWait()
+            try? await Task.sleep(for: .milliseconds(250))
+            await arManager.start(language: language, dialect: dialect)
+        } else {
+            arManager.pause()
+            try? await Task.sleep(for: .milliseconds(250))
+            await camera.startIfPermitted()
+        }
+    }
+
     // MARK: Camera section
 
     private var cameraSection: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 18)
                 .fill(Color.black)
-            switch camera.authState {
-            case .authorized:
-                CameraPreview(session: camera.session)
-                    .clipShape(RoundedRectangle(cornerRadius: 18))
-                    .contentShape(RoundedRectangle(cornerRadius: 18))
-                    // Pinch to zoom the lens in on a distant object or sign;
-                    // the zoom carries through to the captured photo. Double-
-                    // tap resets to 1×.
-                    .gesture(zoomGesture)
-                    .onTapGesture(count: 2) {
-                        Haptics.light()
-                        gestureBaseZoom = 1.0
-                        camera.resetZoom()
-                    }
-            case .denied:
-                permissionDeniedView
-            case .unknown:
-                ProgressView()
-                    .tint(.white)
+            if mode == .ar {
+                arContent
+            } else {
+                switch camera.authState {
+                case .authorized:
+                    CameraPreview(session: camera.session)
+                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                        .contentShape(RoundedRectangle(cornerRadius: 18))
+                        // Pinch to zoom the lens in on a distant object or sign;
+                        // the zoom carries through to the captured photo. Double-
+                        // tap resets to 1×.
+                        .gesture(zoomGesture)
+                        .onTapGesture(count: 2) {
+                            Haptics.light()
+                            gestureBaseZoom = 1.0
+                            camera.resetZoom()
+                        }
+                case .denied:
+                    permissionDeniedView
+                case .unknown:
+                    ProgressView()
+                        .tint(.white)
+                }
             }
             VStack(spacing: 14) {
                 Spacer()
-                if camera.authState == .authorized {
+                if mode == .ar, let hint = arManager.hintText {
+                    Text(hint)
+                        .font(.custom("NeueHaasDisplay-Light", size: 13))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(.black.opacity(0.45)))
+                }
+                if camera.authState == .authorized || mode == .ar {
                     modePicker
                 }
-                shutterButton
-                    .padding(.bottom, 18)
+                if mode == .ar {
+                    // Scanning is automatic as the camera pans, but the
+                    // status pill doubles as a subtle manual scan button —
+                    // tap it to label the current view on demand. Shows a
+                    // spinner while a scan is in flight.
+                    Button {
+                        guard !arManager.isScanning, arManager.supportState == .supported else { return }
+                        Haptics.medium()
+                        Task { await arManager.scan(language: language, dialect: dialect) }
+                    } label: {
+                        arStatusPill
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(arManager.isScanning || arManager.supportState != .supported)
+                    .padding(.bottom, 22)
+                } else {
+                    shutterButton
+                        .padding(.bottom, 18)
+                }
             }
         }
-        .frame(height: 360)
+        .frame(height: mode == .ar ? 420 : 360)
         // Zoom read-out, shown only while zoomed in. Matches the mode
         // picker's tinted-glass capsule so it reads on any camera feed.
         .overlay(alignment: .top) {
-            if camera.authState == .authorized, camera.zoomFactor > 1.05 {
+            if mode != .ar, camera.authState == .authorized, camera.zoomFactor > 1.05 {
                 Text(String(format: "%.1f×", camera.zoomFactor))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 13))
                     .foregroundStyle(.white)
@@ -327,6 +434,90 @@ struct CameraPage: View {
                     .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
                     .padding(.top, 14)
             }
+        }
+        // Clear-labels control for AR mode, kept out of the shutter row
+        // so the shutter stays centered.
+        .overlay(alignment: .topTrailing) {
+            if mode == .ar, !arManager.labels.isEmpty {
+                Button {
+                    Haptics.light()
+                    arManager.clearLabels()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 38, height: 38)
+                        .background(Circle().fill(.black.opacity(0.35)))
+                        .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .padding(12)
+            }
+        }
+    }
+
+    // AR viewfinder: the shared ARView plus label bubbles projected from
+    // their world anchors. Coordinates line up because the overlay fills
+    // the exact same frame as the ARView.
+    @ViewBuilder
+    private var arContent: some View {
+        switch arManager.supportState {
+        case .supported:
+            ARViewContainer(manager: arManager)
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+                // Thin white leader lines connecting each bubble back to
+                // the object it names, so a nudged-apart label still reads
+                // as belonging to its object.
+                .overlay {
+                    Canvas { context, _ in
+                        for label in arManager.labels {
+                            guard let bubble = label.screenPoint,
+                                  let object = label.anchorPoint,
+                                  hypot(bubble.x - object.x, bubble.y - object.y) > 8 else { continue }
+                            var line = Path()
+                            line.move(to: bubble)
+                            line.addLine(to: object)
+                            context.stroke(line, with: .color(.white.opacity(0.65)), lineWidth: 1)
+                            let dot = CGRect(x: object.x - 2.5, y: object.y - 2.5, width: 5, height: 5)
+                            context.fill(Path(ellipseIn: dot), with: .color(.white.opacity(0.85)))
+                        }
+                    }
+                    .allowsHitTesting(false)
+                }
+                .overlay {
+                    ForEach(arManager.labels) { label in
+                        if let point = label.screenPoint {
+                            ARLabelBubble(label: label) {
+                                Haptics.light()
+                                arManager.toggleCollected(label.id)
+                            }
+                            // screenPoint is the object point nudged apart
+                            // from other labels; the leader line above ties
+                            // it back to the object.
+                            .position(x: point.x, y: point.y)
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 18))
+        case .denied:
+            permissionDeniedView
+        case .unsupported:
+            VStack(spacing: 8) {
+                Image(systemName: "arkit")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.white.opacity(0.7))
+                Text("AR isn't available on this device")
+                    .font(.custom("NeueHaasDisplay-Light", size: 16))
+                    .foregroundStyle(.white)
+                Text("Use Object mode to identify one thing at a time instead.")
+                    .font(.custom("NeueHaasDisplay-Light", size: 13))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
+        case .checking:
+            ProgressView()
+                .tint(.white)
         }
     }
 
@@ -350,12 +541,19 @@ struct CameraPage: View {
                 Button {
                     guard mode != candidate else { return }
                     Haptics.light()
+                    let wasAR = mode == .ar
                     withAnimation(.easeInOut(duration: 0.18)) {
                         mode = candidate
                     }
                     // A pending result from the other mode would read as
                     // stale, so clear it when the learner switches intent.
                     clearIdentification()
+                    // Crossing the AVCapture ↔ ARKit boundary hands the
+                    // camera between sessions. Object ↔ Sign shares the
+                    // capture session, so no handoff there.
+                    if wasAR != (candidate == .ar) {
+                        Task { await switchSessions(toAR: candidate == .ar) }
+                    }
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: candidate.systemImage)
@@ -373,6 +571,9 @@ struct CameraPage: View {
                     }
                 }
                 .buttonStyle(.plain)
+                // Only block switching during a one-shot photo identify;
+                // the AR auto-scan runs continuously, so gating on it
+                // would leave the chips disabled most of the time.
                 .disabled(isIdentifying)
             }
         }
@@ -397,10 +598,37 @@ struct CameraPage: View {
         }
     }
 
+    // Live status for AR mode. Labels appear on their own; this just
+    // tells the learner the scanner is working (or idle-ready).
+    private var arStatusPill: some View {
+        HStack(spacing: 8) {
+            if arManager.isScanning {
+                ProgressView()
+                    .tint(.white)
+                    .scaleEffect(0.8)
+                Text("Looking around…")
+            } else {
+                Image(systemName: "viewfinder")
+                    .font(.system(size: 13, weight: .medium))
+                Text(arManager.labels.isEmpty ? "Point at objects · tap to scan" : "Keep panning · tap to scan")
+            }
+        }
+        .font(.custom("NeueHaasDisplay-Medium", size: 13))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Capsule().fill(.black.opacity(0.4)))
+        .overlay(Capsule().stroke(.white.opacity(0.15), lineWidth: 1))
+    }
+
     private var shutterButton: some View {
         Button {
             Haptics.medium()
-            captureAndIdentify()
+            if mode == .ar {
+                Task { await arManager.scan(language: language, dialect: dialect) }
+            } else {
+                captureAndIdentify()
+            }
         } label: {
             ZStack {
                 Circle()
@@ -409,15 +637,32 @@ struct CameraPage: View {
                 Circle()
                     .stroke(.white, lineWidth: 4)
                     .frame(width: 64, height: 64)
-                if isIdentifying {
+                if isBusy {
                     ProgressView().tint(.white)
+                } else if mode == .ar {
+                    // Reticle glyph reads as "scan the scene" rather than
+                    // "take one photo".
+                    Image(systemName: "viewfinder")
+                        .font(.system(size: 24, weight: .medium))
+                        .foregroundStyle(.white)
                 } else {
                     Circle().fill(.white).frame(width: 52, height: 52)
                 }
             }
         }
         .buttonStyle(.plain)
-        .disabled(camera.authState != .authorized || isIdentifying)
+        .disabled(shutterDisabled)
+    }
+
+    private var isBusy: Bool {
+        isIdentifying || arManager.isScanning
+    }
+
+    private var shutterDisabled: Bool {
+        if mode == .ar {
+            return arManager.supportState != .supported || arManager.isScanning
+        }
+        return camera.authState != .authorized || isIdentifying
     }
 
     // MARK: Attributes (language + dialect only)
@@ -464,7 +709,85 @@ struct CameraPage: View {
 
     // MARK: Result section
 
+    @ViewBuilder
     private var resultSection: some View {
+        if mode == .ar {
+            collectedSection
+        } else {
+            recognizedSection
+        }
+    }
+
+    // AR mode: the running list of labels the scan pinned, each
+    // toggleable in/out of the batch that the save flows operate on.
+    private var collectedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Collected")
+                .font(.custom("NeueHaasDisplay-Light", size: 11))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .tracking(0.5)
+
+            if arManager.labels.isEmpty {
+                Text("Just point your camera around the room — labels appear automatically on everything we recognize. Tap a label to keep it or drop it.")
+                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 24)
+                    .padding(.horizontal, 18)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color(white: 0.92), lineWidth: 1)
+                    )
+            } else {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(arManager.labels) { label in
+                        Button {
+                            Haptics.light()
+                            arManager.toggleCollected(label.id)
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: label.isCollected ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 18))
+                                    .foregroundStyle(label.isCollected ? .black : Color(white: 0.75))
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(label.item.word)
+                                        .font(.custom("NeueHaasDisplay-Mediu", size: 17))
+                                        .foregroundStyle(.black)
+                                    HStack(spacing: 6) {
+                                        Text(label.english)
+                                            .font(.custom("NeueHaasDisplay-Light", size: 13))
+                                            .foregroundStyle(.secondary)
+                                        if let translit = label.item.transliteration, !translit.isEmpty {
+                                            Text(translit)
+                                                .font(.system(size: 12))
+                                                .italic()
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .padding(.vertical, 10)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if label.id != arManager.labels.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color(white: 0.88), lineWidth: 1)
+                )
+            }
+        }
+    }
+
+    private var recognizedSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Recognized")
                 .font(.custom("NeueHaasDisplay-Light", size: 11))
@@ -515,6 +838,7 @@ struct CameraPage: View {
         switch mode {
         case .object: return "Tap the shutter to identify what you're pointing at."
         case .sign: return "Tap the shutter to read the text on a sign."
+        case .ar: return "Point your camera around — labels appear automatically."
         }
     }
 
@@ -530,12 +854,12 @@ struct CameraPage: View {
                 Haptics.medium()
                 showCreateCover = true
             }
-            .disabled(identifiedItem == nil || isSavingNewDeck)
+            .disabled(itemsForSave.isEmpty || isSavingNewDeck)
             ActionCard(title: "Save to Deck", systemImage: "plus.circle", isPrimary: true) {
                 Haptics.medium()
                 showDeckPicker = true
             }
-            .disabled(identifiedItem == nil || isSavingNewDeck)
+            .disabled(itemsForSave.isEmpty || isSavingNewDeck)
         }
     }
 
@@ -563,6 +887,11 @@ struct CameraPage: View {
                 Task { await identify(imageData: jpeg) }
             case .sign:
                 Task { await readSignage(imageData: jpeg) }
+            case .ar:
+                // AR never routes here — its shutter calls arManager.scan
+                // directly. Reset the flag defensively so a stray call
+                // can't wedge the shutter.
+                isIdentifying = false
             }
         }
     }
@@ -612,35 +941,46 @@ struct CameraPage: View {
         identifiedEnglish = nil
     }
 
-    private func deckTitle(for item: GeneratedItem) -> String {
-        // Cheap, deterministic title for the brand-new deck path so the
-        // user doesn't have to invent one. They can override it in the
-        // cover customization sheet.
-        let label = identifiedEnglish?.capitalized ?? item.translation.capitalized
-        let suffix = mode == .sign ? "Sign" : "Camera Find"
-        return "\(label) – \(suffix)"
+    // Deterministic default title for the brand-new deck path — covers
+    // both the single-item (Object/Sign) and multi-item (AR) cases so
+    // the user doesn't have to invent one. Overridable in the cover sheet.
+    private var defaultDeckTitle: String {
+        let items = itemsForSave
+        switch mode {
+        case .ar:
+            guard let first = items.first else { return "AR Scan" }
+            let label = first.translation.capitalized
+            return items.count > 1 ? "\(label) & More – AR Scan" : "\(label) – AR Scan"
+        case .sign:
+            let label = identifiedEnglish?.capitalized ?? items.first?.translation.capitalized ?? "Sign"
+            return "\(label) – Sign"
+        case .object:
+            let label = identifiedEnglish?.capitalized ?? items.first?.translation.capitalized ?? "Object"
+            return "\(label) – Camera Find"
+        }
     }
 
     @MainActor
     private func saveAsNewDeck(
-        item: GeneratedItem,
+        items: [GeneratedItem],
         title: String,
         style: DeckCoverStyle,
         isPublic: Bool
     ) async {
+        guard !items.isEmpty else { return }
         isSavingNewDeck = true
         defer { isSavingNewDeck = false }
         let deck = GeneratedDeck(
             title: title,
-            items: [item.withLanguage(language)],
+            items: items.map { $0.withLanguage(language) },
             language: language,
             dialect: dialect,
             level: level,
             contentType: "Words",
-            amount: "1",
+            amount: "\(items.count)",
             tones: [],
             interests: [],
-            userPrompt: "Camera scan",
+            userPrompt: mode == .ar ? "AR scan" : "Camera scan",
             promptSent: "",
             rawJSON: ""
         )
@@ -653,6 +993,7 @@ struct CameraPage: View {
             )
             Haptics.success()
             clearIdentification()
+            if mode == .ar { arManager.clearLabels() }
             onSaved()
         } catch {
             Haptics.error()

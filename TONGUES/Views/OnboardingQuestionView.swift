@@ -10,6 +10,9 @@ struct OnboardingQuestionView: View {
     // can double as the editing surface from ProfileView without leaking
     // the onboarding chrome.
     var showsProgress: Bool = true
+    // Overrides the primary button copy. nil keeps the onboarding
+    // "Next"/"Continue" label; the settings edit sheets pass "Save".
+    var ctaTitle: String? = nil
 
     @State private var textAnswer: String = ""
     // Multi-select: questions can have more than one answer.
@@ -109,7 +112,7 @@ struct OnboardingQuestionView: View {
                 Haptics.medium()
                 recordAndAdvance()
             } label: {
-                Text(questionNumber == totalQuestions ? "Continue" : "Next")
+                Text(ctaTitle ?? (questionNumber == totalQuestions ? "Continue" : "Next"))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)

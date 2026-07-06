@@ -258,7 +258,7 @@ struct PremiumActionSheet: View {
                                     Capsule()
                                         .fill(Color.white.opacity(0.08))
                                         .glassEffect(
-                                            .regular.tint(Color.white.opacity(0.22)).interactive(),
+                                            .regular.tint(Color.white.opacity(0.22)),
                                             in: .capsule
                                         )
                                         .matchedGeometryEffect(
@@ -276,8 +276,11 @@ struct PremiumActionSheet: View {
             // Outer container uses the same Liquid Glass treatment the
             // bottom page toggle on CreateDeckSheet uses, so the
             // paywall segmented control feels native to iOS 26's
-            // design system.
-            .glassEffect(.regular.interactive(), in: .capsule)
+            // design system. NOT `.interactive()`: an interactive glass
+            // surface here intercepts touches and swallowed the tab
+            // buttons' taps, so `selectedTier` never changed and the CTA
+            // kept buying the default (Standard) tier.
+            .glassEffect(.regular, in: .capsule)
         }
     }
 
@@ -633,7 +636,11 @@ struct PremiumActionSheet: View {
         let success = await store.purchase(selectedTier, cycle: selectedCycle)
         if success {
             Haptics.success()
-            await subscription.refresh()
+            // Do NOT re-read Firestore here: store.purchase already resolved
+            // and applied the new tier to SubscriptionService in memory (and
+            // committed it). Re-reading could clobber that with a stale doc
+            // if the write lagged/failed, leaving the plan stuck on the old
+            // tier. The @Observable state already reflects the upgrade.
             dismiss()
         } else if let error = store.lastError {
             // Surface the underlying StoreKit failure so the user

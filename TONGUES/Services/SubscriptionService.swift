@@ -220,7 +220,7 @@ final class SubscriptionService {
             && state.activeProductId == productId
         if alreadyApplied {
             state.lastVerifiedAt = verifiedAt
-            try? await commit()
+            await commitLogging("applyEntitlement(noop)")
             return
         }
 
@@ -233,7 +233,19 @@ final class SubscriptionService {
         } else if state.activeTransactionId != transactionId {
             state.tierStartedAt = verifiedAt
         }
-        try? await commit()
+        print("💳 SubscriptionService: applying tier=\(tier.rawValue) product=\(productId ?? "nil")")
+        await commitLogging("applyEntitlement(\(tier.rawValue))")
+    }
+
+    // Wraps commit() so a Firestore write failure is surfaced rather than
+    // swallowed by `try?`. A silent failure here is what leaves an upgraded
+    // plan looking unchanged (the doc never advances), so it must be loud.
+    private func commitLogging(_ context: String) async {
+        do {
+            try await commit()
+        } catch {
+            print("⚠️ SubscriptionService.commit failed [\(context)]: \(error)")
+        }
     }
 
     // Drops the user back to the free tier. Used when StoreKit reports
@@ -243,7 +255,7 @@ final class SubscriptionService {
             && state.activeTransactionId == nil
             && state.activeProductId == nil {
             state.lastVerifiedAt = verifiedAt
-            try? await commit()
+            await commitLogging("clearEntitlement(noop)")
             return
         }
         state.tier = SubscriptionTier.free.rawValue
@@ -251,7 +263,7 @@ final class SubscriptionService {
         state.activeTransactionId = nil
         state.tierStartedAt = nil
         state.lastVerifiedAt = verifiedAt
-        try? await commit()
+        await commitLogging("clearEntitlement")
     }
 
     private func commit() async throws {

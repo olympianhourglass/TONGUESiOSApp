@@ -912,7 +912,7 @@ struct CreateDeckSheet: View {
         [
             .init(target: .language, caption: "Choose the language you're learning"),
             .init(target: .dialect, caption: "Pick a dialect or regional variety"),
-            .init(target: .content, caption: "Words, phrases, or full sentences — your call"),
+            .init(target: .content, caption: "Words or full sentences — your call"),
             .init(target: .amount, caption: "Set how many cards to generate"),
             .init(target: .level, caption: "Match it to your proficiency level"),
             .init(target: .generate, caption: "Tap Generate, and your deck is ready")

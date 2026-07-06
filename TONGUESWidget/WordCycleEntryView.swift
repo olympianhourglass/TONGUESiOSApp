@@ -63,7 +63,7 @@ struct WordCycleEntryView: View {
                     size: family == .systemSmall ? 11 : 13,
                     weight: .semibold
                 ))
-                .foregroundStyle(Color.white.opacity(0.65))
+                .foregroundStyle(foreground.opacity(0.65))
                 .padding(8)
                 .contentShape(Rectangle())
         }
@@ -78,12 +78,20 @@ struct WordCycleEntryView: View {
         Color(widgetHex: entry.backgroundHex)
     }
 
+    // Foreground for text + icons, chosen for legibility against whatever
+    // background the user picked: black on light backgrounds (e.g. the
+    // "Pleasant" blue), white on the dark ones. Threshold sits above the
+    // mid-gray "Sage" swatch so only clearly-light backgrounds flip.
+    private var foreground: Color {
+        Color.perceivedLuminance(ofHex: entry.backgroundHex) > 0.7 ? .black : .white
+    }
+
     private func content(card: WidgetCard) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             // Language / deck label
             Text(entry.headerLabel)
                 .font(.custom("NeueHaasDisplay-Light", size: family == .systemSmall ? 13 : 15))
-                .foregroundStyle(Color.white.opacity(0.55))
+                .foregroundStyle(foreground.opacity(0.55))
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
 
@@ -92,7 +100,7 @@ struct WordCycleEntryView: View {
             // English word (smaller, positioned right above the target word)
             Text(card.english)
                 .font(.custom("NeueHaasDisplay-Light", size: family == .systemSmall ? 15 : 18))
-                .foregroundStyle(Color.white.opacity(0.92))
+                .foregroundStyle(foreground.opacity(0.92))
                 .lineLimit(1)
                 .minimumScaleFactor(0.65)
 
@@ -105,7 +113,7 @@ struct WordCycleEntryView: View {
             HStack(alignment: .center, spacing: 8) {
                 Text(card.foreign)
                     .font(.custom("NeueHaasDisplay-Bold", size: family == .systemSmall ? 26 : 36))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(foreground)
                     .lineLimit(1)
                     .minimumScaleFactor(0.45)
                     .padding(.top, 2)
@@ -126,7 +134,7 @@ struct WordCycleEntryView: View {
                 Text(translit)
                     .font(.custom("NeueHaasDisplay-Light", size: family == .systemSmall ? 12 : 14))
                     .italic()
-                    .foregroundStyle(Color.white.opacity(0.6))
+                    .foregroundStyle(foreground.opacity(0.6))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
                     .padding(.top, 2)
@@ -146,10 +154,10 @@ struct WordCycleEntryView: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No cards yet")
                 .font(.custom("NeueHaasDisplay-Light", size: family == .systemSmall ? 14 : 16))
-                .foregroundStyle(Color.white.opacity(0.6))
+                .foregroundStyle(foreground.opacity(0.6))
             Text("Add a deck to start cycling words here.")
                 .font(.custom("NeueHaasDisplay-Light", size: family == .systemSmall ? 12 : 13))
-                .foregroundStyle(Color.white.opacity(0.45))
+                .foregroundStyle(foreground.opacity(0.45))
                 .lineLimit(2)
         }
         .padding(family == .systemSmall ? 14 : 18)
@@ -179,5 +187,17 @@ extension Color {
         let g = Double((value & 0x00FF00) >> 8) / 255
         let b = Double(value & 0x0000FF) / 255
         self = Color(red: r, green: g, blue: b)
+    }
+
+    // Rec. 601 perceived luminance of a 6-char hex, 0 (black) → 1 (white).
+    // Used to pick a legible foreground over the widget background. Returns
+    // 0 (treated as dark) for invalid input.
+    static func perceivedLuminance(ofHex hex: String) -> Double {
+        var value: UInt64 = 0
+        guard Scanner(string: hex).scanHexInt64(&value), hex.count == 6 else { return 0 }
+        let r = Double((value & 0xFF0000) >> 16) / 255
+        let g = Double((value & 0x00FF00) >> 8) / 255
+        let b = Double(value & 0x0000FF) / 255
+        return 0.299 * r + 0.587 * g + 0.114 * b
     }
 }

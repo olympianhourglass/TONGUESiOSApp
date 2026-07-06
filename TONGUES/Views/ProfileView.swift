@@ -5,6 +5,8 @@ import UIKit
 struct ProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var auth = AuthService.shared
+    @State private var subscription = SubscriptionService.shared
+    @State private var showPaywall = false
     @State private var profile: UserProfile?
     @State private var isLoading = true
     @State private var loadError: String?
@@ -29,6 +31,28 @@ struct ProfileView: View {
                 VStack(alignment: .leading, spacing: 32) {
                     accountHeader
                         .padding(.top, 8)
+
+                    NavigationLink {
+                        SavedInsightsView()
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "bookmark")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(.black)
+                            Text("View Saved Insights")
+                                .font(.system(size: 16))
+                                .foregroundStyle(.black)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 14)
+                        .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
 
                     if let onboarding = profile?.onboarding {
                         section("Languages", editField: .languages) {
@@ -109,6 +133,7 @@ struct ProfileView: View {
                 }
             }
             .task { await loadProfile() }
+            .task { await subscription.refresh() }
             .alert(
                 "Couldn't update photo",
                 isPresented: Binding(
@@ -140,6 +165,9 @@ struct ProfileView: View {
             }
             .sheet(isPresented: $showFeedbackSheet) {
                 FeedbackSheet(userName: profile?.onboarding?.name)
+            }
+            .sheet(isPresented: $showPaywall) {
+                PremiumActionSheet()
             }
             .sheet(item: $activeEditField) { field in
                 if let onboarding = profile?.onboarding {
@@ -202,10 +230,30 @@ struct ProfileView: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
+                    subscriptionPlanRow
                 }
                 Spacer(minLength: 0)
             }
         }
+    }
+
+    // Current plan, one line under the email. Tapping opens the paywall so
+    // the user can change plans from here.
+    private var subscriptionPlanRow: some View {
+        Button {
+            Haptics.light()
+            showPaywall = true
+        } label: {
+            HStack(spacing: 4) {
+                Text("\(subscription.currentTier.displayName) plan")
+                    .font(.system(size: 13))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .foregroundStyle(.secondary)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // Circular avatar that triggers a source-chooser (Take Selfie /

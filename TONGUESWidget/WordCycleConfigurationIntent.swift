@@ -26,6 +26,8 @@ enum WidgetBackgroundColorOption: String, AppEnum {
     case redOrange
     case deepCrimson
     case sage
+    case pleasant
+    case darkCherry
 
     var hex: String {
         switch self {
@@ -34,6 +36,8 @@ enum WidgetBackgroundColorOption: String, AppEnum {
         case .redOrange:    return "FF2C02"
         case .deepCrimson:  return "3C0F06"
         case .sage:         return "A5A597"
+        case .pleasant:     return "C6EFFF"
+        case .darkCherry:   return "180805"
         }
     }
 
@@ -45,7 +49,9 @@ enum WidgetBackgroundColorOption: String, AppEnum {
         .black:       DisplayRepresentation(title: "Black"),
         .redOrange:   DisplayRepresentation(title: "Red"),
         .deepCrimson: DisplayRepresentation(title: "Crimson"),
-        .sage:        DisplayRepresentation(title: "Sage")
+        .sage:        DisplayRepresentation(title: "Sage"),
+        .pleasant:    DisplayRepresentation(title: "Pleasant"),
+        .darkCherry:  DisplayRepresentation(title: "Dark Cherry")
     ]
 }
 

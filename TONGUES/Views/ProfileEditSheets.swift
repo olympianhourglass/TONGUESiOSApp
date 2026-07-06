@@ -92,7 +92,8 @@ struct ProfileEditSheet: View {
                 ),
                 state: state,
                 onNext: { Task { await save() } },
-                showsProgress: false
+                showsProgress: false,
+                ctaTitle: "Save"
             )
         case .understand:
             // Reuses the Q6 options copy. Falls back to neutral phrasing
@@ -113,7 +114,8 @@ struct ProfileEditSheet: View {
                 ),
                 state: state,
                 onNext: { Task { await save() } },
-                showsProgress: false
+                showsProgress: false,
+                ctaTitle: "Save"
             )
         case .destinations:
             OnboardingDestinationsQuestionView(
@@ -121,7 +123,8 @@ struct ProfileEditSheet: View {
                 totalQuestions: 1,
                 state: state,
                 onNext: { Task { await save() } },
-                showsProgress: false
+                showsProgress: false,
+                ctaTitle: "Save"
             )
         case .languages:
             OnboardingLanguagesQuestionView(
@@ -129,7 +132,8 @@ struct ProfileEditSheet: View {
                 totalQuestions: 1,
                 state: state,
                 onNext: { Task { await save() } },
-                showsProgress: false
+                showsProgress: false,
+                ctaTitle: "Save"
             )
         case .interests:
             OnboardingInterestsQuestionView(
@@ -137,7 +141,8 @@ struct ProfileEditSheet: View {
                 totalQuestions: 1,
                 state: state,
                 onNext: { Task { await save() } },
-                showsProgress: false
+                showsProgress: false,
+                ctaTitle: "Save"
             )
         }
     }

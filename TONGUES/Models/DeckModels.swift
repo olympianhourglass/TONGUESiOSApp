@@ -48,11 +48,21 @@ enum DeckAttribute: String, Identifiable, CaseIterable {
             "Zulu"
         ]
         case .dialect:  return ["Standard"]
-        case .content:  return ["Words", "Phrases", "Sentences"]
+        // "Phrases" was retired — it now funnels into "Sentences" (see
+        // canonicalContentType). Only Words and Sentences remain.
+        case .content:  return ["Words", "Sentences"]
         case .amount:   return ["5", "10", "20", "50"]
         case .level:    return ["A1", "A2", "B1", "B2", "C1", "C2"]
         }
     }
+}
+
+// The app now has exactly two content categories: Words and Sentences.
+// "Phrases" is a legacy value that we fold into "Sentences" so existing
+// decks and any stray inputs behave as sentences everywhere — routing to
+// Sentence Studio, exclusion from word widgets, and the shared cap bucket.
+func canonicalContentType(_ raw: String) -> String {
+    raw == "Phrases" ? "Sentences" : raw
 }
 
 struct Dialect: Hashable {

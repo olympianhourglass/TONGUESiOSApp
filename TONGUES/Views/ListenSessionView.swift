@@ -185,6 +185,17 @@ struct ListenSessionView: View {
             // re-run the runtime swap against the freshly-presented
             // fullScreenCover hosting controller.
             AppTabRouter.shared.forceLightStatusBar = true
+            // The flag's didSet installs the swap immediately, but the
+            // fullScreenCover's hosting controller often isn't in the
+            // window hierarchy yet at onAppear, so that first pass can
+            // miss it and the bar stays dark. Re-assert on the next
+            // runloop and again once the present animation has settled so
+            // the presented controller is reliably re-classed to white.
+            DispatchQueue.main.async { StatusBarStyleSwap.installAndRefresh() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                guard AppTabRouter.shared.forceLightStatusBar else { return }
+                StatusBarStyleSwap.installAndRefresh()
+            }
             volume = Double(AVAudioSession.sharedInstance().outputVolume)
             autoPlay = continuousEnabled
             if playOrder.isEmpty {

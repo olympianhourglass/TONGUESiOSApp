@@ -3,7 +3,10 @@ import Foundation
 // MARK: - Levels per language
 
 func levels(for language: String) -> [String] {
-    switch language {
+    // Canonicalize first so short aliases ("Mandarin", "Chinese",
+    // "Cantonese") resolve to their framework-specific levels (HSK, etc.)
+    // instead of falling through to the generic CEFR default.
+    switch canonicalLanguageName(language) {
     case "Chinese (Mandarin)":
         return ["HSK 1", "HSK 2", "HSK 3", "HSK 4", "HSK 5", "HSK 6", "HSK 7", "HSK 8", "HSK 9"]
     case "Chinese (Cantonese)":
@@ -633,7 +636,9 @@ func dialectsDetailed(for language: String) -> [Dialect] {
 // MARK: - Dialects per language
 
 func dialects(for language: String) -> [String] {
-    switch language {
+    // Canonicalize so aliases ("Mandarin", "Chinese", "Cantonese") map to
+    // the same dialect list as the canonical name.
+    switch canonicalLanguageName(language) {
     case "Arabic":
         return [
             "MSA", "Egyptian", "Levantine", "Lebanese", "Syrian", "Palestinian", "Jordanian",

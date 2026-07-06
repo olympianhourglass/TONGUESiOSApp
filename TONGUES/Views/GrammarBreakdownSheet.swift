@@ -9,10 +9,35 @@ struct GrammarBreakdownSheet: View {
     let sentence: String
     let language: String
     let dialect: String
+    // Whether to offer the bookmark button (hidden when we're already
+    // showing a previously-saved insight from the Saved Insights screen).
+    private let allowSaving: Bool
 
     @State private var breakdown: GrammarBreakdown?
     @State private var isLoading = true
     @State private var errorText: String?
+    @State private var isSaved = false
+    @State private var isSaving = false
+
+    // Live grammar breakdown for a sentence in a conversation.
+    init(sentence: String, language: String, dialect: String) {
+        self.sentence = sentence
+        self.language = language
+        self.dialect = dialect
+        self.allowSaving = true
+    }
+
+    // Re-open a previously-saved insight with its breakdown already in
+    // hand (no fetch, no save button).
+    init(saved: SavedInsight) {
+        self.sentence = saved.title
+        self.language = saved.language ?? ""
+        self.dialect = saved.dialect ?? ""
+        self.allowSaving = false
+        _breakdown = State(initialValue: saved.grammar)
+        _isLoading = State(initialValue: false)
+        _isSaved = State(initialValue: true)
+    }
 
     var body: some View {
         NavigationStack {
@@ -71,19 +96,61 @@ struct GrammarBreakdownSheet: View {
                 .padding(.bottom, 40)
             }
 
-            Button {
-                Haptics.light()
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: 36, height: 36)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Circle())
+            HStack(spacing: 10) {
+                // Bookmark the insight — available once the breakdown has
+                // loaded, and only in the live (non-saved) presentation.
+                if allowSaving, breakdown != nil {
+                    Button {
+                        Haptics.light()
+                        Task { await save() }
+                    } label: {
+                        Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
+                            .font(.system(size: 15, weight: .regular))
+                            .foregroundStyle(.white.opacity(isSaved ? 1 : 0.85))
+                            .frame(width: 36, height: 36)
+                            .background(Color.white.opacity(0.12))
+                            .clipShape(Circle())
+                    }
+                    .disabled(isSaved || isSaving)
+                }
+
+                Button {
+                    Haptics.light()
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .frame(width: 36, height: 36)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Circle())
+                }
             }
             .padding(.top, 16)
             .padding(.trailing, 8)
+        }
+    }
+
+    @MainActor
+    private func save() async {
+        guard !isSaved, !isSaving, let breakdown else { return }
+        isSaving = true
+        defer { isSaving = false }
+        let insight = SavedInsight(
+            kind: .grammatical,
+            title: sentence,
+            subtitle: breakdown.translation,
+            body: breakdown.summary,
+            language: language.isEmpty ? nil : language,
+            dialect: dialect.isEmpty ? nil : dialect,
+            grammar: breakdown
+        )
+        do {
+            try await FirebaseSavedInsightService.save(insight)
+            isSaved = true
+            Haptics.success()
+        } catch {
+            Haptics.error()
         }
     }
 

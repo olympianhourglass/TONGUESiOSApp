@@ -332,7 +332,6 @@ struct LibraryView: View {
                         reviewsByLanguage: vm.reviewsByLanguage,
                         itemsLearned: vm.itemsTouched,
                         wordsInLibrary: vm.libraryItemCount(forContentType: "Words"),
-                        phrasesInLibrary: vm.libraryItemCount(forContentType: "Phrases"),
                         sentencesInLibrary: vm.libraryItemCount(forContentType: "Sentences"),
                         cardsAddedThisWeek: vm.cardsAddedThisWeek,
                         cardsAddedThisMonth: vm.cardsAddedThisMonth,

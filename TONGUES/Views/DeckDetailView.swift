@@ -527,7 +527,12 @@ struct DeckDetailView: View {
     // out to the Artifacts tab, so this tab is now purely the deck's
     // vocabulary.
     private var contentTab: some View {
-        VStack(spacing: 0) {
+        // Lazy so only near-visible rows are built. A plain VStack here
+        // instantiated every row (each with a drag gesture, tap handlers,
+        // and an animated waveform button) up front — the freeze on
+        // landing and the sluggish scroll on large decks. LazyVStack lays
+        // out identically for this full-width vertical list.
+        LazyVStack(spacing: 0) {
             ForEach(deck.items) { item in
                 SwipeToDeleteRow(onDelete: { deleteItem(item) }) {
                     HStack(alignment: .top) {

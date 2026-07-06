@@ -7,6 +7,8 @@ struct OnboardingDestinationsQuestionView: View {
     @Bindable var state: OnboardingState
     let onNext: () -> Void
     var showsProgress: Bool = true
+    // nil keeps the onboarding "Next" label; settings edit passes "Save".
+    var ctaTitle: String? = nil
 
     @State private var showSearch = false
 
@@ -80,7 +82,7 @@ struct OnboardingDestinationsQuestionView: View {
                 Haptics.medium()
                 onNext()
             } label: {
-                Text("Next")
+                Text(ctaTitle ?? "Next")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)

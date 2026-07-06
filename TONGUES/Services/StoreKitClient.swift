@@ -98,12 +98,19 @@ final class StoreKitClient {
         }
         isPurchasing = true
         defer { isPurchasing = false }
+        print("💳 StoreKitClient.purchase requested tier=\(tier.rawValue) cycle=\(cycle.rawValue) product=\(product.id)")
         do {
             let result = try await product.purchase()
             switch result {
             case .success(let verification):
                 let transaction = try Self.checkVerified(verification)
-                await applyTransaction(transaction)
+                // A completed purchase is authoritative: write its tier
+                // directly rather than re-deriving from the entitlements
+                // walk. The walk resolves the highest *currently-active*
+                // subscription, but right after an upgrade that snapshot
+                // often still shows only the prior (lower) plan — so it was
+                // downgrading the fresh purchase back to the old tier.
+                await recordPurchase(requestedTier: tier, transaction: transaction)
                 await transaction.finish()
                 return true
             case .userCancelled:
@@ -122,34 +129,66 @@ final class StoreKitClient {
         }
     }
 
+    // Records the tier of a just-completed purchase directly. A fresh
+    // purchase is the source of truth — we don't defer to the
+    // currentEntitlements walk here because that snapshot can still be
+    // showing a previously-active lower subscription, which was pulling
+    // the resolved tier back down to the old plan.
+    // `requestedTier` is the tier whose product we actually called
+    // `.purchase()` on — the user's intent. We grant THAT rather than
+    // re-deriving from `transaction.productID`, because a crossgrade within
+    // a subscription group can return a transaction still stamped with the
+    // previously-active product, which was granting the old (lower) tier.
+    private func recordPurchase(requestedTier: SubscriptionTier, transaction: Transaction) async {
+        let txnTier = SubscriptionProduct.tier(forProductId: transaction.productID)?.rawValue ?? "?"
+        print("💳 StoreKitClient.recordPurchase requestedTier=\(requestedTier.rawValue) txnProduct=\(transaction.productID) txnTier=\(txnTier)")
+        await SubscriptionService.shared.applyEntitlement(
+            tier: requestedTier,
+            productId: transaction.productID,
+            transactionId: String(transaction.id),
+            verifiedAt: Date()
+        )
+        currentTier = requestedTier
+    }
+
     // MARK: - Entitlement sync
 
     // Walks the user's currently-active entitlements, picks the
     // highest tier, and writes it through to Firebase. Run on launch,
     // after every purchase, on every Transaction.updates event, and
     // when the user taps Restore Purchases.
-    func syncEntitlements() async {
+    func syncEntitlements(including justPurchased: Transaction? = nil) async {
         var best: (tier: SubscriptionTier, txn: Transaction)? = nil
+
+        // Seed with the just-purchased transaction. Right after an upgrade,
+        // `Transaction.currentEntitlements` can lag a beat and still report
+        // only the PREVIOUS (lower) subscription — which meant an upgrade
+        // resolved back to the old tier and the profile stayed on the old
+        // plan. Seeding guarantees the freshly-bought tier is counted; the
+        // walk below can only raise it further.
+        if let justPurchased,
+           justPurchased.revocationDate == nil,
+           let tier = SubscriptionProduct.tier(forProductId: justPurchased.productID) {
+            best = (tier, justPurchased)
+        }
+
         for await result in Transaction.currentEntitlements {
-            guard let transaction = try? Self.checkVerified(result),
-                  let tier = SubscriptionProduct.tier(forProductId: transaction.productID) else {
-                continue
-            }
-            // Skip expired / revoked transactions — Transaction.currentEntitlements
-            // also surfaces consumables we don't use, but we filter on
-            // productID so they're naturally ignored.
-            if let revoked = transaction.revocationDate, revoked <= Date() {
-                continue
-            }
-            if let expires = transaction.expirationDate, expires <= Date() {
-                continue
-            }
+            guard let transaction = try? Self.checkVerified(result) else { continue }
+            let mappedTier = SubscriptionProduct.tier(forProductId: transaction.productID)
+            let isRevoked = (transaction.revocationDate.map { $0 <= Date() }) ?? false
+            let isExpired = (transaction.expirationDate.map { $0 <= Date() }) ?? false
+            print("💳   entitlement product=\(transaction.productID) tier=\(mappedTier?.rawValue ?? "?") revoked=\(isRevoked) expired=\(isExpired)")
+            // Skip unmapped / expired / revoked transactions. currentEntitlements
+            // also surfaces consumables we don't use; the productID filter
+            // ignores them naturally.
+            guard let tier = mappedTier, !isRevoked, !isExpired else { continue }
             if best == nil || tier.rank > best!.tier.rank {
                 best = (tier, transaction)
             }
         }
 
         let verifiedAt = Date()
+        print("💳 StoreKitClient.syncEntitlements resolved tier=\(best?.tier.rawValue ?? "free")")
         if let best {
             await SubscriptionService.shared.applyEntitlement(
                 tier: best.tier,
@@ -192,8 +231,10 @@ final class StoreKitClient {
     private func applyTransaction(_ transaction: Transaction) async {
         // Defer to the full entitlement walk so a multi-product
         // user always lands on the highest active tier rather than
-        // whatever the latest update happened to be.
-        await syncEntitlements()
+        // whatever the latest update happened to be — but pass the
+        // just-applied transaction in so a fresh upgrade is always
+        // counted even if the entitlements snapshot hasn't caught up yet.
+        await syncEntitlements(including: transaction)
     }
 
     // MARK: - Verification

@@ -9,7 +9,7 @@ import WidgetKit
 //
 // Layout mirrors what the Edit Widget panel exposes:
 //   - One unified source picker (chips, scrollable horizontally)
-//   - One background color picker (the 5 palette swatches)
+//   - One background color picker (the palette swatches)
 //   - A live preview that recomposes as you tap each chip / swatch
 struct WordCycleWidgetSection: View {
 
@@ -105,7 +105,11 @@ struct WordCycleWidgetSection: View {
         WordCycleMiniPreview(
             card: previewCard,
             headerLabel: previewHeaderLabel,
-            background: Color(libraryHex: backgroundHex)
+            background: Color(libraryHex: backgroundHex),
+            // Black text on light backgrounds (e.g. the "Pleasant" blue),
+            // white on the dark ones — matching the real widget so the
+            // preview reflects what actually renders.
+            foreground: backgroundHex.widgetPreviewLuminance > 0.7 ? .black : .white
         )
     }
 
@@ -139,28 +143,33 @@ struct WordCycleWidgetSection: View {
     // MARK: - Color picker
 
     private var colorPicker: some View {
-        HStack(spacing: 14) {
-            ForEach(WidgetBackgroundColorStore.palette, id: \.self) { hex in
-                Button {
-                    Haptics.light()
-                    backgroundHex = hex
-                    WidgetBackgroundColorStore.write(hex)
-                    WidgetCenter.shared.reloadAllTimelines()
-                } label: {
-                    Circle()
-                        .fill(Color(libraryHex: hex))
-                        .frame(width: 28, height: 28)
-                        .overlay(
-                            Circle().stroke(
-                                Color.white.opacity(backgroundHex == hex ? 1 : 0.25),
-                                lineWidth: backgroundHex == hex ? 2 : 1
+        // Horizontally scrollable so the swatch row never clips on narrow
+        // screens as the palette grows.
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 14) {
+                ForEach(WidgetBackgroundColorStore.palette, id: \.self) { hex in
+                    Button {
+                        Haptics.light()
+                        backgroundHex = hex
+                        WidgetBackgroundColorStore.write(hex)
+                        WidgetCenter.shared.reloadAllTimelines()
+                    } label: {
+                        Circle()
+                            .fill(Color(libraryHex: hex))
+                            .frame(width: 28, height: 28)
+                            .overlay(
+                                Circle().stroke(
+                                    Color.white.opacity(backgroundHex == hex ? 1 : 0.25),
+                                    lineWidth: backgroundHex == hex ? 2 : 1
+                                )
                             )
-                        )
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
-            Spacer(minLength: 0)
+            .padding(.vertical, 2)
         }
+        .scrollClipDisabled()
     }
 
     // MARK: - Source scroller
@@ -279,6 +288,8 @@ private struct WordCycleMiniPreview: View {
     let card: WidgetCard?
     let headerLabel: String
     let background: Color
+    // Legible text/element color for the chosen background.
+    var foreground: Color = .white
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -288,20 +299,20 @@ private struct WordCycleMiniPreview: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(headerLabel)
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
-                        .foregroundStyle(Color.white.opacity(0.55))
+                        .foregroundStyle(foreground.opacity(0.55))
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
 
                     Text(card.english)
                         .font(.custom("NeueHaasDisplay-Light", size: 15))
-                        .foregroundStyle(Color.white.opacity(0.92))
+                        .foregroundStyle(foreground.opacity(0.92))
                         .lineLimit(1)
                         .minimumScaleFactor(0.65)
 
                     Text(card.foreign)
                         .font(.custom("NeueHaasDisplay-Bold", size: 26))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(foreground)
                         .lineLimit(1)
                         .minimumScaleFactor(0.45)
                         .padding(.top, 2)
@@ -313,15 +324,29 @@ private struct WordCycleMiniPreview: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("No cards yet")
                         .font(.custom("NeueHaasDisplay-Light", size: 14))
-                        .foregroundStyle(Color.white.opacity(0.6))
+                        .foregroundStyle(foreground.opacity(0.6))
                     Text("Add a deck to start cycling words.")
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
-                        .foregroundStyle(Color.white.opacity(0.45))
+                        .foregroundStyle(foreground.opacity(0.45))
                         .lineLimit(2)
                 }
                 .padding(14)
             }
         }
+    }
+}
+
+private extension String {
+    // Rec. 601 perceived luminance (0 = black, 1 = white) of a 6-char hex
+    // string, used to pick a legible foreground over the widget preview
+    // background. Returns 0 (treated as dark) for malformed input.
+    var widgetPreviewLuminance: Double {
+        var value: UInt64 = 0
+        guard Scanner(string: self).scanHexInt64(&value), self.count == 6 else { return 0 }
+        let r = Double((value & 0xFF0000) >> 16) / 255
+        let g = Double((value & 0x00FF00) >> 8) / 255
+        let b = Double(value & 0x0000FF) / 255
+        return 0.299 * r + 0.587 * g + 0.114 * b
     }
 }
 

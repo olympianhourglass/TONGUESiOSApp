@@ -70,10 +70,11 @@ enum DeckGenerator {
         // free and must never touch the paywall or the free-deck grace.
         skipCapCheck: Bool = false
     ) async throws -> GeneratedDeck {
-        // Cap pre-check. Phrases share the Sentences bucket; Words is
-        // its own bucket. Anything else falls back to Words so a
-        // future content type can't silently bypass the gate.
-        let bucket: SubscriptionBucket = (contentType == "Sentences" || contentType == "Phrases")
+        // Fold the retired "Phrases" type into "Sentences" up front so the
+        // generated deck is saved as one of the two canonical categories.
+        let contentType = canonicalContentType(contentType)
+        // Cap pre-check. Sentences is its own bucket; Words is the other.
+        let bucket: SubscriptionBucket = contentType == "Sentences"
             ? .sentences
             : .words
         let requestedCount = Int(amount) ?? 10
@@ -2517,6 +2518,91 @@ enum DeckGenerator {
     struct IdentifyObjectResult {
         let item: GeneratedItem
         let englishLabel: String  // verbatim for the in-app "we saw X" line
+    }
+
+    // AR scene scan (ARPage). One vision call identifies up to
+    // `maxObjects` distinct objects in a single camera frame, each with
+    // a normalized center point so the AR view can raycast a world
+    // anchor for its floating label. Unlike `identifyObject` there's no
+    // confidence-gated second pass — a scan is a batch of quick labels,
+    // and the learner curates before saving.
+    struct SceneObject: Decodable {
+        let english: String
+        let word: String
+        let transliteration: String?
+        // Normalized center of the object in the image: x from the left
+        // edge (0...1), y from the TOP edge (0...1).
+        let x: Double
+        let y: Double
+    }
+
+    static func identifyObjectsInScene(
+        imageData: Data,
+        language: String,
+        dialect: String,
+        maxObjects: Int = 6
+    ) async throws -> [SceneObject] {
+        let prompt = """
+        Look at the attached photo of a real-world scene and identify up to \(maxObjects) DISTINCT physical objects that are clearly visible and useful vocabulary for a language learner (furniture, tools, food, plants, devices, clothing…).
+
+        Submit them by calling `submit_scene_objects`.
+
+        Accuracy rules — these matter most:
+        • Only name an object you are genuinely confident about. If you can't tell what something is, leave it out. Returning 2 correct objects beats 6 guesses.
+        • Identify the object at its most specific COMMON name (e.g. "mug" not "container", "laptop" not "device") — but don't invent detail you can't actually see.
+        • Spread your picks across the scene; don't return several near-duplicates of the same item. Prefer prominent, fully-visible objects over tiny, blurry, or partially-occluded ones.
+
+        Positioning:
+        • "x" and "y" are the normalized center of THAT specific object: x from the LEFT edge (0.0–1.0), y from the TOP edge (0.0–1.0). Put the point on the visual middle of the object itself, not nearby clutter — a label is pinned exactly there.
+
+        Content rules:
+        • Never identify people, faces, or body parts.
+        • Each "english" must be lowercase and singular; no two objects may share the same english name.
+        • Each "word" must be linguistically authentic in \(dialect) \(language). For languages with definite articles (Spanish, French, Italian, German, Portuguese, Greek, etc.) include the singular definite article so the learner sees grammatical gender.
+        """
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "objects": .schemaArray(
+                    items: .schemaObject(
+                        properties: [
+                            "english": .schemaString("Object name in English — lowercase singular noun."),
+                            "word": .schemaString("Same noun in \(language) (\(dialect)) using its native script, with the definite article for languages that use them."),
+                            "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts; null for Latin-script languages."),
+                            "x": .schemaNumber("Normalized horizontal center of the object, 0.0 (left edge) to 1.0 (right edge)."),
+                            "y": .schemaNumber("Normalized vertical center of the object, 0.0 (TOP edge) to 1.0 (bottom edge).")
+                        ],
+                        required: ["english", "word", "x", "y"]
+                    ),
+                    description: "Up to \(maxObjects) distinct identified objects."
+                )
+            ],
+            required: ["objects"]
+        )
+        struct Decoded: Decodable {
+            let objects: [SceneObject]
+        }
+        let decoded: Decoded = try await AnthropicClient.sendStructuredVision(
+            toolName: "submit_scene_objects",
+            toolDescription: "Submit the distinct objects identified in the scene with their target-language names and normalized positions.",
+            schema: schema,
+            imageBase64: imageData.base64EncodedString(),
+            userPrompt: prompt,
+            // Sonnet over the default Haiku: scene labeling needs stronger
+            // visual reasoning to name objects precisely and place their
+            // center points accurately. Auto-scan is motion-gated (min ~2.5s
+            // between calls), so the extra latency is acceptable here.
+            model: "claude-sonnet-4-6",
+            maxTokens: 2048,
+            as: Decoded.self
+        )
+        // Clamp-out anything with out-of-range coordinates rather than
+        // pinning a label off-screen, and de-dupe on the foreign side.
+        var seen = Set<String>()
+        return decoded.objects.filter { object in
+            (0.0...1.0).contains(object.x)
+                && (0.0...1.0).contains(object.y)
+                && seen.insert(object.word).inserted
+        }
     }
 
     static func identifyObject(

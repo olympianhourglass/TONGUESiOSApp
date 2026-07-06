@@ -16,7 +16,7 @@ enum CurriculumPlanner {
                 "label": .schemaString("Learner-facing one-line description of the activity."),
                 "spec": .object([
                     "type": .string("object"),
-                    "description": .string("Concrete parameters. Keys: topic (deck/content), contentType (Words|Phrases|Sentences, deck only), amount (5|10|20|50, deck only), scenario (conversation: what the AI tutor should roleplay), focus (pronunciation), kind (content: Story|Conversation|News Article|Songs|Poems|Jokes). All values are strings."),
+                    "description": .string("Concrete parameters. Keys: topic (deck/content), contentType (Words|Sentences, deck only), amount (5|10|20|50, deck only), scenario (conversation: what the AI tutor should roleplay), focus (pronunciation), kind (content: Story|Conversation|News Article|Songs|Poems|Jokes). All values are strings."),
                     "additionalProperties": .object(["type": .string("string")])
                 ])
             ],

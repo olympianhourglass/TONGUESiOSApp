@@ -12,6 +12,8 @@ struct OnboardingInterestsQuestionView: View {
     let state: OnboardingState
     let onNext: () -> Void
     var showsProgress: Bool = true
+    // nil keeps the onboarding "Next" label; settings edit passes "Save".
+    var ctaTitle: String? = nil
 
     @State private var customDraft: String = ""
     @State private var selected: Set<String> = []
@@ -229,7 +231,7 @@ struct OnboardingInterestsQuestionView: View {
             state.interests = Array(selected)
             onNext()
         } label: {
-            Text("Next")
+            Text(ctaTitle ?? "Next")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)

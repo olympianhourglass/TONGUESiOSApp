@@ -1,5 +1,15 @@
 import SwiftUI
 
+// Applies the given modifier only when `condition` is true. `attribute`
+// is constant for a sheet's lifetime, so the branch never flips and view
+// identity stays stable.
+private extension View {
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition { transform(self) } else { self }
+    }
+}
+
 struct AttributeOptionsSheet: View {
     @Environment(\.dismiss) private var dismiss
     let attribute: DeckAttribute
@@ -7,6 +17,11 @@ struct AttributeOptionsSheet: View {
     @Binding var selection: String
 
     @State private var searchText = ""
+
+    // Only the long language list benefits from a search field; the
+    // content / amount / level pickers have just a couple of options each,
+    // so the search bar is hidden for those.
+    private var showsSearch: Bool { attribute == .language }
 
     private var filteredOptions: [String] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -38,13 +53,16 @@ struct AttributeOptionsSheet: View {
             }
             .navigationTitle(attribute.title)
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(
-                text: $searchText,
-                placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search \(attribute.title.lowercased())"
-            )
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
+            .if(showsSearch) { view in
+                view
+                    .searchable(
+                        text: $searchText,
+                        placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "Search \(attribute.title.lowercased())"
+                    )
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { dismiss() }

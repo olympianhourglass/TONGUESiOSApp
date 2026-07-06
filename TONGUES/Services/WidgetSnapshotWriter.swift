@@ -99,7 +99,10 @@ enum WidgetSnapshotWriter {
                         english: english,
                         transliteration: transliteration?.isEmpty == false ? transliteration : nil,
                         forgettingRisk: risk,
-                        contentType: deck.contentType
+                        // Fold "Phrases" → "Sentences" so the widget's
+                        // sentence gating (small-widget exclusion, single-
+                        // word source filter) applies to legacy phrase decks.
+                        contentType: canonicalContentType(deck.contentType)
                     )
                 )
             }

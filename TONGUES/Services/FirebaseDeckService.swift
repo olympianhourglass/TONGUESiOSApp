@@ -214,7 +214,7 @@ enum FirebaseDeckService {
             .order(by: "createdAt", descending: true)
             .getDocuments()
         return try snapshot.documents.compactMap { snapshot in
-            try snapshot.data(as: DeckDocument.self)
+            try snapshot.data(as: DeckDocument.self).canonicalizingContentType()
         }
     }
 
@@ -258,7 +258,7 @@ enum FirebaseDeckService {
             // decks so this row never echoes their library back at them.
             let ownerUID = doc.reference.parent.parent?.documentID
             guard ownerUID != currentUID else { return nil }
-            return try? doc.data(as: DeckDocument.self)
+            return (try? doc.data(as: DeckDocument.self))?.canonicalizingContentType()
         }
     }
 

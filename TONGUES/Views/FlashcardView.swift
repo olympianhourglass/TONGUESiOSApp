@@ -43,6 +43,14 @@ struct FlashcardView: View {
     // the API on re-swipe. Lives only for the view's lifetime; nothing persists.
     @State private var translationCache: [String: [String: String]] = [:]
 
+    // Handwriting practice: a persisted toggle on the review screen. When on,
+    // supported-script cards (Chinese/Japanese/Korean/Arabic) shift up and
+    // reveal a practice rectangle below. Persists across cards and sessions.
+    @AppStorage("handwritingPracticeEnabled") private var handwritingEnabled = false
+    // Cards whose word the user wrote out successfully this session — shown
+    // in the summary and worth bonus XP.
+    @State private var handwrittenItemIDs: Set<String> = []
+
     private var totalCount: Int { deck.items.count }
     private var isFinished: Bool { currentIndex >= totalCount }
     private var currentItem: GeneratedItem? {
@@ -54,6 +62,11 @@ struct FlashcardView: View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 header
+                    // Keep the header (and its "Leave session?" popover)
+                    // above the card + handwriting practice, so the
+                    // confirmation floats over the card instead of being
+                    // covered by it when write mode shifts the layout up.
+                    .zIndex(1)
 
                 Spacer(minLength: 0)
 
@@ -70,11 +83,19 @@ struct FlashcardView: View {
                     ZStack {
                         VStack(spacing: 16) {
                             cardView(item: item)
-                            // Reserve the picker's space at all times once preferred
-                            // languages are loaded — fading opacity instead of
-                            // inserting/removing the view keeps the card pinned in
-                            // place when the user reveals the word.
-                            if preferredLanguages.count > 1 {
+                            // Handwriting practice takes the picker's slot while
+                            // active — the card shifts up as this block grows.
+                            if handwritingActive(for: item), let script = handwritingScript(for: item) {
+                                HandwritingPracticeView(word: item.word, script: script) {
+                                    handwrittenItemIDs.insert(item.id.uuidString)
+                                }
+                                .id("hw-\(item.id.uuidString)")
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            } else if preferredLanguages.count > 1 {
+                                // Reserve the picker's space at all times once preferred
+                                // languages are loaded — fading opacity instead of
+                                // inserting/removing the view keeps the card pinned in
+                                // place when the user reveals the word.
                                 languagePicker(item: item)
                                     .opacity(isWordRevealed ? 1 : 0)
                                     .allowsHitTesting(isWordRevealed)
@@ -133,6 +154,10 @@ struct FlashcardView: View {
         .task {
             await loadPreferredLanguagesIfNeeded()
         }
+        // The review screen is white, so force dark (black) status-bar
+        // content while it's on screen; restore on the way out.
+        .onAppear { AppTabRouter.shared.forceDarkStatusBar = true }
+        .onDisappear { AppTabRouter.shared.forceDarkStatusBar = false }
         .onChange(of: pickedLanguage) { _, newValue in
             // Fire only when the picker is actually on-screen (word
             // revealed). Skips the programmatic reset that happens on
@@ -220,9 +245,13 @@ struct FlashcardView: View {
                 }
                 .frame(height: 10)
 
-                Text("\(displayIndex)/\(totalCount)")
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                // Hidden while writing practice is active so it doesn't
+                // compete with the practice UI; the progress bar stays.
+                if !(currentItem.map { handwritingActive(for: $0) } ?? false) {
+                    Text("\(displayIndex)/\(totalCount)")
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(.horizontal, 8)
@@ -237,6 +266,46 @@ struct FlashcardView: View {
     private var displayIndex: Int {
         guard totalCount > 0 else { return 0 }
         return min(currentIndex + (isFinished ? 0 : 1), totalCount)
+    }
+
+    // MARK: Handwriting practice
+
+    // The script to practice for a card, or nil when handwriting doesn't
+    // apply. Only offered while the deck-language word is shown — switching
+    // the display to a translation changes the script, so we hide it then.
+    private func handwritingScript(for item: GeneratedItem) -> HandwritingScript? {
+        guard translatedWordOverride.isEmpty else { return nil }
+        return HandwritingScript.resolve(itemLanguage: item.language, deckLanguage: deck.language)
+    }
+
+    private func handwritingSupported(for item: GeneratedItem) -> Bool {
+        handwritingScript(for: item) != nil
+    }
+
+    private func handwritingActive(for item: GeneratedItem) -> Bool {
+        handwritingEnabled && handwritingSupported(for: item)
+    }
+
+    private var writeToggle: some View {
+        Button {
+            Haptics.light()
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.82)) {
+                handwritingEnabled.toggle()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "pencil.and.scribble")
+                    .font(.system(size: 14, weight: .medium))
+                Text("Write")
+                    .font(.system(size: 13, weight: .medium))
+            }
+            .foregroundStyle(handwritingEnabled ? .white : .black)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            // Light-gray off-state so the pill reads on the white card.
+            .background(handwritingEnabled ? Color.black : Color(white: 0.93), in: Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Card
@@ -272,6 +341,13 @@ struct FlashcardView: View {
             Spacer(minLength: 0)
 
             HStack {
+                // Handwriting toggle — only for supported scripts, and only
+                // while showing the deck-language word (not a translation).
+                // Left-aligned to the card text, sharing the sound button's
+                // row.
+                if !isFinished, handwritingSupported(for: item) {
+                    writeToggle
+                }
                 Spacer()
                 SpeakWaveformButton(
                     action: { speakCurrentSelection(item: item) },
@@ -534,6 +610,19 @@ struct FlashcardView: View {
                 statTile(value: "\(incorrectCount)", label: "Incorrect")
             }
             .padding(.top, 8)
+
+            if !handwrittenItemIDs.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "pencil.and.scribble")
+                        .font(.system(size: 14, weight: .medium))
+                    Text("Wrote \(handwrittenItemIDs.count) \(handwrittenItemIDs.count == 1 ? "word" : "words") by hand · +\(handwrittenItemIDs.count * 3) XP")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .foregroundStyle(.black)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color(white: 0.93), in: Capsule())
+            }
 
             timeSpentSection
                 .padding(.top, 4)
@@ -811,6 +900,7 @@ struct FlashcardView: View {
         let gradesForXP = reviews.map { $0.result }
         let deckIdForXP = deckId
         let languageForXP = deck.language
+        let handwrittenForXP = handwrittenItemIDs.count
         Task {
             do {
                 _ = try await FirebaseDeckService.saveStudySession(session)
@@ -824,20 +914,27 @@ struct FlashcardView: View {
             }
             // XP runs independently of the session save above — even if
             // one fails the other should still proceed.
-            await awardFlashcardXP(deckId: deckIdForXP, language: languageForXP, grades: gradesForXP)
+            await awardFlashcardXP(
+                deckId: deckIdForXP,
+                language: languageForXP,
+                grades: gradesForXP,
+                handwrittenCount: handwrittenForXP
+            )
         }
     }
 
     private func awardFlashcardXP(
         deckId: String,
         language: String,
-        grades: [ReviewResult]
+        grades: [ReviewResult],
+        handwrittenCount: Int
     ) async {
         do {
             let sessionGrants = try await XPService.awardFlashcardSession(
                 deckId: deckId,
                 language: language,
-                cardGrades: grades
+                cardGrades: grades,
+                handwrittenCount: handwrittenCount
             )
             let dailyGrants = try await XPService.awardDailyBonusIfNeeded()
             await MainActor.run {

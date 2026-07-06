@@ -146,7 +146,8 @@ enum XPService {
     static func awardFlashcardSession(
         deckId: String,
         language: String,
-        cardGrades: [ReviewResult]
+        cardGrades: [ReviewResult],
+        handwrittenCount: Int = 0
     ) async throws -> [XPGrant] {
         var state = try await fetchState()
         var grants: [XPGrant] = []
@@ -162,6 +163,12 @@ enum XPService {
 
         // Deck completed.
         grants.append(XPGrant(amount: 10, reason: "Deck complete"))
+
+        // Handwriting bonus: words the learner wrote out by hand this
+        // session (3 XP each). Rewards the extra effort over recall alone.
+        if handwrittenCount > 0 {
+            grants.append(XPGrant(amount: handwrittenCount * 3, reason: "Handwriting"))
+        }
 
         // Perfect session: nothing graded "again" (= memory lapse). Hards
         // are still allowed since the user did recall the card.

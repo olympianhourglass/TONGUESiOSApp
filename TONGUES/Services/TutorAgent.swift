@@ -387,7 +387,7 @@ enum TutorAgent {
             inputSchema: schema(
                 [
                     "topic": prop("string", "What the deck should cover, e.g. 'ordering at an izakaya'."),
-                    "content_type": prop("string", "One of: Words, Phrases, Sentences. Default Phrases."),
+                    "content_type": prop("string", "One of: Words, Sentences. Default Sentences."),
                     "amount": prop("string", "Item count: 5, 10, 20, or 50. Default 10."),
                     "level": prop("string", "CEFR-style level override. Defaults to the learner's level."),
                     "plan_unit_id": prop("string", "If this deck scaffolds a curriculum unit, that unit's id.")
@@ -501,7 +501,7 @@ enum TutorAgent {
                 }
                 let outcome = try await stageDeck(
                     topic: topic,
-                    contentType: input["content_type"]?.stringValue ?? "Phrases",
+                    contentType: input["content_type"]?.stringValue ?? "Sentences",
                     amount: input["amount"]?.stringValue ?? "10",
                     level: input["level"]?.stringValue ?? context.level,
                     planUnitId: input["plan_unit_id"]?.stringValue,
@@ -640,8 +640,9 @@ enum TutorAgent {
             .prefix(8)
             .map { $0.word }
 
-        let validContent = ["Words", "Phrases", "Sentences"]
-        let resolvedContent = validContent.contains(contentType) ? contentType : "Phrases"
+        // Fold any legacy "Phrases" into "Sentences"; only two categories.
+        let normalizedContent = canonicalContentType(contentType)
+        let resolvedContent = ["Words", "Sentences"].contains(normalizedContent) ? normalizedContent : "Sentences"
         let validAmounts = ["5", "10", "20", "50"]
         let resolvedAmount = validAmounts.contains(amount) ? amount : "10"
 

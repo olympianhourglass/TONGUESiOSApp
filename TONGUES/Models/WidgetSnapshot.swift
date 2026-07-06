@@ -258,7 +258,7 @@ public struct WidgetSeededGenerator: RandomNumberGenerator {
 // bridge as plain `String`.
 public enum WidgetBackgroundColorStore {
     public static let palette: [String] = [
-        "4E5B65", "000000", "FF2C02", "3C0F06", "A5A597"
+        "4E5B65", "000000", "FF2C02", "3C0F06", "A5A597", "C6EFFF", "180805"
     ]
     public static let defaultHex = palette[0]
     private static let key = "widget.backgroundHex"

@@ -22,7 +22,6 @@ struct StatisticsView: View {
     // surface counts independently. Sentences are shown only when > 0 so
     // the card stays tight for users who only have words + phrases.
     let wordsInLibrary: Int
-    let phrasesInLibrary: Int
     let sentencesInLibrary: Int
 
     // Cards added to the library since the start of this week / month —
@@ -406,11 +405,6 @@ struct StatisticsView: View {
                     emphasis: pluralized(wordsInLibrary, unit: "word"),
                     suffix: "."
                 )
-                emphasizedLine(
-                    prefix: "Your library contains ",
-                    emphasis: pluralized(phrasesInLibrary, unit: "phrase"),
-                    suffix: "."
-                )
                 // Sentences only show if the user actually has any, so the
                 // card doesn't grow a phantom "0 sentences" line.
                 if sentencesInLibrary > 0 {
@@ -467,7 +461,7 @@ struct StatisticsView: View {
     // decks, "words" reads naturally; once any phrases/sentences exist
     // we switch to the type-agnostic "card" to stay accurate.
     private var learnedUnit: String {
-        (phrasesInLibrary == 0 && sentencesInLibrary == 0) ? "word" : "card"
+        sentencesInLibrary == 0 ? "word" : "card"
     }
 
     private func pluralized(_ count: Int, unit: String) -> String {

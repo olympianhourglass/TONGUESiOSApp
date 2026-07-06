@@ -24,6 +24,11 @@ struct ExploreView: View {
     @State private var culturalInsightCountry: String?
     @State private var culturalInsightFact: String?
     @State private var isLoadingCulturalInsight = false
+    // The learner's study language, tagged onto a saved cultural insight.
+    @State private var culturalInsightLanguage: String?
+    // Flips true once the current insight has been saved; reset whenever a
+    // new insight is loaded.
+    @State private var savedCulturalInsight = false
 
     // Public decks other users have made, restricted to the languages
     // the signed-in user has saved in their profile.
@@ -150,8 +155,13 @@ struct ExploreView: View {
     // Count of FSRS-due cards across the library, shown in the strip's
     // subtitle. Loaded alongside the plan (one indexed range query).
     @State private var dueCardCount = 0
+    // True until the first curriculum fetch resolves, so the strip shows a
+    // skeleton instead of flashing the "Get a guided plan" empty state
+    // before we actually know whether a plan exists.
+    @State private var isLoadingCurriculum = true
 
     private func loadCurriculum() async {
+        defer { isLoadingCurriculum = false }
         async let dueTask: [CardSchedule]? = try? await FirebaseDeckService.fetchDueSchedules()
         let plans = (try? await FirebaseCurriculumService.fetchAll()) ?? []
         dueCardCount = (await dueTask)?.count ?? 0
@@ -181,6 +191,9 @@ struct ExploreView: View {
             planPresented = true
         } label: {
             VStack(alignment: .leading, spacing: 10) {
+                if activePlan == nil && isLoadingCurriculum {
+                    curriculumSkeleton
+                } else {
                 HStack(spacing: 6) {
                     Image(systemName: "map")
                         .font(.system(size: 11))
@@ -225,6 +238,7 @@ struct ExploreView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                }
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -241,6 +255,29 @@ struct ExploreView: View {
         // Halve the outer VStack's 28pt gap to the cultural-insight card
         // below (28 → 14) without touching every other section's spacing.
         .padding(.bottom, -14)
+    }
+
+    // Shimmering placeholder shown while the first curriculum fetch is in
+    // flight, mirroring the card's header + title + subtitle layout so the
+    // transition into real content (or the empty CTA) is seamless.
+    private var curriculumSkeleton: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            skeletonBar(width: 90, height: 11)
+            VStack(alignment: .leading, spacing: 6) {
+                skeletonBar(width: 150, height: 16)
+                skeletonBar(width: nil, height: 12)
+                skeletonBar(width: 180, height: 12)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func skeletonBar(width: CGFloat?, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(Color.black.opacity(0.08))
+            .frame(maxWidth: width ?? .infinity, alignment: .leading)
+            .frame(height: height)
+            .modifier(ShimmerEffect())
     }
 
     private func todaySubtitle(plan: CurriculumPlan, unit: CurriculumUnit) -> String {
@@ -373,8 +410,7 @@ struct ExploreView: View {
                 .frame(height: 1)
                 .padding(.top, 8)
 
-            HStack {
-                Spacer()
+            HStack(spacing: 10) {
                 Button {
                     Haptics.light()
                     Task { await loadCulturalInsight() }
@@ -389,12 +425,34 @@ struct ExploreView: View {
                             .font(.custom("NeueHaasDisplay-Light", size: 14))
                             .foregroundStyle(.white)
                     }
+                    .frame(height: 20)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 5)
                 }
                 .buttonStyle(.glass(.clear))
                 .disabled(isLoadingCulturalInsight)
+
                 Spacer()
+
+                // Save the current insight to the learner's saved insights.
+                if culturalInsightFact != nil {
+                    Button {
+                        Haptics.light()
+                        Task { await saveCulturalInsight() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: savedCulturalInsight ? "bookmark.fill" : "bookmark")
+                            Text(savedCulturalInsight ? "Saved" : "Save")
+                                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                        }
+                        .foregroundStyle(.white)
+                        .frame(height: 20)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 5)
+                    }
+                    .buttonStyle(.glass(.clear))
+                    .disabled(savedCulturalInsight)
+                }
             }
             .padding(.top, 4)
         }
@@ -744,6 +802,7 @@ struct ExploreView: View {
     @MainActor
     private func loadCulturalInsight() async {
         guard let profile = try? await UserService.fetchProfile() else { return }
+        culturalInsightLanguage = profile.onboarding?.languagePreferences?.first?.language
         let destinations = (profile.onboarding?.destinations ?? []).map { $0.name }
         guard !destinations.isEmpty else {
             culturalInsightCountry = nil
@@ -758,9 +817,30 @@ struct ExploreView: View {
             ) {
                 culturalInsightCountry = insight.location
                 culturalInsightFact = insight.fact
+                savedCulturalInsight = false
             }
         } catch {
             print("loadCulturalInsight failed: \(error)")
+        }
+    }
+
+    @MainActor
+    private func saveCulturalInsight() async {
+        guard !savedCulturalInsight,
+              let fact = culturalInsightFact else { return }
+        let insight = SavedInsight(
+            kind: .cultural,
+            title: culturalInsightCountry ?? "Cultural insight",
+            body: fact,
+            language: culturalInsightLanguage
+        )
+        do {
+            try await FirebaseSavedInsightService.save(insight)
+            savedCulturalInsight = true
+            Haptics.success()
+        } catch {
+            Haptics.error()
+            print("saveCulturalInsight failed: \(error)")
         }
     }
 
@@ -1076,5 +1156,32 @@ private struct TopicPreset: Identifiable, Equatable {
             return String(inside)
         }
         return language
+    }
+}
+
+// A lightweight left-to-right shimmer for skeleton placeholders — a soft
+// highlight band sweeps across the redacted shape while content loads.
+private struct ShimmerEffect: ViewModifier {
+    @State private var phase: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color.white.opacity(0.65), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width)
+                    .offset(x: phase * geo.size.width)
+                }
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                    phase = 1
+                }
+            }
     }
 }

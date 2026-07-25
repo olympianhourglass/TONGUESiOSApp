@@ -20,7 +20,7 @@ struct InterestChip: View {
                 .background(
                     RoundedRectangle(cornerRadius: 4)
                         .stroke(
-                            isSelected ? Color.red : Color(white: 0.85),
+                            isSelected ? Color.black : Color(white: 0.85),
                             lineWidth: isSelected ? 1.5 : 0.5
                         )
                 )
@@ -44,7 +44,7 @@ struct AttributesRow: View {
     var coachStore: CoachFrameStore? = nil
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: 10) {
             attribute(.language, value: language)
             attribute(.dialect, value: dialect)
             attribute(.content, value: content)
@@ -57,34 +57,30 @@ struct AttributesRow: View {
     }
 
     private func attribute(_ kind: DeckAttribute, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(kind.title)
-                .font(.custom("NeueHaasDisplay-Light", size: 12))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-            Button {
-                Haptics.light()
-                onTap(kind)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(value)
-                        .font(.custom("NeueHaasDisplay-Light", size: 16))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.black.opacity(0.05)))
-                // Publishes the pill's frame for the first-run coach tour.
-                .coachAnchorIf(coachTarget(for: kind), store: coachStore)
+        Button {
+            Haptics.light()
+            onTap(kind)
+        } label: {
+            // Label + current selection sit on a single line: the label
+            // in the darker medium weight, the selected value in a lighter
+            // opacity so it reads as secondary.
+            HStack(spacing: 6) {
+                Text(L(kind.title))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                    .foregroundStyle(.black)
+                Text(localizedAttributeValue(value, for: kind))
+                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .foregroundStyle(.black.opacity(0.4))
             }
-            .buttonStyle(.plain)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            // Publishes the pill's frame for the first-run coach tour.
+            .coachAnchorIf(coachTarget(for: kind), store: coachStore)
         }
+        .buttonStyle(.plain)
         // Lets the coach tour scroll this pill into view by attribute id.
         .id(kind)
     }
@@ -111,7 +107,7 @@ struct ToneLabel: View {
             action()
         } label: {
             Text(title)
-                .font(.custom("NeueHaasDisplay-Mediu", size: 40))
+                .font(.custom("NeueHaasDisplay-Light", size: 36))
                 .foregroundStyle(isSelected ? Color.black : Color(white: 0.75))
         }
         .buttonStyle(.plain)

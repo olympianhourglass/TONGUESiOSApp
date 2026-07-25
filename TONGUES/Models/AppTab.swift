@@ -5,14 +5,14 @@ enum AppTab: Hashable {
     case explore, study, library, chat
 }
 
-// Tabs that paint a dark backdrop behind the status bar and therefore
-// need white-content status bar text. Centralised here so the
-// hosting-controller side (which has to express this in UIKit terms)
-// and any future SwiftUI surface read the same source of truth.
+// Whether a tab needs white-content status-bar text. Only the Library
+// tab uses a dark backdrop and needs white content; every other tab uses
+// dark (black) content. (The inverted Camera tab opts into white
+// separately via `forceLightStatusBar`.)
 extension AppTab {
     var needsLightStatusBarContent: Bool {
         switch self {
-        case .study, .library: return true
+        case .library, .study: return true
         case .explore, .chat:  return false
         }
     }

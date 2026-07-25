@@ -25,6 +25,11 @@ struct PremiumActionSheet: View {
     @State private var selectedCycle: SubscriptionBillingCycle = .monthly
     @State private var isPurchasing: Bool = false
     @State private var purchaseError: String?
+    // Drives the system offer-code redemption sheet. Creators redeem a
+    // free App Store Connect offer code here; the resulting transaction
+    // flows through StoreKitClient's Transaction.updates listener and
+    // unlocks the tier like any other purchase.
+    @State private var showRedeemSheet: Bool = false
     // Tracks how far the user has overscrolled the hero so the body
     // can fire a dismiss once a threshold is crossed.
     @State private var heroPullDistance: CGFloat = 0
@@ -108,16 +113,31 @@ struct PremiumActionSheet: View {
             }
         }
         .alert(
-            "Couldn't start purchase",
+            L("Couldn't start purchase"),
             isPresented: Binding(
                 get: { purchaseError != nil },
                 set: { if !$0 { purchaseError = nil } }
             ),
             presenting: purchaseError
         ) { _ in
-            Button("OK") { purchaseError = nil }
+            Button(L("OK")) { purchaseError = nil }
         } message: { error in
             Text(error)
+        }
+        // System offer-code redemption sheet. The sheet itself handles
+        // validation and error messaging; on a successful redemption we
+        // re-sync entitlements so the unlocked tier lands immediately and
+        // dismiss the paywall. (Transaction.updates would sync it anyway,
+        // but syncing here makes the unlock feel instant.)
+        .offerCodeRedemption(isPresented: $showRedeemSheet) { result in
+            if case .success = result {
+                Task {
+                    await store.syncEntitlements()
+                    await subscription.refresh()
+                    Haptics.success()
+                    dismiss()
+                }
+            }
         }
     }
 
@@ -140,7 +160,7 @@ struct PremiumActionSheet: View {
                 Spacer(minLength: 0)
                 TonguesWordmark(size: 44)
                     .foregroundStyle(.white)
-                Text("Unlock the adventure of a lifetime")
+                Text(L("Unlock the adventure of a lifetime"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white)
                     .padding(.top, 10)
@@ -297,14 +317,14 @@ struct PremiumActionSheet: View {
             featureRow(
                 icon: "text.alignleft",
                 value: capValue(selectedTier.monthlyWords),
-                suffix: "Words",
-                unit: "/month"
+                suffix: L("Words"),
+                unit: L("/month")
             )
             featureRow(
                 icon: "text.justify.left",
                 value: capValue(selectedTier.monthlySentences),
-                suffix: "Sentences",
-                unit: "/month"
+                suffix: L("Sentences"),
+                unit: L("/month")
             )
             featureRow(
                 icon: "globe",
@@ -341,13 +361,13 @@ struct PremiumActionSheet: View {
     }
 
     private var languageSuffix: String {
-        if selectedTier.maxLanguages == Int.max { return "Unlimited Languages" }
-        return selectedTier.maxLanguages == 1 ? "Language Limit" : "Languages Limit"
+        if selectedTier.maxLanguages == Int.max { return L("Unlimited Languages") }
+        return selectedTier.maxLanguages == 1 ? L("Language Limit") : L("Languages Limit")
     }
 
     private var audioSuffix: String {
-        if selectedTier.monthlyAudioSessions == Int.max { return "Unlimited Audio" }
-        return "Audio Cap"
+        if selectedTier.monthlyAudioSessions == Int.max { return L("Unlimited Audio") }
+        return L("Audio Cap")
     }
 
     // One feature row: small SF Symbol icon, then either "{value} {suffix}"
@@ -404,7 +424,7 @@ struct PremiumActionSheet: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(cycle.label)
+                    Text(L(cycle.label))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.7))
                     Spacer()
@@ -423,7 +443,7 @@ struct PremiumActionSheet: View {
                     Text(mainPriceString(for: cycle))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 22))
                         .foregroundStyle(.white)
-                    Text("/month")
+                    Text(L("/month"))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.white.opacity(0.55))
                 }
@@ -489,8 +509,8 @@ struct PremiumActionSheet: View {
     // Subtle line under the price clarifying the real billing cadence.
     private func billingCaption(for cycle: SubscriptionBillingCycle) -> String {
         switch cycle {
-        case .monthly: return "Billed monthly"
-        case .yearly:  return "\(annualTotalString) billed yearly"
+        case .monthly: return L("Billed monthly")
+        case .yearly:  return L("%@ billed yearly", annualTotalString)
         }
     }
 
@@ -504,7 +524,7 @@ struct PremiumActionSheet: View {
         }
         let savings = 1 - (yearly / monthly)
         let pct = Int((savings * 100).rounded())
-        return pct > 0 ? "Save \(pct)%" : nil
+        return pct > 0 ? L("Save %d%%", pct) : nil
     }
 
     private func parsedPrice(_ text: String) -> Double? {
@@ -584,29 +604,34 @@ struct PremiumActionSheet: View {
     }
 
     private var ctaLabel: String {
-        if subscription.currentTier == selectedTier { return "Current Plan" }
+        if subscription.currentTier == selectedTier { return L("Current Plan") }
         if shouldOfferFreeTrial {
-            return "Start \(selectedTier.freeTrialLabel) Free Trial"
+            return L("Start %@ Free Trial", selectedTier.freeTrialLabel)
         }
-        return "Upgrade to \(selectedTier.displayName)"
+        return L("Upgrade to %@", selectedTier.displayName)
     }
 
     private var trialFinePrint: String {
-        "Then \(mainPriceString(for: selectedCycle))/month. Cancel anytime."
+        L("Then %@/month. Cancel anytime.", mainPriceString(for: selectedCycle))
     }
 
     // MARK: - Footer
 
     private var footerLinks: some View {
-        HStack(spacing: 24) {
-            footerLink(title: "Terms of Service") {
-                openURL("https://www.mytongues.com/terms.html")
+        VStack(spacing: 12) {
+            HStack(spacing: 24) {
+                footerLink(title: L("Terms of Service")) {
+                    openURL("https://www.mytongues.com/terms.html")
+                }
+                footerLink(title: L("Privacy Policy")) {
+                    openURL("https://www.mytongues.com/privacy.html")
+                }
+                footerLink(title: L("Restore Purchases")) {
+                    Task { await store.restorePurchases() }
+                }
             }
-            footerLink(title: "Privacy Policy") {
-                openURL("https://www.mytongues.com/privacy.html")
-            }
-            footerLink(title: "Restore Purchases") {
-                Task { await store.restorePurchases() }
+            footerLink(title: L("Redeem Code")) {
+                showRedeemSheet = true
             }
         }
     }

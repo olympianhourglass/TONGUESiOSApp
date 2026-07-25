@@ -92,11 +92,17 @@ extension View {
         }
     }
 
-    // Optional variant: content-space capture for an attribute pill.
+    // Optional variant for an attribute pill. Measures the pill's DIRECT
+    // global frame (same path the Generate button uses) so the spotlight
+    // hugs the pill exactly. The pills now live in a short, always-visible
+    // bottom strip that the tour scrolls each target into view within, so
+    // the older content-space + scroll-offset reconstruction (which assumed
+    // a different layout and left the highlight ~20pt too wide/offset) is no
+    // longer needed.
     @ViewBuilder
     func coachAnchorIf(_ target: CoachTarget?, store: CoachFrameStore?) -> some View {
         if let target {
-            coachContentAnchor(target, store: store)
+            coachAnchor(target, store: store)
         } else {
             self
         }

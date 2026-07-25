@@ -6,11 +6,12 @@ import Foundation
 // practice affordance.
 //
 // Two tiers (see the feature spec):
-//   • strokeMatch — Chinese + Japanese. True stroke-order matching against
-//     bundled median data (HanziWriter / KanjiVG).
-//   • template   — Korean + Arabic. Trace-the-template with ink-coverage
-//     scoring; handles Arabic RTL/contextual shaping and Hangul composition
-//     by rendering the whole word as a faint guide.
+//   • strokeMatch — Chinese + Japanese (bundled HanziWriter / KanjiVG medians)
+//     and Korean (composed per-syllable from jamo medians, see HangulComposer).
+//     True stroke-order matching.
+//   • template   — Arabic. Trace-the-template with ink-coverage scoring plus an
+//     animated directional guide; the cursive/contextual shaping makes discrete
+//     per-stroke medians unreliable, so it stays a guided-tracing experience.
 enum HandwritingScript: String, Hashable {
     case chinese
     case japanese
@@ -18,14 +19,17 @@ enum HandwritingScript: String, Hashable {
     case arabic
 
     enum Tier {
-        case strokeMatch   // Chinese, Japanese
-        case template      // Korean, Arabic
+        case strokeMatch   // Chinese, Japanese, Korean
+        case template      // Arabic
     }
 
     var tier: Tier {
         switch self {
-        case .chinese, .japanese: return .strokeMatch
-        case .korean, .arabic:    return .template
+        // Korean joins stroke matching via jamo composition (HangulComposer)
+        // — its syllables decompose into a small closed set of jamo with
+        // canonical stroke order, so the same matcher drives it.
+        case .chinese, .japanese, .korean: return .strokeMatch
+        case .arabic:                       return .template
         }
     }
 

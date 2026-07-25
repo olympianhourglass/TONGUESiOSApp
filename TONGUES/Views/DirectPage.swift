@@ -207,8 +207,8 @@ struct DirectPage: View {
             didApplyInitialMode = true
             if startInConversation { mode = .conversation }
         }
-        .alert("Something went wrong", isPresented: errorBinding) {
-            Button("OK") { errorText = nil }
+        .alert(L("Something went wrong"), isPresented: errorBinding) {
+            Button(L("OK")) { errorText = nil }
         } message: {
             Text(errorText ?? "")
         }
@@ -295,9 +295,9 @@ struct DirectPage: View {
     // MARK: Mode picker
 
     private var modePicker: some View {
-        Picker("Mode", selection: $mode) {
+        Picker(L("Mode"), selection: $mode) {
             ForEach(InputMode.allCases, id: \.self) { m in
-                Text(m.rawValue).tag(m)
+                Text(L(m.rawValue)).tag(m)
             }
         }
         .pickerStyle(.segmented)
@@ -305,53 +305,54 @@ struct DirectPage: View {
 
     // MARK: Attributes
 
+    // Horizontal scroll so wide "label + selection" chips never push past
+    // the screen bounds (or skew the rest of the page wider). The leftmost
+    // chip inherits the parent VStack's 8pt leading inset.
     private var attributesSection: some View {
-        HStack(alignment: .top, spacing: 12) {
-            attribute(.language, value: language)
-            attribute(.dialect, value: dialect)
-            Spacer(minLength: 0)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .center, spacing: 10) {
+                attribute(.language, value: language)
+                attribute(.dialect, value: dialect)
+            }
         }
     }
 
+    // Same glass-pill style as the Generate page: label + selection on a
+    // single line, the label in the darker medium weight and the value in
+    // a lighter opacity.
     private func attribute(_ kind: DeckAttribute, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(kind.title)
-                .font(.custom("NeueHaasDisplay-Light", size: 12))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-            Button {
-                Haptics.light()
-                onAttributeTap(kind)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(value)
-                        .font(.custom("NeueHaasDisplay-Light", size: 16))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.black.opacity(0.05)))
+        Button {
+            Haptics.light()
+            onAttributeTap(kind)
+        } label: {
+            HStack(spacing: 6) {
+                Text(L(kind.title))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                    .foregroundStyle(.black)
+                Text(localizedAttributeValue(value, for: kind))
+                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .foregroundStyle(.black.opacity(0.4))
             }
-            .buttonStyle(.plain)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .glassEffect(.regular.interactive(), in: .capsule)
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Input card
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Type or speak")
+            Text(L("Type or speak"))
                 .font(.custom("NeueHaasDisplay-Light", size: 11))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
                 .tracking(0.5)
             TextField(
-                "English or \(language)…",
+                L("%@ or %@…", AppLanguage.currentNative.endonym, localizedLanguageName(language)),
                 text: $inputText,
                 axis: .vertical
             )
@@ -389,7 +390,7 @@ struct DirectPage: View {
             HStack(spacing: 8) {
                 Image(systemName: dictation.state == .listening ? "mic.fill" : "mic")
                     .font(.system(size: 16, weight: .semibold))
-                Text(dictation.state == .listening ? "Listening…" : "Speak")
+                Text(L(dictation.state == .listening ? "Listening…" : "Speak"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
             }
             .foregroundStyle(dictation.state == .listening ? .white : .black)
@@ -417,7 +418,7 @@ struct DirectPage: View {
                     Image(systemName: "arrow.up.arrow.down")
                         .font(.system(size: 14, weight: .semibold))
                 }
-                Text(isTranslating ? "Translating…" : "Translate")
+                Text(L(isTranslating ? "Translating…" : "Translate"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
             }
             .foregroundStyle(.white)
@@ -437,7 +438,7 @@ struct DirectPage: View {
             let item = result.item
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 6) {
-                    Text(result.direction == .fromEnglish ? "English → \(language)" : "\(language) → English")
+                    Text(result.direction == .fromEnglish ? "\(AppLanguage.currentNative.endonym) → \(localizedLanguageName(language))" : "\(localizedLanguageName(language)) → \(AppLanguage.currentNative.endonym)")
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
@@ -449,7 +450,7 @@ struct DirectPage: View {
                         HStack(spacing: 4) {
                             Image(systemName: didCopyResult ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 11, weight: .semibold))
-                            Text(didCopyResult ? "Copied" : "Copy")
+                            Text(L(didCopyResult ? "Copied" : "Copy"))
                                 .font(.custom("NeueHaasDisplay-Light", size: 12))
                         }
                         .foregroundStyle(.black)
@@ -562,7 +563,7 @@ struct DirectPage: View {
             let localeID = appleSpeechLocale(for: language) ?? "en-US"
             Task { await dictation.start(localeID: localeID) }
         case .denied:
-            errorText = "Enable Microphone and Speech Recognition for TONGUES in Settings."
+            errorText = L("Enable Microphone and Speech Recognition for TONGUES in Settings.")
         }
     }
 
@@ -582,7 +583,7 @@ struct DirectPage: View {
 
     private var recorderCard: some View {
         VStack(spacing: 18) {
-            Text("Put your phone down and record up to a minute of a conversation. We'll transcribe and translate the whole thing.")
+            Text(L("Put your phone down and record up to a minute of a conversation. We'll transcribe and translate the whole thing."))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -641,7 +642,7 @@ struct DirectPage: View {
     private var convProcessingBanner: some View {
         HStack(spacing: 10) {
             ProgressView().tint(.black)
-            Text(isTranscribing ? "Transcribing the recording…" : "Translating + finding study words…")
+            Text(L(isTranscribing ? "Transcribing the recording…" : "Translating + finding study words…"))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.secondary)
         }
@@ -660,7 +661,7 @@ struct DirectPage: View {
             HStack {
                 HStack(spacing: 6) {
                     Image(systemName: "globe").font(.system(size: 11))
-                    Text("Detected: \(analysis.resolvedLanguage)")
+                    Text(L("Detected: %@", analysis.resolvedLanguage))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 12))
                 }
                 .foregroundStyle(.black)
@@ -668,7 +669,7 @@ struct DirectPage: View {
                 .padding(.vertical, 6)
                 .background(Capsule().fill(Color.black.opacity(0.06)))
                 Spacer()
-                Button("Record again") {
+                Button(L("Record again")) {
                     Haptics.light()
                     resetConversation()
                 }
@@ -692,21 +693,21 @@ struct DirectPage: View {
 
             // Study items multi-select.
             if analysis.items.isEmpty {
-                Text("No study-worthy words found in that clip.")
+                Text(L("No study-worthy words found in that clip."))
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.secondary)
             } else {
                 HStack {
-                    Text("Study picks · hardest first")
+                    Text(L("Study picks · hardest first"))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
                         .tracking(0.5)
                     Spacer()
-                    Text("\(selectedConvItemIDs.count) / \(analysis.items.count)")
+                    Text(L("%d / %d", selectedConvItemIDs.count, analysis.items.count))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
-                    Button(allConvSelected(analysis) ? "Deselect all" : "Select all") {
+                    Button(L(allConvSelected(analysis) ? "Deselect all" : "Select all")) {
                         Haptics.light()
                         if allConvSelected(analysis) {
                             selectedConvItemIDs.removeAll()
@@ -737,7 +738,7 @@ struct DirectPage: View {
 
     private func convTextBlock(label: String, text: String, prominent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(label)
+            Text(L(label))
                 .font(.custom("NeueHaasDisplay-Light", size: 11))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
@@ -789,7 +790,7 @@ struct DirectPage: View {
     private var conversationSaveActions: some View {
         HStack(spacing: 12) {
             ActionCard(
-                title: isSavingConvDeck ? "Saving…" : "Create New Deck",
+                title: L(isSavingConvDeck ? "Saving…" : "Create New Deck"),
                 systemImage: isSavingConvDeck ? "arrow.up.circle" : "square.stack.3d.up",
                 isPrimary: false
             ) {
@@ -797,7 +798,7 @@ struct DirectPage: View {
                 showConvCreateCover = true
             }
             .disabled(selectedConvItems.isEmpty || isSavingConvDeck)
-            ActionCard(title: "Save to Deck", systemImage: "plus.circle", isPrimary: true) {
+            ActionCard(title: L("Save to Deck"), systemImage: "plus.circle", isPrimary: true) {
                 Haptics.medium()
                 showConvDeckPicker = true
             }

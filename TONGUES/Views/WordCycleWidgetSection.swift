@@ -75,7 +75,7 @@ struct WordCycleWidgetSection: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("Word Cycle Widget")
+            Text(L("Word Cycle Widget"))
                 .font(.custom("NeueHaasDisplay-Bold", size: 15))
                 .foregroundStyle(.white)
             Spacer(minLength: 12)
@@ -88,7 +88,7 @@ struct WordCycleWidgetSection: View {
                 HStack(spacing: 4) {
                     Image(systemName: didReloadOnce ? "checkmark" : "arrow.clockwise")
                         .font(.system(size: 11, weight: .semibold))
-                    Text(didReloadOnce ? "Refreshed" : "Refresh")
+                    Text(didReloadOnce ? L("Refreshed") : L("Refresh"))
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
                 }
                 .foregroundStyle(.white)
@@ -322,10 +322,10 @@ private struct WordCycleMiniPreview: View {
                 .padding(14)
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("No cards yet")
+                    Text(L("No cards yet"))
                         .font(.custom("NeueHaasDisplay-Light", size: 14))
                         .foregroundStyle(foreground.opacity(0.6))
-                    Text("Add a deck to start cycling words.")
+                    Text(L("Add a deck to start cycling words."))
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
                         .foregroundStyle(foreground.opacity(0.45))
                         .lineLimit(2)
@@ -382,7 +382,7 @@ struct LockScreenWidgetSection: View {
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text("Lock Screen Widget")
+            Text(L("Lock Screen Widget"))
                 .font(.custom("NeueHaasDisplay-Bold", size: 15))
                 .foregroundStyle(.white)
             Spacer(minLength: 12)
@@ -394,7 +394,7 @@ struct LockScreenWidgetSection: View {
                 HStack(spacing: 4) {
                     Image(systemName: didReloadOnce ? "checkmark" : "arrow.clockwise")
                         .font(.system(size: 11, weight: .semibold))
-                    Text(didReloadOnce ? "Refreshed" : "Refresh")
+                    Text(didReloadOnce ? L("Refreshed") : L("Refresh"))
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
                 }
                 .foregroundStyle(.white)
@@ -412,7 +412,7 @@ struct LockScreenWidgetSection: View {
             ?? "—"
         return Menu {
             ForEach(languages, id: \.self) { lang in
-                Button(lang) {
+                Button(localizedLanguageName(lang)) {
                     Haptics.light()
                     selectedLanguage = lang
                     WidgetLockScreenLanguageStore.write(lang)
@@ -421,10 +421,10 @@ struct LockScreenWidgetSection: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text("Language")
+                Text(L("Language"))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.white.opacity(0.55))
-                Text(current)
+                Text(localizedLanguageName(current))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(.white.opacity(languages.isEmpty ? 0.4 : 1))
                     .lineLimit(1)
@@ -444,7 +444,7 @@ struct LockScreenWidgetSection: View {
     }
 
     private var footer: some View {
-        Text("Cycles random words (no phrases) from this language on every lock screen widget. Pick once here — it applies to every lock screen instance.")
+        Text(L("Cycles random words (no phrases) from this language on every lock screen widget. Pick once here — it applies to every lock screen instance."))
             .font(.custom("NeueHaasDisplay-Light", size: 11))
             .foregroundStyle(.white.opacity(0.55))
             .lineLimit(3)

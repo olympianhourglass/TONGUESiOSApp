@@ -27,7 +27,7 @@ struct OnboardingQuestionView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
 
-                Text("\(questionNumber) of \(totalQuestions)")
+                Text(L("%d of %d", questionNumber, totalQuestions))
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -37,8 +37,7 @@ struct OnboardingQuestionView: View {
 
             // Question
             Text(question.title)
-                .font(.custom("PlayfairDisplay-Regular", size: 32))
-                .tracking(-2.56)
+                .font(.custom("NeueHaasDisplay-Light", size: 32))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 24)
                 .padding(.top, 32)
@@ -48,7 +47,7 @@ struct OnboardingQuestionView: View {
                 switch question.kind {
                 case .freeText(let placeholder):
                     VStack(alignment: .leading, spacing: 12) {
-                        TextField(placeholder, text: $textAnswer)
+                        TextField(L(placeholder), text: $textAnswer)
                             .textFieldStyle(.plain)
                             .font(.custom("NeueHaasDisplay-Light", size: 28))
                             .foregroundStyle(.primary)
@@ -72,7 +71,7 @@ struct OnboardingQuestionView: View {
                                     }
                                 } label: {
                                     HStack {
-                                        Text(option)
+                                        Text(L(option))
                                             .font(.system(size: 16))
                                             .foregroundStyle(.black)
                                         Spacer(minLength: 12)
@@ -112,7 +111,7 @@ struct OnboardingQuestionView: View {
                 Haptics.medium()
                 recordAndAdvance()
             } label: {
-                Text(ctaTitle ?? (questionNumber == totalQuestions ? "Continue" : "Next"))
+                Text(L(ctaTitle ?? (questionNumber == totalQuestions ? "Continue" : "Next")))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -132,7 +131,7 @@ struct OnboardingQuestionView: View {
             // Free-text questions (e.g., the name input) are mandatory — no Skip.
             if case .options = question.kind {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Skip") {
+                    Button(L("Skip")) {
                         Haptics.light()
                         onNext()
                     }

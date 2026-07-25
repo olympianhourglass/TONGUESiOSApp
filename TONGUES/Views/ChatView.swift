@@ -98,7 +98,7 @@ struct ChatView: View {
                             Task { await vm.buildRecap() }
                             recapSheetPresented = true
                         } label: {
-                            Label("End & Recap", systemImage: "checkmark.seal")
+                            Label(L("End & Recap"), systemImage: "checkmark.seal")
                         }
                         .disabled(vm.conversation?.messages.isEmpty != false)
 
@@ -106,7 +106,7 @@ struct ChatView: View {
                             Haptics.medium()
                             showClearConfirm = true
                         } label: {
-                            Label("Clear conversation", systemImage: "trash")
+                            Label(L("Clear conversation"), systemImage: "trash")
                         }
                     } label: {
                         Image(systemName: "ellipsis")
@@ -185,7 +185,7 @@ struct ChatView: View {
                             saveSheetItem = nil
                             saveSourceMessageID = nil
                             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                                savedToast = "Saved “\(item.word)”"
+                                savedToast = L("Saved “%@”", item.word)
                             }
                             Task {
                                 try? await Task.sleep(for: .seconds(2))
@@ -224,15 +224,15 @@ struct ChatView: View {
                 }
             }
             .alert(
-                "Clear this conversation?",
+                L("Clear this conversation?"),
                 isPresented: $showClearConfirm
             ) {
-                Button("Clear", role: .destructive) {
+                Button(L("Clear"), role: .destructive) {
                     Task { await vm.clearCurrentConversation() }
                 }
-                Button("Cancel", role: .cancel) { }
+                Button(L("Cancel"), role: .cancel) { }
             } message: {
-                Text("Your saved phrases stay in your decks.")
+                Text(L("Your saved phrases stay in your decks."))
             }
             .overlay(alignment: .top) {
                 if let toast = savedToast {
@@ -346,11 +346,11 @@ struct ChatView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Start a conversation")
+                    Text(L("Start a conversation"))
                         .font(.custom("PlayfairDisplay-Regular", size: 28))
                         .tracking(-1.5)
                         .foregroundStyle(.black)
-                    Text("Pick a scenario or just say hi.")
+                    Text(L("Pick a scenario or just say hi."))
                         .font(.custom("NeueHaasDisplay-Light", size: 15))
                         .foregroundStyle(.secondary)
                 }
@@ -360,27 +360,27 @@ struct ChatView: View {
                 // Tutor-agent quick starts: planning and placement live a
                 // tier above the roleplay scenarios.
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("YOUR TUTOR")
+                    Text(L("YOUR TUTOR"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                         .tracking(1.2)
                         .foregroundStyle(.secondary)
                     FlowLayout(spacing: 10) {
                         tutorChip(
-                            title: "Make me a study plan",
+                            title: L("Make me a study plan"),
                             systemImage: "map"
                         ) {
-                            vm.input = "Make me a study plan for \(conversation.language) based on my goals and progress."
+                            vm.input = L("Make me a study plan for %@ based on my goals and progress.", conversation.language)
                             Task { await vm.send() }
                         }
                         tutorChip(
-                            title: "What should I work on?",
+                            title: L("What should I work on?"),
                             systemImage: "scope"
                         ) {
-                            vm.input = "What should I work on next in \(conversation.language)?"
+                            vm.input = L("What should I work on next in %@?", conversation.language)
                             Task { await vm.send() }
                         }
                         tutorChip(
-                            title: "Check my level",
+                            title: L("Check my level"),
                             systemImage: "checkmark.seal"
                         ) {
                             Task { await vm.startPlacement() }
@@ -530,7 +530,7 @@ struct ChatView: View {
                 Task {
                     if let title = await vm.saveProposedDeck(messageID: messageID) {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            savedToast = "Saved “\(title)”"
+                            savedToast = L("Saved “%@”", title)
                         }
                         Task {
                             try? await Task.sleep(for: .seconds(2))
@@ -545,7 +545,7 @@ struct ChatView: View {
                 Task {
                     if await vm.acceptProposedPlan(messageID: messageID) {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            savedToast = "Plan saved — see the Explore tab"
+                            savedToast = L("Plan saved — see the Explore tab")
                         }
                         Task {
                             try? await Task.sleep(for: .seconds(2.4))
@@ -736,7 +736,7 @@ struct ChatView: View {
                 .disabled(vm.conversation == nil)
 
                 TextField(
-                    "Reply in \(selectedLanguage)…",
+                    L("Reply in %@…", selectedLanguage),
                     text: $vm.input,
                     axis: .vertical
                 )
@@ -913,7 +913,7 @@ struct ChatView: View {
                 // Surface the denial — without this the user just sees
                 // the mic button do nothing, and the chat tab's
                 // headline feature looks broken.
-                vm.errorText = "Enable Microphone and Speech Recognition for TONGUES in Settings to talk to the chat. You can still type your replies."
+                vm.errorText = L("Enable Microphone and Speech Recognition for TONGUES in Settings to talk to the chat. You can still type your replies.")
                 return
             }
         }
@@ -1083,12 +1083,12 @@ private struct DeckProposalCard: View {
     let onSave: () -> Void
 
     var body: some View {
-        AgentCardChrome(icon: "rectangle.stack", label: "DECK PROPOSAL") {
+        AgentCardChrome(icon: "rectangle.stack", label: L("DECK PROPOSAL")) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(payload.title)
                     .font(.custom("NeueHaasDisplay-Mediu", size: 17))
                     .foregroundStyle(.black)
-                Text("\(payload.language) · \(payload.level) · \(payload.items.count) \(payload.contentType.lowercased())")
+                Text("\(localizedLanguageName(payload.language)) · \(L(payload.level)) · \(payload.items.count) \(payload.contentType.lowercased())")
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -1106,16 +1106,16 @@ private struct DeckProposalCard: View {
                     }
                 }
                 if payload.items.count > 3 {
-                    Text("+ \(payload.items.count - 3) more")
+                    Text(L("+ %d more", payload.items.count - 3))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
 
             AgentCardActionButton(
-                title: "Save to Library",
+                title: L("Save to Library"),
                 done: payload.savedDeckId != nil,
-                doneTitle: "Saved",
+                doneTitle: L("Saved"),
                 action: onSave
             )
         }
@@ -1127,13 +1127,13 @@ private struct PlanProposalCard: View {
     let onAccept: () -> Void
 
     var body: some View {
-        AgentCardChrome(icon: "map", label: "STUDY PLAN") {
+        AgentCardChrome(icon: "map", label: L("STUDY PLAN")) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(payload.plan.goalStatement)
                     .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                     .foregroundStyle(.black)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("\(payload.plan.units.count) units · toward \(payload.plan.targetLevel)")
+                Text(L("%d units · toward %@", payload.plan.units.count, payload.plan.targetLevel))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -1151,16 +1151,16 @@ private struct PlanProposalCard: View {
                     }
                 }
                 if payload.plan.units.count > 4 {
-                    Text("+ \(payload.plan.units.count - 4) more units")
+                    Text(L("+ %d more units", payload.plan.units.count - 4))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
 
             AgentCardActionButton(
-                title: "Accept Plan",
+                title: L("Accept Plan"),
                 done: payload.accepted == true,
-                doneTitle: "Accepted — see Explore tab",
+                doneTitle: L("Accepted — see Explore tab"),
                 action: onAccept
             )
         }
@@ -1171,7 +1171,7 @@ private struct PlanUpdateCard: View {
     let payload: PlanUpdatePayload
 
     var body: some View {
-        AgentCardChrome(icon: "arrow.triangle.2.circlepath", label: "PLAN UPDATED") {
+        AgentCardChrome(icon: "arrow.triangle.2.circlepath", label: L("PLAN UPDATED")) {
             Text(payload.headline)
                 .font(.custom("NeueHaasDisplay-Mediu", size: 15))
                 .foregroundStyle(.black)
@@ -1193,14 +1193,14 @@ private struct ProgressSnapshotCard: View {
     let payload: ProgressSnapshotPayload
 
     var body: some View {
-        AgentCardChrome(icon: "chart.bar", label: "YOUR PROGRESS") {
+        AgentCardChrome(icon: "chart.bar", label: L("YOUR PROGRESS")) {
             HStack(spacing: 18) {
-                statColumn(value: "\(payload.matureCards)", caption: "mastered")
-                statColumn(value: "\(payload.dueNow)", caption: "due now")
-                statColumn(value: "\(payload.streakDays)", caption: "day streak")
+                statColumn(value: "\(payload.matureCards)", caption: L("mastered"))
+                statColumn(value: "\(payload.dueNow)", caption: L("due now"))
+                statColumn(value: "\(payload.streakDays)", caption: L("day streak"))
             }
             if !payload.weakWords.isEmpty {
-                Text("Needs work: \(payload.weakWords.prefix(5).joined(separator: ", "))")
+                Text(L("Needs work: %@", payload.weakWords.prefix(5).joined(separator: ", ")))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1224,12 +1224,12 @@ private struct PlacementResultCard: View {
     let payload: PlacementResultPayload
 
     var body: some View {
-        AgentCardChrome(icon: "checkmark.seal", label: "LEVEL CHECK") {
+        AgentCardChrome(icon: "checkmark.seal", label: L("LEVEL CHECK")) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(payload.level)
                     .font(.custom("PlayfairDisplay-Bold", size: 30))
                     .foregroundStyle(.black)
-                Text("\(payload.language) · \(Int((payload.confidence * 100).rounded()))% confidence")
+                Text(L("%@ · %d%% confidence", payload.language, Int((payload.confidence * 100).rounded())))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(.secondary)
             }

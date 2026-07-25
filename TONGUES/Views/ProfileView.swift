@@ -21,6 +21,9 @@ struct ProfileView: View {
     @State private var activeImagePickerSource: ImagePickerSource?
     @State private var isUploadingAvatar = false
     @State private var avatarUploadError: String?
+    // App (native) language control.
+    @State private var localizer = Localizer.shared
+    @State private var showNativeLanguagePicker = false
 
     // How many interest chips to show before the "View more" toggle.
     private let collapsedInterestsCount = 5
@@ -39,7 +42,7 @@ struct ProfileView: View {
                             Image(systemName: "bookmark")
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundStyle(.black)
-                            Text("View Saved Insights")
+                            Text(L("View Saved Insights"))
                                 .font(.system(size: 16))
                                 .foregroundStyle(.black)
                             Spacer()
@@ -55,14 +58,16 @@ struct ProfileView: View {
                     .buttonStyle(.plain)
 
                     if let onboarding = profile?.onboarding {
-                        section("Languages", editField: .languages) {
+                        nativeLanguageSection
+
+                        section(L("Languages"), editField: .languages) {
                             let prefs = onboarding.languagePreferences ?? []
                             if prefs.isEmpty {
-                                emptyValue("No languages on file yet.")
+                                emptyValue(L("No languages on file yet."))
                             } else {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ForEach(prefs) { pref in
-                                        Text("\(pref.language) · \(pref.dialect) · \(pref.level)")
+                                        Text("\(localizedLanguageName(pref.language)) · \(L(pref.dialect)) · \(L(pref.level))")
                                             .font(.system(size: 14))
                                             .foregroundStyle(.black)
                                             .padding(.horizontal, 12)
@@ -74,10 +79,10 @@ struct ProfileView: View {
                             }
                         }
 
-                        section("Travel destinations", editField: .destinations) {
+                        section(L("Travel destinations"), editField: .destinations) {
                             let destinations = onboarding.destinations ?? []
                             if destinations.isEmpty {
-                                emptyValue("No destinations on file yet.")
+                                emptyValue(L("No destinations on file yet."))
                             } else {
                                 VStack(alignment: .leading, spacing: 6) {
                                     ForEach(destinations) { dest in
@@ -89,13 +94,13 @@ struct ProfileView: View {
                             }
                         }
 
-                        section("What you'd love to understand", editField: .understand) {
+                        section(L("What you'd love to understand"), editField: .understand) {
                             if let understand = onboarding.firstUnderstand, !understand.isEmpty {
                                 Text(understand)
                                     .font(.system(size: 14))
                                     .foregroundStyle(.black)
                             } else {
-                                emptyValue("Tap Edit to pick one.")
+                                emptyValue(L("Tap Edit to pick one."))
                             }
                         }
 
@@ -124,50 +129,53 @@ struct ProfileView: View {
                 }
                 .padding(.horizontal, 8)
             }
-            .navigationTitle("Profile")
+            .navigationTitle(L("Profile"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                         .tint(.black)
                 }
             }
             .task { await loadProfile() }
             .task { await subscription.refresh() }
             .alert(
-                "Couldn't update photo",
+                L("Couldn't update photo"),
                 isPresented: Binding(
                     get: { avatarUploadError != nil },
                     set: { if !$0 { avatarUploadError = nil } }
                 )
             ) {
-                Button("OK", role: .cancel) {}
+                Button(L("OK"), role: .cancel) {}
             } message: {
                 Text(avatarUploadError ?? "")
             }
-            .alert("Log out?", isPresented: $showLogoutConfirm) {
-                Button("Cancel", role: .cancel) {}
-                Button("Log Out", role: .destructive) {
+            .alert(L("Log out?"), isPresented: $showLogoutConfirm) {
+                Button(L("Cancel"), role: .cancel) {}
+                Button(L("Log Out"), role: .destructive) {
                     Haptics.success()
                     auth.signOut()
                     dismiss()
                 }
             } message: {
-                Text("You'll need to sign back in to access your decks.")
+                Text(L("You'll need to sign back in to access your decks."))
             }
-            .alert("Delete account?", isPresented: $showDeleteAccountConfirm) {
-                Button("Cancel", role: .cancel) {}
-                Button("Delete Account", role: .destructive) {
+            .alert(L("Delete account?"), isPresented: $showDeleteAccountConfirm) {
+                Button(L("Cancel"), role: .cancel) {}
+                Button(L("Delete Account"), role: .destructive) {
                     Task { await performAccountDeletion() }
                 }
             } message: {
-                Text("This permanently deletes your decks, study history, XP, and profile. This can't be undone.")
+                Text(L("This permanently deletes your decks, study history, XP, and profile. This can't be undone."))
             }
             .sheet(isPresented: $showFeedbackSheet) {
                 FeedbackSheet(userName: profile?.onboarding?.name)
             }
             .sheet(isPresented: $showPaywall) {
                 PremiumActionSheet()
+            }
+            .sheet(isPresented: $showNativeLanguagePicker) {
+                NativeLanguagePickerSheet()
             }
             .sheet(item: $activeEditField) { field in
                 if let onboarding = profile?.onboarding {
@@ -183,13 +191,13 @@ struct ProfileView: View {
                 }
             }
             .alert(
-                "Couldn't delete account",
+                L("Couldn't delete account"),
                 isPresented: Binding(
                     get: { deleteAccountError != nil },
                     set: { newValue in if !newValue { deleteAccountError = nil } }
                 )
             ) {
-                Button("OK", role: .cancel) {}
+                Button(L("OK"), role: .cancel) {}
             } message: {
                 Text(deleteAccountError ?? "")
             }
@@ -204,7 +212,7 @@ struct ProfileView: View {
                 avatarPicker
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
-                        Text((profile?.onboarding?.name?.isEmpty == false ? profile!.onboarding!.name! : "Add your name"))
+                        Text((profile?.onboarding?.name?.isEmpty == false ? profile!.onboarding!.name! : L("Add your name")))
                             .font(.system(size: 20, weight: .semibold))
                             .foregroundStyle(.black)
                         Button {
@@ -245,7 +253,7 @@ struct ProfileView: View {
             showPaywall = true
         } label: {
             HStack(spacing: 4) {
-                Text("\(subscription.currentTier.displayName) plan")
+                Text(L("%@ plan", subscription.currentTier.displayName))
                     .font(.system(size: 13))
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -301,7 +309,7 @@ struct ProfileView: View {
         .buttonStyle(.plain)
         .disabled(isUploadingAvatar)
         .confirmationDialog(
-            "Update profile photo",
+            L("Update profile photo"),
             isPresented: $showAvatarSourceChooser,
             titleVisibility: .visible
         ) {
@@ -309,20 +317,59 @@ struct ProfileView: View {
             // simulator runs and iPads without a rear camera otherwise
             // get a button that silently no-ops.
             if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                Button("Take Selfie") {
+                Button(L("Take Selfie")) {
                     activeImagePickerSource = .camera
                 }
             }
-            Button("Choose from Library") {
+            Button(L("Choose from Library")) {
                 activeImagePickerSource = .photoLibrary
             }
-            Button("Cancel", role: .cancel) {}
+            Button(L("Cancel"), role: .cancel) {}
         }
         .sheet(item: $activeImagePickerSource) { source in
             ImagePicker(source: source) { picked in
                 Task { await handlePickedImage(picked) }
             }
             .ignoresSafeArea()
+        }
+    }
+
+    // Native/app-language control, styled like the other profile sections
+    // but its "Change" affordance opens a language picker instead of the
+    // onboarding edit sheet. Sits just above the Languages section.
+    private var nativeLanguageSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(L("App language"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                Spacer()
+                Button {
+                    Haptics.light()
+                    showNativeLanguagePicker = true
+                } label: {
+                    Text(L("Change"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            HStack(spacing: 8) {
+                Text(localizer.language.flag)
+                    .font(.system(size: 18))
+                Text(localizer.language.endonym)
+                    .font(.system(size: 14))
+                    .foregroundStyle(.black)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(Color(white: 0.93)))
+            .fixedSize(horizontal: true, vertical: false)
         }
     }
 
@@ -345,7 +392,7 @@ struct ProfileView: View {
                         Haptics.light()
                         activeEditField = editField
                     } label: {
-                        Text("Edit")
+                        Text(L("Edit"))
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(.black)
                             .padding(.horizontal, 6)
@@ -369,15 +416,15 @@ struct ProfileView: View {
     @ViewBuilder
     private func interestsSection(onboarding: OnboardingAnswers) -> some View {
         let all = onboarding.interests ?? []
-        section("Interests", editField: .interests) {
+        section(L("Interests"), editField: .interests) {
             if all.isEmpty {
-                emptyValue("Tap Edit to choose what you're into.")
+                emptyValue(L("Tap Edit to choose what you're into."))
             } else {
                 let visible = showAllInterests ? all : Array(all.prefix(collapsedInterestsCount))
                 VStack(alignment: .leading, spacing: 8) {
                     FlowLayout(spacing: 6) {
                         ForEach(visible, id: \.self) { chip in
-                            Text(chip)
+                            Text(L(chip))
                                 .font(.system(size: 13))
                                 .foregroundStyle(.black)
                                 .padding(.horizontal, 12)
@@ -393,7 +440,7 @@ struct ProfileView: View {
                                 showAllInterests.toggle()
                             }
                         } label: {
-                            Text(showAllInterests ? "Show less" : "View more")
+                            Text(showAllInterests ? L("Show less") : L("View more"))
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundStyle(.black)
                         }
@@ -412,7 +459,7 @@ struct ProfileView: View {
             Haptics.light()
             showFeedbackSheet = true
         } label: {
-            Text("Send Feedback")
+            Text(L("Send Feedback"))
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.black)
                 .frame(maxWidth: .infinity)
@@ -430,7 +477,7 @@ struct ProfileView: View {
             Haptics.medium()
             showLogoutConfirm = true
         } label: {
-            Text("Log Out")
+            Text(L("Log Out"))
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
@@ -455,10 +502,10 @@ struct ProfileView: View {
                         ProgressView()
                             .controlSize(.small)
                             .tint(.red)
-                        Text("Deleting account…")
+                        Text(L("Deleting account…"))
                     }
                 } else {
-                    Text("Delete account")
+                    Text(L("Delete account"))
                 }
             }
             .font(.system(size: 14, weight: .medium))
@@ -486,7 +533,7 @@ struct ProfileView: View {
             // wiped, so we send the user to sign back in and try again.
             if error.domain == AuthErrorDomain,
                error.code == AuthErrorCode.requiresRecentLogin.rawValue {
-                deleteAccountError = "Your data was removed, but Firebase needs a fresh sign-in to finish deleting your account. Tap Log Out, sign back in, then try Delete account again."
+                deleteAccountError = L("Your data was removed, but Firebase needs a fresh sign-in to finish deleting your account. Tap Log Out, sign back in, then try Delete account again.")
             } else {
                 deleteAccountError = error.localizedDescription
             }
@@ -505,7 +552,7 @@ struct ProfileView: View {
             activeImagePickerSource = nil
         }
         guard let resized = image.tongues_downscaledJPEG(maxDimension: 256, quality: 0.8) else {
-            avatarUploadError = "Couldn't process that image. Try another one."
+            avatarUploadError = L("Couldn't process that image. Try another one.")
             return
         }
         do {
@@ -526,6 +573,59 @@ struct ProfileView: View {
         } catch {
             loadError = error.localizedDescription
         }
+    }
+}
+
+// App-language picker presented from the profile's "App language" section.
+// Selecting a row flips the app-wide UI language immediately (Localizer is
+// @Observable) and persists it; styled to match the app's list sheets.
+private struct NativeLanguagePickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var localizer = Localizer.shared
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(AppLanguage.allCases) { lang in
+                    Button {
+                        Haptics.light()
+                        Localizer.shared.language = lang
+                        dismiss()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text(lang.flag)
+                                .font(.system(size: 22))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(lang.endonym)
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(.black)
+                                Text(lang.englishName)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if localizer.language == lang {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(.black)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .listStyle(.plain)
+            .navigationTitle(L("App language"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(L("Done")) { dismiss() }
+                        .tint(.black)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 

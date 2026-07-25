@@ -13,6 +13,8 @@ struct ContentView: View {
     // TabView, so the hand floats over the tab bar rather than being
     // clipped beneath it inside the Study tab.
     @State private var coach = FirstRunCoachController.shared
+    // Drives the first-run native-language picker + the app-wide UI language.
+    @State private var localizer = Localizer.shared
     private var selectedTab: Binding<AppTab> {
         Binding(get: { tabRouter.current }, set: { tabRouter.current = $0 })
     }
@@ -60,7 +62,9 @@ struct ContentView: View {
                 firstRunCoachLayer
             }
 
-            if isShowingSplash {
+            // Splash waits until a native language has been chosen so the
+            // black→white flip (into onboarding) only happens afterward.
+            if isShowingSplash && localizer.hasChosen {
                 SplashView(
                     isFirstLaunch: !hasPlayedStartupChime,
                     onChimeFinished: {
@@ -76,7 +80,18 @@ struct ContentView: View {
                 )
                 .transition(.opacity)
             }
+
+            // The very first screen on a fresh install: pick the app's
+            // language before anything else renders. Sits on top of the
+            // black splash layer, so the flip to white is deferred until
+            // the user continues.
+            if !localizer.hasChosen {
+                LanguageSelectionView()
+                    .transition(.opacity)
+                    .zIndex(2)
+            }
         }
+        .environment(\.locale, Locale(identifier: localizer.language.localeIdentifier))
         .task {
             // First launch: the SplashView's chime callback dismisses the
             // splash when audio + haptics finish, so we skip the legacy

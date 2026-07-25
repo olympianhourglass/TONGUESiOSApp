@@ -70,7 +70,7 @@ struct GrammarBreakdownSheet: View {
                     Divider()
                         .background(Color.white.opacity(0.25))
 
-                    Text("GRAMMATICAL BREAKDOWN")
+                    Text(L("GRAMMATICAL BREAKDOWN"))
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
                         .tracking(0.5)
                         .foregroundStyle(.white.opacity(0.55))
@@ -79,7 +79,7 @@ struct GrammarBreakdownSheet: View {
                         HStack(spacing: 10) {
                             ProgressView()
                                 .tint(.white)
-                            Text("Analyzing the grammar…")
+                            Text(L("Analyzing the grammar…"))
                                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                                 .foregroundStyle(.white.opacity(0.7))
                         }
@@ -171,7 +171,7 @@ struct GrammarBreakdownSheet: View {
 
             // Sentence, piece by piece.
             if !breakdown.chunks.isEmpty {
-                section("PIECE BY PIECE") {
+                section(L("PIECE BY PIECE")) {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(breakdown.chunks) { chunk in
                             chunkCard(chunk)
@@ -182,7 +182,7 @@ struct GrammarBreakdownSheet: View {
 
             // Key grammar concepts.
             if !breakdown.grammarPoints.isEmpty {
-                section("KEY GRAMMAR POINTS") {
+                section(L("KEY GRAMMAR POINTS")) {
                     VStack(alignment: .leading, spacing: 12) {
                         ForEach(breakdown.grammarPoints) { point in
                             pointCard(point)
@@ -193,7 +193,7 @@ struct GrammarBreakdownSheet: View {
 
             // Optional word-order note.
             if let note = breakdown.wordOrderNote, !note.isEmpty {
-                section("WORD ORDER") {
+                section(L("WORD ORDER")) {
                     Text(note)
                         .font(.custom("NeueHaasDisplay-Light", size: 15))
                         .foregroundStyle(.white.opacity(0.85))
@@ -312,10 +312,9 @@ struct GrammarBreakdownSheet: View {
         }
     }
 
-    // Device's preferred language → human-readable English name handed to
-    // the prompt (mirrors WordInfoSheet's etymology helper).
+    // The user's chosen app/native language handed to the prompt (mirrors
+    // WordInfoSheet's helper) so grammar explanations come back in it.
     private static var userExplanationLanguage: String {
-        let code = Locale.current.language.languageCode?.identifier ?? "en"
-        return Locale(identifier: "en").localizedString(forLanguageCode: code) ?? "English"
+        AppLanguage.currentNative.promptName
     }
 }

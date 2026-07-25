@@ -17,6 +17,8 @@ struct AttributeOptionsSheet: View {
     @Binding var selection: String
 
     @State private var searchText = ""
+    // Recently-used languages, loaded once on appear.
+    @State private var recents: [String] = []
 
     // Only the long language list benefits from a search field; the
     // content / amount / level pickers have just a couple of options each,
@@ -26,49 +28,117 @@ struct AttributeOptionsSheet: View {
     private var filteredOptions: [String] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return options }
-        return options.filter { $0.localizedCaseInsensitiveContains(query) }
+        // Match either the English value or its localized display name, so a
+        // user searching in their own language still finds the language.
+        return options.filter {
+            $0.localizedCaseInsensitiveContains(query)
+                || localizedAttributeValue($0, for: attribute).localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    // Recently-used languages that are still valid options. Only shown for
+    // the language picker, and only when not actively searching.
+    private var recentOptions: [String] {
+        guard attribute == .language, searchText.isEmpty else { return [] }
+        return recents.filter { options.contains($0) }
     }
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(filteredOptions, id: \.self) { option in
-                    Button {
-                        Haptics.light()
-                        selection = option
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Text(option)
-                                .font(.custom("NeueHaasDisplay-Light", size: 17))
-                                .foregroundStyle(.black)
-                            Spacer()
-                            if option == selection {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.red)
-                            }
+                if !recentOptions.isEmpty {
+                    Section {
+                        ForEach(recentOptions, id: \.self) { option in
+                            optionRow(option)
                         }
+                    } header: {
+                        HStack {
+                            Text(L("Recently Used"))
+                            Spacer()
+                            Button(L("Clear")) {
+                                Haptics.light()
+                                RecentAttributeStore.clearLanguages()
+                                recents = []
+                            }
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .textCase(nil)
+                        }
+                    }
+                    Section(L("All Languages")) {
+                        ForEach(filteredOptions, id: \.self) { option in
+                            optionRow(option)
+                        }
+                    }
+                } else {
+                    ForEach(filteredOptions, id: \.self) { option in
+                        optionRow(option)
                     }
                 }
             }
-            .navigationTitle(attribute.title)
+            .navigationTitle(L(attribute.title))
             .navigationBarTitleDisplayMode(.inline)
             .if(showsSearch) { view in
                 view
                     .searchable(
                         text: $searchText,
                         placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: "Search \(attribute.title.lowercased())"
+                        prompt: L("Search %@", L(attribute.title).lowercased())
                     )
                     .autocorrectionDisabled()
                     .textInputAutocapitalization(.never)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
+                }
+            }
+            .onAppear { recents = RecentAttributeStore.recentLanguages() }
+        }
+    }
+
+    @ViewBuilder
+    private func optionRow(_ option: String) -> some View {
+        Button {
+            Haptics.light()
+            selection = option
+            dismiss()
+        } label: {
+            HStack {
+                Text(localizedAttributeValue(option, for: attribute))
+                    .font(.custom("NeueHaasDisplay-Light", size: 17))
+                    .foregroundStyle(.black)
+                Spacer()
+                if option == selection {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(.red)
                 }
             }
         }
+    }
+}
+
+// Lightweight most-recently-used tracker for the language picker. Stored
+// in UserDefaults, most-recent-first, deduped, capped.
+enum RecentAttributeStore {
+    private static let languagesKey = "recentLanguages"
+    private static let maxCount = 5
+
+    static func recentLanguages() -> [String] {
+        UserDefaults.standard.stringArray(forKey: languagesKey) ?? []
+    }
+
+    static func recordLanguage(_ language: String) {
+        let trimmed = language.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        var list = recentLanguages().filter { $0 != trimmed }
+        list.insert(trimmed, at: 0)
+        if list.count > maxCount { list = Array(list.prefix(maxCount)) }
+        UserDefaults.standard.set(list, forKey: languagesKey)
+    }
+
+    static func clearLanguages() {
+        UserDefaults.standard.removeObject(forKey: languagesKey)
     }
 }
 
@@ -99,15 +169,18 @@ struct DialectPickerSheet: View {
         }
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return sorted }
-        return sorted.filter { $0.name.localizedCaseInsensitiveContains(query) }
+        return sorted.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || L($0.name).localizedCaseInsensitiveContains(query)
+        }
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Picker("Sort", selection: $sortOrder) {
+                Picker(L("Sort"), selection: $sortOrder) {
                     ForEach(DialectSort.allCases) { order in
-                        Text(order.rawValue)
+                        Text(L(order.rawValue))
                             .font(.custom("NeueHaasDisplay-Light", size: 14))
                             .tag(order)
                     }
@@ -125,7 +198,7 @@ struct DialectPickerSheet: View {
                         } label: {
                             HStack {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(dialect.name)
+                                    Text(L(dialect.name))
                                         .font(.custom("NeueHaasDisplay-Light", size: 17))
                                         .foregroundStyle(.black)
                                     if dialect.speakers > 0 {
@@ -144,18 +217,18 @@ struct DialectPickerSheet: View {
                     }
                 }
             }
-            .navigationTitle("Dialect")
+            .navigationTitle(L("Dialect"))
             .navigationBarTitleDisplayMode(.inline)
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search dialects"
+                prompt: L("Search dialects")
             )
             .autocorrectionDisabled()
             .textInputAutocapitalization(.never)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                 }
             }
         }

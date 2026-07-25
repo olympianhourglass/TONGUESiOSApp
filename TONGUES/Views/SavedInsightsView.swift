@@ -33,9 +33,9 @@ struct SavedInsightsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                Picker("Category", selection: $segment) {
+                Picker(L("Category"), selection: $segment) {
                     ForEach(Segment.allCases, id: \.self) { seg in
-                        Text(seg.rawValue).tag(seg)
+                        Text(L(seg.rawValue)).tag(seg)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -46,7 +46,7 @@ struct SavedInsightsView: View {
             .padding(.top, 12)
             .padding(.bottom, 40)
         }
-        .navigationTitle("Saved Insights")
+        .navigationTitle(L("Saved Insights"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
         .sheet(item: $selectedGrammar) { insight in
@@ -66,7 +66,7 @@ struct SavedInsightsView: View {
         if isLoading {
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Loading your saved insights…")
+                Text(L("Loading your saved insights…"))
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -102,13 +102,13 @@ struct SavedInsightsView: View {
                 .font(.system(size: 30))
                 .foregroundStyle(Color(white: 0.7))
             Text(segment == .grammatical
-                 ? "No saved grammar insights yet."
-                 : "No saved cultural insights yet.")
+                 ? L("No saved grammar insights yet.")
+                 : L("No saved cultural insights yet."))
                 .font(.system(size: 15))
                 .foregroundStyle(.black)
             Text(segment == .grammatical
-                 ? "Tap the bookmark on a grammar breakdown in a conversation to keep it here."
-                 : "Tap Save on a cultural insight in Explore to keep it here.")
+                 ? L("Tap the bookmark on a grammar breakdown in a conversation to keep it here.")
+                 : L("Tap Save on a cultural insight in Explore to keep it here."))
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -154,7 +154,7 @@ struct SavedInsightsView: View {
             Button(role: .destructive) {
                 Task { await remove(insight) }
             } label: {
-                Label("Remove", systemImage: "trash")
+                Label(L("Remove"), systemImage: "trash")
             }
         }
     }
@@ -203,7 +203,7 @@ struct CulturalInsightDetailView: View {
             Color.black.ignoresSafeArea()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("CULTURAL INSIGHT")
+                    Text(L("CULTURAL INSIGHT"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 13))
                         .foregroundStyle(.white.opacity(0.7))
                         .padding(.top, 44)
@@ -227,7 +227,7 @@ struct CulturalInsightDetailView: View {
                         .lineSpacing(4)
                         .fixedSize(horizontal: false, vertical: true)
 
-                    Text("Saved \(Self.dateFormatter.string(from: insight.createdAt))")
+                    Text(L("Saved %@", Self.dateFormatter.string(from: insight.createdAt)))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.45))
                         .padding(.top, 8)

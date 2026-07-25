@@ -48,17 +48,17 @@ struct ProfileEditSheet: View {
             body(for: field)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Cancel") { dismiss() }
+                        Button(L("Cancel")) { dismiss() }
                     }
                 }
                 .alert(
-                    "Couldn't save",
+                    L("Couldn't save"),
                     isPresented: Binding(
                         get: { saveError != nil },
                         set: { if !$0 { saveError = nil } }
                     )
                 ) {
-                    Button("OK", role: .cancel) {}
+                    Button(L("OK"), role: .cancel) {}
                 } message: {
                     Text(saveError ?? "")
                 }
@@ -87,7 +87,7 @@ struct ProfileEditSheet: View {
                 questionNumber: 1,
                 totalQuestions: 1,
                 question: OnboardingQuestion(
-                    title: "What should we call you?",
+                    title: L("What should we call you?"),
                     kind: .freeText(placeholder: "Your name")
                 ),
                 state: state,
@@ -98,12 +98,13 @@ struct ProfileEditSheet: View {
         case .understand:
             // Reuses the Q6 options copy. Falls back to neutral phrasing
             // when the user hasn't picked a target language yet.
-            let topLanguage = state.languagePreferences.first?.language ?? "this language"
+            let topLanguageRaw: String? = state.languagePreferences.first?.language
+            let topLanguage = topLanguageRaw.map { localizedLanguageName($0) } ?? L("this language")
             OnboardingQuestionView(
                 questionNumber: 6,
                 totalQuestions: 1,
                 question: OnboardingQuestion(
-                    title: "What would you most love to understand right now in \(topLanguage)?",
+                    title: L("What would you most love to understand right now in %@?", topLanguage),
                     kind: .options([
                         "A song's lyrics",
                         "A conversation around me",

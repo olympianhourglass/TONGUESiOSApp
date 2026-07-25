@@ -21,6 +21,9 @@ final class StrokeDataStore {
     /// the character isn't in the bundled subset. Points are in [0,1] space.
     func strokes(for character: Character, script: HandwritingScript) -> [[CGPoint]]? {
         guard script.tier == .strokeMatch else { return nil }
+        // Korean is composed on the fly from jamo medians rather than looked
+        // up in a bundled per-character table.
+        if script == .korean { return HangulComposer.compose(character) }
         let table = dataset(for: script)
         return table[String(character)]
     }
@@ -29,12 +32,18 @@ final class StrokeDataStore {
     func hasFullCoverage(for word: String, script: HandwritingScript) -> Bool {
         let chars = word.filter { !$0.isWhitespace }
         guard !chars.isEmpty else { return false }
+        if script == .korean {
+            return chars.allSatisfy { HangulComposer.compose($0) != nil }
+        }
         let table = dataset(for: script)
         return chars.allSatisfy { table[String($0)] != nil }
     }
 
     /// Characters of `word` that we can drive stroke-matching for, in order.
     func practicableCharacters(in word: String, script: HandwritingScript) -> [Character] {
+        if script == .korean {
+            return word.filter { !$0.isWhitespace && HangulComposer.compose($0) != nil }
+        }
         let table = dataset(for: script)
         return word.filter { !$0.isWhitespace && table[String($0)] != nil }
     }

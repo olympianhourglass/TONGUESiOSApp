@@ -46,7 +46,9 @@ struct FlashcardView: View {
     // Handwriting practice: a persisted toggle on the review screen. When on,
     // supported-script cards (Chinese/Japanese/Korean/Arabic) shift up and
     // reveal a practice rectangle below. Persists across cards and sessions.
-    @AppStorage("handwritingPracticeEnabled") private var handwritingEnabled = false
+    // Session-scoped so writing practice starts OFF every time a review
+    // session opens (rather than persisting on from a previous session).
+    @State private var handwritingEnabled = false
     // Cards whose word the user wrote out successfully this session — shown
     // in the summary and worth bonus XP.
     @State private var handwrittenItemIDs: Set<String> = []
@@ -177,12 +179,11 @@ struct FlashcardView: View {
             HStack {
                 Button {
                     Haptics.light()
-                    if isFinished {
-                        // On the Deck Complete screen the user is
-                        // already done — no in-progress work to
-                        // protect — so the X dismisses directly
-                        // without surfacing a "Leave session?"
-                        // confirmation.
+                    if isFinished || currentIndex < 2 {
+                        // On the Deck Complete screen, and for the first two
+                        // cards, the X dismisses directly — little work is at
+                        // risk that early, so we skip the "Leave session?"
+                        // confirmation. From the third card on, it appears.
                         saveSessionIfNeeded()
                         dismiss()
                     } else {
@@ -209,7 +210,7 @@ struct FlashcardView: View {
                             saveSessionIfNeeded()
                             dismiss()
                         } label: {
-                            Text("Leave session?")
+                            Text(L("Leave session?"))
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(.white)
                                 .fixedSize(horizontal: true, vertical: false)
@@ -235,15 +236,15 @@ struct FlashcardView: View {
             if !isFinished {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        Rectangle()
+                        Capsule()
                             .fill(Color(white: 0.85))
-                        Rectangle()
+                        Capsule()
                             .fill(.black)
                             .frame(width: geo.size.width * progressFraction)
                             .animation(.easeInOut(duration: 0.25), value: currentIndex)
                     }
                 }
-                .frame(height: 10)
+                .frame(height: 7.5)
 
                 // Hidden while writing practice is active so it doesn't
                 // compete with the practice UI; the progress bar stays.
@@ -296,7 +297,7 @@ struct FlashcardView: View {
             HStack(spacing: 6) {
                 Image(systemName: "pencil.and.scribble")
                     .font(.system(size: 14, weight: .medium))
-                Text("Write")
+                Text(L("Write"))
                     .font(.system(size: 13, weight: .medium))
             }
             .foregroundStyle(handwritingEnabled ? .white : .black)
@@ -360,10 +361,15 @@ struct FlashcardView: View {
         .padding(24)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .frame(height: 220)
-        .background(Color.white)
+        // Liquid Glass card — the material picks up the light-gray session
+        // background behind it. `.clipped()` on the blurred word already
+        // keeps the reveal blur inside the text frame, so no extra clip is
+        // needed for the rounded corners.
+        //
+        // Corner radius matches the study-page card covers (4pt on a 220pt
+        // cover) scaled up to this card's 440pt width — a 2× scale, so 8pt.
         .compositingGroup()
-        .clipShape(RoundedRectangle(cornerRadius: 4))
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
+        .glassEffect(.regular, in: .rect(cornerRadius: 8))
     }
 
     private func speakCurrentSelection(item: GeneratedItem) {
@@ -464,9 +470,7 @@ struct FlashcardView: View {
                 .font(.system(size: 26, weight: .regular))
                 .foregroundStyle(.black)
                 .frame(width: 72, height: 72)
-                .background(Color.white)
-                .clipShape(Circle())
-                .shadow(color: .black.opacity(0.12), radius: 8, x: 0, y: 4)
+                .glassEffect(.regular.interactive(), in: .circle)
                 .contentShape(Circle())
                 .gesture(ratingDragGesture(
                     tapGrade: tapGrade,
@@ -483,9 +487,11 @@ struct FlashcardView: View {
             .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
-            .background(Color.white, in: Capsule())
+            // Liquid Glass chip — applied after the padding so the material
+            // fills the full pill. Depth comes from the glass itself, so the
+            // old white fill + drop shadow are dropped.
+            .glassEffect(.regular, in: .capsule)
             .scaleEffect(hoveredChip == grade ? 1.08 : 1.0)
-            .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
             .animation(.spring(response: 0.22, dampingFraction: 0.7), value: hoveredChip)
             .background(
                 GeometryReader { proxy in
@@ -600,14 +606,14 @@ struct FlashcardView: View {
 
     private var finishView: some View {
         VStack(spacing: 20) {
-            Text("Deck complete")
+            Text(L("Deck complete"))
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(.black)
 
             HStack(spacing: 32) {
-                statTile(value: "\(totalCount)", label: "Reviewed")
-                statTile(value: "\(correctCount)", label: "Correct")
-                statTile(value: "\(incorrectCount)", label: "Incorrect")
+                statTile(value: "\(totalCount)", label: L("Reviewed"))
+                statTile(value: "\(correctCount)", label: L("Correct"))
+                statTile(value: "\(incorrectCount)", label: L("Incorrect"))
             }
             .padding(.top, 8)
 
@@ -615,7 +621,9 @@ struct FlashcardView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "pencil.and.scribble")
                         .font(.system(size: 14, weight: .medium))
-                    Text("Wrote \(handwrittenItemIDs.count) \(handwrittenItemIDs.count == 1 ? "word" : "words") by hand · +\(handwrittenItemIDs.count * 3) XP")
+                    Text(handwrittenItemIDs.count == 1
+                         ? L("Wrote 1 word by hand · +%d XP", handwrittenItemIDs.count * 3)
+                         : L("Wrote %d words by hand · +%d XP", handwrittenItemIDs.count, handwrittenItemIDs.count * 3))
                         .font(.system(size: 14, weight: .medium))
                 }
                 .foregroundStyle(.black)
@@ -637,7 +645,7 @@ struct FlashcardView: View {
                 WidgetSnapshotWriter.refreshFromBackend()
                 dismiss()
             } label: {
-                Text("Finish")
+                Text(L("Finish"))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -668,7 +676,7 @@ struct FlashcardView: View {
     // than wall-clock from launch.
     private var timeSpentSection: some View {
         VStack(spacing: 12) {
-            statTile(value: formatTotalDuration(totalReviewTime), label: "Time")
+            statTile(value: formatTotalDuration(totalReviewTime), label: L("Time"))
 
             if !reviews.isEmpty {
                 if isTimeBreakdownExpanded {
@@ -948,7 +956,7 @@ struct FlashcardView: View {
 
 struct SessionCompleteToast: View {
     var body: some View {
-        Text("Session complete!")
+        Text(L("Session complete!"))
             .font(.system(size: 14, weight: .medium))
             .foregroundStyle(.white)
             .padding(.horizontal, 18)

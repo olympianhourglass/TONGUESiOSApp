@@ -33,8 +33,8 @@ struct OnboardingLanguagesQuestionView: View {
 
     private var languageCapCopy: String {
         let max = maxLanguages
-        if max == Int.max { return "Pick as many as you'd like. Drag to reorder by priority." }
-        return "Pick up to \(max). Drag to reorder by priority."
+        if max == Int.max { return L("Pick as many as you'd like. Drag to reorder by priority.") }
+        return L("Pick up to %d. Drag to reorder by priority.", max)
     }
 
     private var visibleSuggestions: [LanguagePreference] {
@@ -71,7 +71,7 @@ struct OnboardingLanguagesQuestionView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
 
-                Text("\(questionNumber) of \(totalQuestions)")
+                Text(L("%d of %d", questionNumber, totalQuestions))
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -79,9 +79,8 @@ struct OnboardingLanguagesQuestionView: View {
                     .padding(.top, 8)
             }
 
-            Text("Which languages do you want to learn?")
-                .font(.custom("PlayfairDisplay-Regular", size: 32))
-                .tracking(-2.56)
+            Text(L("Which languages do you want to learn?"))
+                .font(.custom("NeueHaasDisplay-Light", size: 32))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 24)
                 .padding(.top, 32)
@@ -120,7 +119,7 @@ struct OnboardingLanguagesQuestionView: View {
                     HStack(spacing: 8) {
                         Image(systemName: atLanguageCap ? "crown.fill" : "plus")
                             .font(.system(size: 14, weight: .semibold))
-                        Text(atLanguageCap ? "Upgrade for more languages" : "Add language")
+                        Text(L(atLanguageCap ? "Upgrade for more languages" : "Add language"))
                             .font(.system(size: 16))
                     }
                     .foregroundStyle(.black)
@@ -144,7 +143,7 @@ struct OnboardingLanguagesQuestionView: View {
                 Haptics.medium()
                 onNext()
             } label: {
-                Text(ctaTitle ?? "Next")
+                Text(L(ctaTitle ?? "Next"))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -194,7 +193,7 @@ struct OnboardingLanguagesQuestionView: View {
                 .padding(.horizontal, 24)
 
             HStack(spacing: 8) {
-                Text("Suggested Languages")
+                Text(L("Suggested Languages"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
@@ -206,7 +205,7 @@ struct OnboardingLanguagesQuestionView: View {
             .padding(.horizontal, 24)
 
             if !isLoadingSuggestions && visibleSuggestions.isEmpty {
-                Text("No suggestions for these destinations.")
+                Text(L("No suggestions for these destinations."))
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 24)
@@ -223,7 +222,7 @@ struct OnboardingLanguagesQuestionView: View {
                                 HStack(spacing: 4) {
                                     Image(systemName: "plus")
                                         .font(.system(size: 10, weight: .semibold))
-                                    Text("\(suggestion.language) · \(suggestion.dialect) · \(suggestion.level)")
+                                    Text("\(localizedLanguageName(suggestion.language)) · \(L(suggestion.dialect)) · \(L(suggestion.level))")
                                         .font(.system(size: 14))
                                         .lineLimit(1)
                                 }
@@ -316,9 +315,9 @@ private struct LanguagePreferenceRow: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                pill(pref.language) { onTap(.language) }
-                pill(pref.dialect)  { onTap(.dialect) }
-                pill(pref.level)    { onTap(.level) }
+                pill(localizedLanguageName(pref.language)) { onTap(.language) }
+                pill(L(pref.dialect))  { onTap(.dialect) }
+                pill(L(pref.level))    { onTap(.level) }
             }
             .padding(.horizontal, fadeWidth)
             .padding(.vertical, 2)

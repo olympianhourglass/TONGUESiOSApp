@@ -15,7 +15,7 @@ struct OnboardingIntroView: View {
                 TonguesWordmark(size: 56)
                     .foregroundStyle(.black)
 
-                Text("A modern way to learn a language —\nbuilt around the words you actually use.")
+                Text(L("A modern way to learn a language —\nbuilt around the words you actually use."))
                     .font(.system(size: 17))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -30,7 +30,7 @@ struct OnboardingIntroView: View {
                     Haptics.medium()
                     onContinue()
                 } label: {
-                    Text("Get Started")
+                    Text(L("Get Started"))
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
@@ -44,7 +44,7 @@ struct OnboardingIntroView: View {
                     Haptics.light()
                     onSignIn()
                 } label: {
-                    Text("Sign In")
+                    Text(L("Sign In"))
                         .font(.custom("NeueHaasDisplay-Roman", size: 15))
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)

@@ -12,15 +12,15 @@ struct SubscriptionCapAlertModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .alert(
-                "You've hit your monthly limit",
+                L("You've hit your monthly limit"),
                 isPresented: alertBinding,
                 presenting: error
             ) { _ in
-                Button("Upgrade") {
+                Button(L("Upgrade")) {
                     showPaywall = true
                     error = nil
                 }
-                Button("Not now", role: .cancel) {
+                Button(L("Not now"), role: .cancel) {
                     error = nil
                 }
             } message: { error in

@@ -1,5 +1,6 @@
 import SwiftUI
 import Charts
+import UIKit
 
 struct DeckDetailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -81,32 +82,32 @@ struct DeckDetailView: View {
                         Haptics.light()
                         showRenameSheet = true
                     } label: {
-                        Label("Rename", systemImage: "pencil")
+                        Label(L("Rename"), systemImage: "pencil")
                     }
                     Button {
                         Haptics.light()
                         showMergeSheet = true
                     } label: {
-                        Label("Merge into", systemImage: "arrow.triangle.merge")
+                        Label(L("Merge into"), systemImage: "arrow.triangle.merge")
                     }
                     Button {
                         Haptics.light()
                         showAudioExport = true
                     } label: {
-                        Label("Download as audio", systemImage: "waveform")
+                        Label(L("Download as audio"), systemImage: "waveform")
                     }
                     Button {
                         Haptics.light()
                         exportCSV()
                     } label: {
-                        Label("Export as CSV", systemImage: "tablecells")
+                        Label(L("Export as CSV"), systemImage: "tablecells")
                     }
                     Divider()
                     Button(role: .destructive) {
                         Haptics.medium()
                         showDeleteConfirmation = true
                     } label: {
-                        Label("Delete deck", systemImage: "trash")
+                        Label(L("Delete deck"), systemImage: "trash")
                     }
                 } label: {
                     Image(systemName: "ellipsis")
@@ -126,10 +127,10 @@ struct DeckDetailView: View {
                 mergeConfirmation = targetTitle
             }
         }
-        .alert("Merged", isPresented: mergeConfirmationBinding) {
-            Button("OK") { mergeConfirmation = nil }
+        .alert(L("Merged"), isPresented: mergeConfirmationBinding) {
+            Button(L("OK")) { mergeConfirmation = nil }
         } message: {
-            Text("Added \(deck.items.count) \(deck.contentType.lowercased()) to \"\(mergeConfirmation ?? "")\".")
+            Text(L("Added %d %@ to \"%@\".", deck.items.count, deck.contentType.lowercased(), mergeConfirmation ?? ""))
         }
         .sheet(isPresented: $showAudioExport) {
             DeckAudioExportSheet(deck: deck) { url in
@@ -141,19 +142,19 @@ struct DeckDetailView: View {
             ShareSheet(items: [file.url])
         }
         .confirmationDialog(
-            "Delete this deck?",
+            L("Delete this deck?"),
             isPresented: $showDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete", role: .destructive) {
+            Button(L("Delete"), role: .destructive) {
                 Task { await deleteDeck() }
             }
-            Button("Cancel", role: .cancel) { }
+            Button(L("Cancel"), role: .cancel) { }
         } message: {
-            Text("This can't be undone.")
+            Text(L("This can't be undone."))
         }
-        .alert("Couldn't generate more", isPresented: errorAlertBinding) {
-            Button("OK") { generationError = nil }
+        .alert(L("Couldn't generate more"), isPresented: errorAlertBinding) {
+            Button(L("OK")) { generationError = nil }
         } message: {
             Text(generationError ?? "")
         }
@@ -241,7 +242,7 @@ struct DeckDetailView: View {
             ArtifactReaderSheet(artifact: artifact)
         }
         .confirmationDialog(
-            "Delete this artifact?",
+            L("Delete this artifact?"),
             isPresented: Binding(
                 get: { pendingArtifactDeletion != nil },
                 set: { if !$0 { pendingArtifactDeletion = nil } }
@@ -249,17 +250,17 @@ struct DeckDetailView: View {
             titleVisibility: .visible,
             presenting: pendingArtifactDeletion
         ) { artifact in
-            Button("Delete", role: .destructive) {
+            Button(L("Delete"), role: .destructive) {
                 Task {
                     await deleteArtifact(artifact)
                     pendingArtifactDeletion = nil
                 }
             }
-            Button("Cancel", role: .cancel) {
+            Button(L("Cancel"), role: .cancel) {
                 pendingArtifactDeletion = nil
             }
         } message: { _ in
-            Text("This can't be undone.")
+            Text(L("This can't be undone."))
         }
         .task(id: deck.id) {
             // Two independent loads kicked off in parallel so the
@@ -306,10 +307,10 @@ struct DeckDetailView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
-                    Text("\(deck.language) \(deck.level)")
+                    Text("\(localizedLanguageName(deck.language)) \(L(deck.level))")
                         .font(.system(size: 15))
                         .foregroundStyle(.secondary)
-                    Text("\(deck.items.count) \(deck.contentType.lowercased())")
+                    Text(L("%d %@", deck.items.count, deck.contentType.lowercased()))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                     Button {
@@ -474,10 +475,10 @@ struct DeckDetailView: View {
     }
 
     private var barLabel: String {
-        guard let urgency else { return "New" }
-        if urgency.dueCount > 0 { return "\(urgency.dueCount) due" }
-        if urgency.newCount == urgency.totalCount { return "New" }
-        return "Up to date"
+        guard let urgency else { return L("New") }
+        if urgency.dueCount > 0 { return L("%d due", urgency.dueCount) }
+        if urgency.newCount == urgency.totalCount { return L("New") }
+        return L("Up to date")
     }
 
     // MARK: - Content / Stats tabs
@@ -487,9 +488,9 @@ struct DeckDetailView: View {
     // black active with a 2pt underline).
     private var tabBar: some View {
         HStack(spacing: 0) {
-            tabButton(title: "CONTENT", tab: .content)
-            tabButton(title: "ARTIFACTS", tab: .artifacts)
-            tabButton(title: "STATS", tab: .stats)
+            tabButton(title: L("CONTENT"), tab: .content)
+            tabButton(title: L("ARTIFACTS"), tab: .artifacts)
+            tabButton(title: L("STATS"), tab: .stats)
         }
     }
 
@@ -534,7 +535,6 @@ struct DeckDetailView: View {
         // out identically for this full-width vertical list.
         LazyVStack(spacing: 0) {
             ForEach(deck.items) { item in
-                SwipeToDeleteRow(onDelete: { deleteItem(item) }) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(item.word)
@@ -573,7 +573,21 @@ struct DeckDetailView: View {
                         }
                     }
                     .padding(.vertical, 10)
-                }
+                    // Long-press a row for quick actions: copy the
+                    // foreign word to the clipboard, or delete the item.
+                    .contextMenu {
+                        Button {
+                            UIPasteboard.general.string = item.word
+                            Haptics.light()
+                        } label: {
+                            Label(L("Copy"), systemImage: "doc.on.doc")
+                        }
+                        Button(role: .destructive) {
+                            deleteItem(item)
+                        } label: {
+                            Label(L("Delete"), systemImage: "trash")
+                        }
+                    }
                 Divider()
             }
 
@@ -588,7 +602,7 @@ struct DeckDetailView: View {
                             ProgressView()
                                 .scaleEffect(0.7)
                         }
-                        Text(isGeneratingMore ? "Generating…" : "Generate More")
+                        Text(isGeneratingMore ? L("Generating…") : L("Generate More"))
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(.black)
                     }
@@ -697,10 +711,10 @@ struct DeckDetailView: View {
             Image(systemName: "bookmark")
                 .font(.system(size: 32, weight: .light))
                 .foregroundStyle(Color.black.opacity(0.25))
-            Text("No artifacts saved yet")
+            Text(L("No artifacts saved yet"))
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(.black)
-            Text("Open Generate, make a story, conversation, song, poem, news article, or joke — then tap the bookmark on the result to keep it here.")
+            Text(L("Open Generate, make a story, conversation, song, poem, news article, or joke — then tap the bookmark on the result to keep it here."))
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -767,7 +781,7 @@ struct DeckDetailView: View {
                 Haptics.medium()
                 pendingArtifactDeletion = artifact
             } label: {
-                Label("Delete artifact", systemImage: "trash")
+                Label(L("Delete artifact"), systemImage: "trash")
             }
         }
     }
@@ -874,16 +888,16 @@ struct DeckDetailView: View {
     private var forgettingCurveSection: some View {
         let curve = forgettingCurve
         VStack(alignment: .leading, spacing: 8) {
-            Text("Forgetting curve")
+            Text(L("Forgetting curve"))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.black)
-            Text("Average chance the deck is still remembered each day from today, projecting forward without further review.")
+            Text(L("Average chance the deck is still remembered each day from today, projecting forward without further review."))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if curve.isEmpty {
-                Text("Review some cards to start the curve.")
+                Text(L("Review some cards to start the curve."))
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 24)
@@ -897,7 +911,7 @@ struct DeckDetailView: View {
                         .foregroundStyle(.gray.opacity(0.45))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                         .annotation(position: .topTrailing, alignment: .topTrailing) {
-                            Text("Target \(Int(deck.resolvedTargetRetention * 100))%")
+                            Text(L("Target %d%%", Int(deck.resolvedTargetRetention * 100)))
                                 .font(.system(size: 10))
                                 .foregroundStyle(.secondary)
                         }
@@ -941,7 +955,7 @@ struct DeckDetailView: View {
                         AxisGridLine().foregroundStyle(.gray.opacity(0.2))
                         AxisValueLabel {
                             if let v = value.as(Int.self) {
-                                Text(v == 0 ? "Today" : "+\(v)d")
+                                Text(v == 0 ? L("Today") : L("+%dd", v))
                                     .font(.system(size: 10))
                                     .foregroundStyle(.secondary)
                             }
@@ -961,15 +975,15 @@ struct DeckDetailView: View {
     private var atRiskSection: some View {
         let rows = atRiskRows
         VStack(alignment: .leading, spacing: 10) {
-            Text("Most at risk")
+            Text(L("Most at risk"))
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(.black)
-            Text("Cards with the highest forgetting risk right now. Review these first.")
+            Text(L("Cards with the highest forgetting risk right now. Review these first."))
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
 
             if rows.isEmpty {
-                Text("No cards at risk — keep up the good work.")
+                Text(L("No cards at risk — keep up the good work."))
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .padding(.top, 6)
@@ -1198,12 +1212,16 @@ struct DeckDetailView: View {
         guard let deckId = deck.id else { return }
         let previous = deck
         Haptics.medium()
+        // Filter locally by the in-memory id (reliable within this loaded
+        // deck), then persist the resulting list wholesale — no fragile
+        // server-side re-matching.
+        let remaining = deck.items.filter { $0.id != item.id }
         withAnimation(.easeInOut(duration: 0.25)) {
-            deck = deck.withItems(deck.items.filter { $0.id != item.id })
+            deck = deck.withItems(remaining)
         }
         Task {
             do {
-                try await FirebaseDeckService.removeItem(inDeck: deckId, itemId: item.id)
+                try await FirebaseDeckService.setItems(inDeck: deckId, items: remaining)
             } catch {
                 await MainActor.run {
                     withAnimation(.easeInOut(duration: 0.2)) { deck = previous }
@@ -1461,7 +1479,7 @@ struct GenerateRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Generate Artifact")
+            Text(L("Generate Artifact"))
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
@@ -1473,7 +1491,7 @@ struct GenerateRow: View {
                         Button {
                             activeKind = kind
                         } label: {
-                            Text(kind.rawValue)
+                            Text(L(kind.rawValue))
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundStyle(.black)
                                 .lineLimit(1)
@@ -1539,14 +1557,14 @@ struct DeckPromptInfoSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    section("Prompt") {
-                        Text(deck.userPrompt.isEmpty ? "(none)" : deck.userPrompt)
+                    section(L("Prompt")) {
+                        Text(deck.userPrompt.isEmpty ? L("(none)") : deck.userPrompt)
                             .font(.system(size: 16))
                             .foregroundStyle(.black)
                     }
 
                     if !deck.interests.isEmpty {
-                        section("Topics") {
+                        section(L("Topics")) {
                             Text(deck.interests.joined(separator: ", "))
                                 .font(.system(size: 15))
                                 .foregroundStyle(.black)
@@ -1554,19 +1572,19 @@ struct DeckPromptInfoSheet: View {
                     }
 
                     if !deck.tones.isEmpty {
-                        section("Tone") {
+                        section(L("Tone")) {
                             Text(deck.tones.joined(separator: ", "))
                                 .font(.system(size: 15))
                                 .foregroundStyle(.black)
                         }
                     }
 
-                    section("Settings") {
+                    section(L("Settings")) {
                         VStack(alignment: .leading, spacing: 6) {
-                            settingRow("Language", "\(deck.language) (\(deck.dialect))")
-                            settingRow("Level", deck.level)
-                            settingRow("Content", deck.contentType)
-                            settingRow("Original size", deck.amount)
+                            settingRow(L("Language"), "\(localizedLanguageName(deck.language)) (\(L(deck.dialect)))")
+                            settingRow(L("Level"), deck.level)
+                            settingRow(L("Content"), deck.contentType)
+                            settingRow(L("Original size"), deck.amount)
                         }
                     }
                 }
@@ -1574,11 +1592,11 @@ struct DeckPromptInfoSheet: View {
                 .padding(.vertical, 16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .navigationTitle("Original Prompt")
+            .navigationTitle(L("Original Prompt"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                 }
             }
         }
@@ -1632,7 +1650,7 @@ private struct InfoExplainerSheet<Content: View>: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                 }
             }
         }
@@ -1663,21 +1681,21 @@ struct ReviewQueueInfoSheet: View {
     let status: String
 
     var body: some View {
-        InfoExplainerSheet(title: "Review queue") {
-            infoSection("Status") {
+        InfoExplainerSheet(title: L("Review queue")) {
+            infoSection(L("Status")) {
                 infoBody(status)
             }
-            infoSection("The bars") {
-                infoBody("Four vertical bars track how much of this deck still needs attention. Each bar represents roughly a quarter of your cards — bars fill as cards stack up that haven't been studied yet or have come due for another pass. Studying drains the bars as the scheduler pushes those cards further out.")
+            infoSection(L("The bars")) {
+                infoBody(L("Four vertical bars track how much of this deck still needs attention. Each bar represents roughly a quarter of your cards — bars fill as cards stack up that haven't been studied yet or have come due for another pass. Studying drains the bars as the scheduler pushes those cards further out."))
             }
-            infoSection("\"New\"") {
-                infoBody("\"New\" appears when you haven't reviewed any card in this deck yet. All four bars are filled because the entire deck is pending — tap Play to start a session and the bars retreat as you grade cards.")
+            infoSection(L("\"New\"")) {
+                infoBody(L("\"New\" appears when you haven't reviewed any card in this deck yet. All four bars are filled because the entire deck is pending — tap Play to start a session and the bars retreat as you grade cards."))
             }
-            infoSection("\"Up to date\"") {
-                infoBody("\"Up to date\" appears when no cards are currently due and you've already studied every card at least once — all four bars sit empty. Come back later and bars will refill as cards reappear on their schedule.")
+            infoSection(L("\"Up to date\"")) {
+                infoBody(L("\"Up to date\" appears when no cards are currently due and you've already studied every card at least once — all four bars sit empty. Come back later and bars will refill as cards reappear on their schedule."))
             }
-            infoSection("Clearing the bars") {
-                infoBody("Tap the Play button at the top of this deck to start a flashcard session. The bars update after each session as the scheduler reshuffles your cards.")
+            infoSection(L("Clearing the bars")) {
+                infoBody(L("Tap the Play button at the top of this deck to start a flashcard session. The bars update after each session as the scheduler reshuffles your cards."))
             }
         }
     }
@@ -1698,8 +1716,8 @@ struct TargetRetentionInfoSheet: View {
     }
 
     var body: some View {
-        InfoExplainerSheet(title: "Target retention") {
-            infoSection("Current") {
+        InfoExplainerSheet(title: L("Target retention")) {
+            infoSection(L("Current")) {
                 HStack(alignment: .center) {
                     Text(percentLabel)
                         .font(.system(size: 28, weight: .medium))
@@ -1725,17 +1743,17 @@ struct TargetRetentionInfoSheet: View {
                     .clipShape(Capsule())
                 }
             }
-            infoSection("What it means") {
-                infoBody("Target retention is the probability you want to remember each card when it next comes up for review. At 90%, you're accepting that roughly 1 in 10 cards will be forgotten by the time they're reviewed — the scheduler aims for exactly that hit rate.")
+            infoSection(L("What it means")) {
+                infoBody(L("Target retention is the probability you want to remember each card when it next comes up for review. At 90%, you're accepting that roughly 1 in 10 cards will be forgotten by the time they're reviewed — the scheduler aims for exactly that hit rate."))
             }
-            infoSection("How it affects scheduling") {
-                infoBody("Higher percentages tighten the schedule — cards return sooner so you forget fewer, but you'll study more often. Lower percentages stretch the intervals between reviews so you study less, at the cost of forgetting more cards along the way.")
+            infoSection(L("How it affects scheduling")) {
+                infoBody(L("Higher percentages tighten the schedule — cards return sooner so you forget fewer, but you'll study more often. Lower percentages stretch the intervals between reviews so you study less, at the cost of forgetting more cards along the way."))
             }
-            infoSection("Range") {
-                infoBody("Choose between 80% and 98%. 90% is the default and the value Anki recommends for most learners — a balanced trade-off between study load and retention.")
+            infoSection(L("Range")) {
+                infoBody(L("Choose between 80% and 98%. 90% is the default and the value Anki recommends for most learners — a balanced trade-off between study load and retention."))
             }
-            infoSection("When to change it") {
-                infoBody("Nudge it up if too many cards feel unfamiliar when they reappear. Bring it down if you feel buried in daily reviews and can afford to forget a few more.")
+            infoSection(L("When to change it")) {
+                infoBody(L("Nudge it up if too many cards feel unfamiliar when they reappear. Bring it down if you feel buried in daily reviews and can afford to forget a few more."))
             }
         }
     }
@@ -1765,9 +1783,9 @@ private struct ArtifactReaderSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Picker("View", selection: $isInterleaved) {
-                        Text("Story").tag(false)
-                        Text("Line by line").tag(true)
+                    Picker(L("View"), selection: $isInterleaved) {
+                        Text(L("Story")).tag(false)
+                        Text(L("Line by line")).tag(true)
                     }
                     .pickerStyle(.segmented)
                     .padding(.horizontal)
@@ -1777,7 +1795,7 @@ private struct ArtifactReaderSheet: View {
 
                     if let prompt = artifact.userPrompt, !prompt.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("You asked for")
+                            Text(L("You asked for"))
                                 .font(.system(size: 11, weight: .semibold))
                                 .tracking(0.8)
                                 .foregroundStyle(.secondary)
@@ -1795,11 +1813,11 @@ private struct ArtifactReaderSheet: View {
                 }
                 .padding(.vertical, 16)
             }
-            .navigationTitle(artifact.resolvedKind.rawValue)
+            .navigationTitle(L(artifact.resolvedKind.rawValue))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                 }
             }
         }
@@ -1834,104 +1852,5 @@ private struct ArtifactReaderSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-}
-
-// Wraps a deck-list row with iOS-style swipe-to-delete. Swiping left
-// reveals a red trash action; a short swipe snaps it open (tap the trash
-// or tap the row to close), and a long swipe commits the delete outright.
-// The gesture only engages on horizontal travel, so the parent's vertical
-// ScrollView and tab-swipe keep working. Because it's an inner gesture, a
-// swipe that starts on a row takes precedence over the tab-swipe.
-private struct SwipeToDeleteRow<Content: View>: View {
-    let onDelete: () -> Void
-    @ViewBuilder let content: Content
-
-    // Settled position (0 = closed, -buttonWidth = open). Live drag is
-    // layered on top via `dragTranslation`.
-    @State private var settledOffset: CGFloat = 0
-    @GestureState private var dragTranslation: CGFloat = 0
-
-    private let buttonWidth: CGFloat = 76
-    private let openSnap: CGFloat = 76
-    // Past this much left-travel, releasing commits the delete instead of
-    // just snapping open.
-    private let commitThreshold: CGFloat = 200
-
-    private var offset: CGFloat {
-        // Clamp: never past-closed to the right, cap the rubber-band left.
-        min(max(settledOffset + dragTranslation, -commitThreshold - 40), 0)
-    }
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            // Trash action, revealed behind the sliding content.
-            Button {
-                commitDelete()
-            } label: {
-                Image(systemName: "trash.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: buttonWidth)
-                    .frame(maxHeight: .infinity)
-                    .background(Color.red)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-            .buttonStyle(.plain)
-            .opacity(offset < -2 ? 1 : 0)
-
-            content
-                // Opaque page-matched background so the trash stays hidden
-                // until the row slides.
-                .background(Color(libraryHex: "F4F4F4"))
-                .offset(x: offset)
-                // When open, a tap anywhere on the row closes it rather
-                // than falling through to the row's own tap handlers.
-                .overlay {
-                    if settledOffset < 0 {
-                        Color.black.opacity(0.0001)
-                            .contentShape(Rectangle())
-                            .onTapGesture { close() }
-                    }
-                }
-                .highPriorityGesture(swipeGesture)
-        }
-        .clipped()
-    }
-
-    private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 14)
-            .updating($dragTranslation) { value, state, _ in
-                // Only track clearly horizontal movement so vertical
-                // scrolling passes through to the ScrollView untouched.
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                state = value.translation.width
-            }
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let projected = settledOffset + value.translation.width
-                if projected <= -commitThreshold {
-                    commitDelete()
-                } else if projected <= -openSnap / 2 {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-                        settledOffset = -openSnap
-                    }
-                } else {
-                    close()
-                }
-            }
-    }
-
-    private func close() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-            settledOffset = 0
-        }
-    }
-
-    private func commitDelete() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-            settledOffset = 0
-        }
-        onDelete()
     }
 }

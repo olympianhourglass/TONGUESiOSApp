@@ -24,14 +24,14 @@ struct OnboardingLoginView: View {
             Spacer()
 
             VStack(spacing: 12) {
-                Text(isSignIn ? "Welcome back" : "Almost there")
+                Text(L(isSignIn ? "Welcome back" : "Almost there"))
                     .font(.custom("PlayfairDisplay-Regular", size: 36))
                     .tracking(-2.88)
                     .foregroundStyle(.black)
 
-                Text(isSignIn
+                Text(L(isSignIn
                      ? "Sign in to pick up where you left off."
-                     : "Sign in to save your decks and progress.")
+                     : "Sign in to save your decks and progress."))
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -68,7 +68,7 @@ struct OnboardingLoginView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "g.circle.fill")
                             .font(.system(size: 17))
-                        Text("Continue with Google")
+                        Text(L("Continue with Google"))
                             .font(.system(size: 16, weight: .semibold))
                     }
                     .foregroundStyle(.black)
@@ -84,19 +84,19 @@ struct OnboardingLoginView: View {
                 // Divider
                 HStack(spacing: 12) {
                     Rectangle().fill(Color(white: 0.85)).frame(height: 1)
-                    Text("or")
+                    Text(L("or"))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                     Rectangle().fill(Color(white: 0.85)).frame(height: 1)
                 }
                 .padding(.vertical, 4)
 
-                tertiaryButton(title: "Continue with Phone", systemImage: "phone.fill") {
+                tertiaryButton(title: L("Continue with Phone"), systemImage: "phone.fill") {
                     Haptics.light()
                     showPhoneSheet = true
                 }
 
-                tertiaryButton(title: "Continue with Email", systemImage: "envelope.fill") {
+                tertiaryButton(title: L("Continue with Email"), systemImage: "envelope.fill") {
                     Haptics.light()
                     showEmailSheet = true
                 }
@@ -117,7 +117,7 @@ struct OnboardingLoginView: View {
             // and turns each into a tappable Link with the environment's
             // accent color. Both point at the canonical mytongues.com
             // legal pages.
-            Text("By continuing, you agree to our [Terms of Service](https://www.mytongues.com/terms.html) and [Privacy Policy](https://www.mytongues.com/privacy.html).")
+            Text(termsAttributed)
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -141,23 +141,30 @@ struct OnboardingLoginView: View {
             .presentationDetents([.medium, .large])
         }
         .alert(
-            "Couldn't save your answers",
+            L("Couldn't save your answers"),
             isPresented: saveErrorBinding,
             presenting: onboardingSaveError
         ) { _ in
-            Button("Try again") {
+            Button(L("Try again")) {
                 onboardingSaveError = nil
                 Task { await finishIfAuthenticated() }
             }
-            Button("Continue anyway", role: .cancel) {
+            Button(L("Continue anyway"), role: .cancel) {
                 // User explicitly chose to enter the app without
                 // persisted onboarding — clear the error and proceed.
                 onboardingSaveError = nil
                 onComplete()
             }
         } message: { message in
-            Text("We hit a problem saving your onboarding answers: \(message)\n\nYou can retry, or continue into the app — you may need to set your language preferences manually.")
+            Text(L("We hit a problem saving your onboarding answers: %@\n\nYou can retry, or continue into the app — you may need to set your language preferences manually.", message))
         }
+    }
+
+    // Localized terms/privacy line, parsed as markdown so the [label](url)
+    // links stay tappable (Text(String) would render them verbatim).
+    private var termsAttributed: AttributedString {
+        let s = L("By continuing, you agree to our [Terms of Service](https://www.mytongues.com/terms.html) and [Privacy Policy](https://www.mytongues.com/privacy.html).")
+        return (try? AttributedString(markdown: s)) ?? AttributedString(s)
     }
 
     private var saveErrorBinding: Binding<Bool> {
@@ -248,14 +255,14 @@ struct EmailAuthSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 20) {
                 Picker("Mode", selection: $mode) {
-                    Text("Sign In").tag(Mode.signIn)
-                    Text("Create Account").tag(Mode.signUp)
+                    Text(L("Sign In")).tag(Mode.signIn)
+                    Text(L("Create Account")).tag(Mode.signUp)
                 }
                 .pickerStyle(.segmented)
                 .padding(.top, 4)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("Email", text: $email)
+                    TextField(L("Email"), text: $email)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.emailAddress)
@@ -266,7 +273,7 @@ struct EmailAuthSheet: View {
                         .padding(14)
                         .overlay(Capsule().stroke(Color(white: 0.85)))
 
-                    SecureField("Password", text: $password)
+                    SecureField(L("Password"), text: $password)
                         .textContentType(mode == .signUp ? .newPassword : .password)
                         .submitLabel(.go)
                         .focused($focusedField, equals: .password)
@@ -291,7 +298,7 @@ struct EmailAuthSheet: View {
                         if isWorking {
                             ProgressView().tint(.white)
                         } else {
-                            Text(mode == .signIn ? "Sign In" : "Create Account")
+                            Text(L(mode == .signIn ? "Sign In" : "Create Account"))
                                 .font(.system(size: 17, weight: .semibold))
                         }
                     }
@@ -306,11 +313,11 @@ struct EmailAuthSheet: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
-            .navigationTitle(mode == .signIn ? "Sign In" : "Create Account")
+            .navigationTitle(L(mode == .signIn ? "Sign In" : "Create Account"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    Button(L("Cancel")) {
                         auth.lastError = nil
                         dismiss()
                     }
@@ -380,7 +387,7 @@ struct PhoneAuthSheet: View {
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 20) {
-                Text(step == .phone ? "Enter your phone number" : "Enter the code we sent")
+                Text(L(step == .phone ? "Enter your phone number" : "Enter the code we sent"))
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
                     .padding(.top, 4)
@@ -408,7 +415,7 @@ struct PhoneAuthSheet: View {
                         .onSubmit { Task { await verifyCode() } }
                         .padding(14)
                         .overlay(Capsule().stroke(Color(white: 0.85)))
-                    Button("Use a different number") {
+                    Button(L("Use a different number")) {
                         auth.lastError = nil
                         code = ""
                         verificationID = nil
@@ -441,7 +448,7 @@ struct PhoneAuthSheet: View {
                         if isWorking {
                             ProgressView().tint(.white)
                         } else {
-                            Text(step == .phone ? "Send code" : "Verify")
+                            Text(L(step == .phone ? "Send code" : "Verify"))
                                 .font(.system(size: 17, weight: .semibold))
                         }
                     }
@@ -456,11 +463,11 @@ struct PhoneAuthSheet: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 16)
-            .navigationTitle("Sign in with phone")
+            .navigationTitle(L("Sign in with phone"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") {
+                    Button(L("Cancel")) {
                         auth.lastError = nil
                         dismiss()
                     }

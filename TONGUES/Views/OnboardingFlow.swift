@@ -136,6 +136,10 @@ struct OnboardingFlow: View {
                 }
             }
         }
+        // Onboarding surfaces are light, so force black status-bar content
+        // for the whole flow; clear it when onboarding hands off to the app.
+        .onAppear { AppTabRouter.shared.forceDarkStatusBar = true }
+        .onDisappear { AppTabRouter.shared.forceDarkStatusBar = false }
     }
 
     private let totalQuestions = 9
@@ -151,16 +155,16 @@ struct OnboardingFlow: View {
     private func questionContent(for n: Int) -> OnboardingQuestion {
         // Per-language questions read the user's top-priority language from Q3
         // so the prompts feel personal. Fall back to a neutral phrase if none.
-        let topLanguage = state.languagePreferences.first?.language ?? "this language"
+        let topLanguage = state.languagePreferences.first?.language ?? L("this language")
         switch n {
         case 1:
             return OnboardingQuestion(
-                title: "What should we call you?",
+                title: L("What should we call you?"),
                 kind: .freeText(placeholder: "Your name")
             )
         case 4:
             return OnboardingQuestion(
-                title: "What's pulling you towards \(topLanguage)?",
+                title: L("What's pulling you towards %@?", topLanguage),
                 kind: .options([
                     "Travel",
                     "Someone I love",
@@ -172,7 +176,7 @@ struct OnboardingFlow: View {
             )
         case 5:
             return OnboardingQuestion(
-                title: "When you picture yourself speaking fluently, where are you?",
+                title: L("When you picture yourself speaking fluently, where are you?"),
                 kind: .options([
                     "A café abroad",
                     "A family dinner",
@@ -183,7 +187,7 @@ struct OnboardingFlow: View {
             )
         case 6:
             return OnboardingQuestion(
-                title: "What would you most love to understand right now in \(topLanguage)?",
+                title: L("What would you most love to understand right now in %@?", topLanguage),
                 kind: .options([
                     "A song's lyrics",
                     "A conversation around me",
@@ -194,7 +198,7 @@ struct OnboardingFlow: View {
             )
         case 7:
             return OnboardingQuestion(
-                title: "Did you grow up around \(topLanguage)?",
+                title: L("Did you grow up around %@?", topLanguage),
                 kind: .options([
                     "Yes, I understand more than I can speak",
                     "A little in my family",

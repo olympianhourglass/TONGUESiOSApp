@@ -320,9 +320,9 @@ struct StudyView: View {
                     }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    quickActionMenuButton(.camera, "Camera", "camera")
-                    quickActionMenuButton(.conversation, "Conversation", "bubble.left.and.bubble.right")
-                    quickActionMenuButton(.direct, "Direct", "character.bubble")
+                    quickActionMenuButton(.camera, L("Camera"), "camera")
+                    quickActionMenuButton(.conversation, L("Conversation"), "bubble.left.and.bubble.right")
+                    quickActionMenuButton(.direct, L("Direct"), "character.bubble")
                 }
                 .padding(.leading, max(0, pillLeftX))
                 // Sit 12pt above the pill's top edge.
@@ -471,7 +471,7 @@ struct StudyView: View {
         VStack(alignment: .leading, spacing: 32) {
             if !recentlyAdded.isEmpty {
                 DeckHScrollSection(
-                    title: "Recently Added",
+                    title: L("Recently Added"),
                     decks: recentlyAdded,
                     urgencies: vm.urgencies,
                     onTap: { deck in
@@ -491,7 +491,7 @@ struct StudyView: View {
 
             if !highPriority.isEmpty {
                 DeckHScrollSection(
-                    title: "High Priority",
+                    title: L("High Priority"),
                     decks: highPriority,
                     urgencies: vm.urgencies,
                     onTap: { deck in
@@ -511,7 +511,7 @@ struct StudyView: View {
 
             if !keepItFresh.isEmpty {
                 DeckGridSection(
-                    title: "Keep it Fresh",
+                    title: L("Keep it Fresh"),
                     decks: keepItFresh,
                     urgencies: vm.urgencies,
                     onTap: { deck in
@@ -552,9 +552,8 @@ struct FeaturedDeckHeader: View {
             // button's hit area. Hitting the rest of the featured card
             // still pushes the deck detail.
             HStack(alignment: .center) {
-                Text("STUDY")
-                    .font(.custom("PlayfairDisplay-Regular", size: 20))
-                    .tracking(-1.6)
+                Text(L("STUDY"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 20))
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: true, vertical: false)
                     // Playfair's Y has serifs that fall outside
@@ -596,7 +595,7 @@ struct FeaturedDeckHeader: View {
                             .foregroundStyle(.white)
                             .lineLimit(1)
                         Spacer()
-                        Text("\(deck.items.count) Items")
+                        Text(L("%d Items", deck.items.count))
                             .foregroundStyle(.white)
                     }
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
@@ -614,7 +613,7 @@ struct FeaturedDeckHeader: View {
                 .padding(.horizontal, 8)
 
             HStack {
-                Text("Active")
+                Text(L("Active"))
                     .font(.custom("NeueHaasDisplay-Light", size: 16))
                     .foregroundStyle(.white)
 
@@ -622,7 +621,7 @@ struct FeaturedDeckHeader: View {
 
                 Button(action: onBeginSession) {
                     HStack(spacing: 8) {
-                        Text("Begin Session")
+                        Text(L("Begin Session"))
                             .font(.custom("NeueHaasDisplay-Light", size: 16))
                         Image(systemName: "arrow.right")
                             .font(.system(size: 14))
@@ -715,9 +714,8 @@ struct FeaturedCardImage: View {
 struct SeedingStudyHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            Text("STUDY")
-                .font(.custom("PlayfairDisplay-Regular", size: 20))
-                .tracking(-1.6)
+            Text(L("STUDY"))
+                .font(.custom("NeueHaasDisplay-Light", size: 20))
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: true, vertical: false)
 
@@ -725,12 +723,12 @@ struct SeedingStudyHeader: View {
                 HStack(spacing: 10) {
                     ProgressView()
                         .tint(.white)
-                    Text("Setting up your first decks…")
+                    Text(L("Setting up your first decks…"))
                         .font(.custom("NeueHaasDisplay-Light", size: 28))
                         .foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("We're building a few starter decks from your interests. They'll appear here in a moment.")
+                Text(L("We're building a few starter decks from your interests. They'll appear here in a moment."))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
@@ -752,9 +750,8 @@ struct EmptyStudyHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .center) {
-                Text("STUDY")
-                    .font(.custom("PlayfairDisplay-Regular", size: 20))
-                    .tracking(-1.6)
+                Text(L("STUDY"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 20))
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.trailing, 4)
@@ -774,10 +771,10 @@ struct EmptyStudyHeader: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("No decks yet")
+                Text(L("No decks yet"))
                     .font(.custom("NeueHaasDisplay-Light", size: 28))
                     .foregroundStyle(.white)
-                Text("Tap “Create new deck” below to start.")
+                Text(L("Tap “Create new deck” below to start."))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white.opacity(0.7))
             }
@@ -993,7 +990,16 @@ struct DeckMiniCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .aspectRatio(200.0 / 244.0, contentMode: .fit)
-            .background(Color(white: 0.94))
+            // Subtle top-to-bottom gradient: a slightly darker gray up top
+            // easing to a lighter (but still off-white) gray at the bottom,
+            // for a bit of airiness and top/bottom distinction.
+            .background(
+                LinearGradient(
+                    colors: [Color(white: 0.93), Color(white: 0.975)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
@@ -1023,7 +1029,7 @@ struct CreateNewDeckButton: View {
         HStack(spacing: 8) {
             Image(systemName: "plus")
                 .font(.system(size: 18, weight: .semibold))
-            Text("Create new deck")
+            Text(L("Create new deck"))
                 .font(.custom("NeueHaasDisplay-Light", size: 17))
         }
         .foregroundStyle(.white)

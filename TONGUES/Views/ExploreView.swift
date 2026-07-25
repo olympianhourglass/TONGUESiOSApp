@@ -197,7 +197,7 @@ struct ExploreView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "map")
                         .font(.system(size: 11))
-                    Text(activePlan == nil ? "GUIDED PLAN" : "TODAY")
+                    Text(L(activePlan == nil ? "GUIDED PLAN" : "TODAY"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                         // "TODAY" reads with normal tracking; the empty-state
                         // "GUIDED PLAN" label keeps its wider letter-spacing.
@@ -219,7 +219,7 @@ struct ExploreView: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
-                            Text("Plan complete 🎉")
+                            Text(L("Plan complete 🎉"))
                                 .font(.custom("NeueHaasDisplay-Mediu", size: 17))
                                 .foregroundStyle(.black)
                             Text(plan.goalStatement)
@@ -229,10 +229,10 @@ struct ExploreView: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Get a guided plan")
+                        Text(L("Get a guided plan"))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 17))
                             .foregroundStyle(.black)
-                        Text("Your tutor builds a unit-by-unit path from your goals and what you keep forgetting.")
+                        Text(L("Your tutor builds a unit-by-unit path from your goals and what you keep forgetting."))
                             .font(.custom("NeueHaasDisplay-Light", size: 13))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -283,13 +283,13 @@ struct ExploreView: View {
     private func todaySubtitle(plan: CurriculumPlan, unit: CurriculumUnit) -> String {
         var parts: [String] = []
         if dueCardCount > 0 {
-            parts.append("\(dueCardCount) cards due")
+            parts.append(L("%d cards due", dueCardCount))
         }
         if let next = unit.plannedActivities.first(where: { $0.completedAt == nil }) {
-            parts.append("Next: \(next.label)")
+            parts.append(L("Next: %@", next.label))
         }
         if parts.isEmpty {
-            parts.append("Keep reviewing — \(Int((unit.masteryGate.matureFraction * 100).rounded()))% mastery unlocks the next unit")
+            parts.append(L("Keep reviewing — %d%% mastery unlocks the next unit", Int((unit.masteryGate.matureFraction * 100).rounded())))
         }
         return parts.joined(separator: " · ")
     }
@@ -298,15 +298,9 @@ struct ExploreView: View {
 
     private var header: some View {
         HStack(alignment: .center) {
-            Text("EXPLORE")
-                .font(.custom("PlayfairDisplay-Regular", size: 20))
-                .tracking(-1.6)
+            Text(L("EXPLORE"))
+                .font(.custom("NeueHaasDisplay-Light", size: 20))
                 .foregroundStyle(.black)
-                // Playfair Display's trailing serifs extend past the
-                // glyph's advance width; negative tracking + .fixedSize on
-                // the HStack neighbors clip them. A small trailing
-                // padding reserves room for the serif on the final E.
-                .padding(.trailing, 4)
             Spacer()
             if isCrownPaywallSurfaced {
                 Button {
@@ -339,7 +333,7 @@ struct ExploreView: View {
                 showLanguageFilter = true
             } label: {
                 HStack(spacing: 6) {
-                    Text("Language: \(filterLabel)")
+                    Text(L("Language: %@", filterLabel))
                         .font(.custom("NeueHaasDisplay-Light", size: 15))
                         .foregroundStyle(.secondary)
                     Image(systemName: "chevron.down")
@@ -365,16 +359,16 @@ struct ExploreView: View {
     }
 
     private var filterLabel: String {
-        if languageFilter.isEmpty { return "All" }
+        if languageFilter.isEmpty { return L("All") }
         if languageFilter.count == 1, let only = languageFilter.first { return only }
-        return "\(languageFilter.count) selected"
+        return L("%d selected", languageFilter.count)
     }
 
     // MARK: Cultural Insight Card
 
     private var culturalInsightCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("CULTURAL INSIGHT")
+            Text(L("CULTURAL INSIGHT"))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 13))
                 .foregroundStyle(.white)
 
@@ -393,9 +387,9 @@ struct ExploreView: View {
                     if let fact = culturalInsightFact {
                         Text(fact)
                     } else if isLoadingCulturalInsight {
-                        Text("Finding something interesting nearby…")
+                        Text(L("Finding something interesting nearby…"))
                     } else {
-                        Text("Add a destination to your profile to see a cultural insight here.")
+                        Text(L("Add a destination to your profile to see a cultural insight here."))
                     }
                 }
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
@@ -421,7 +415,7 @@ struct ExploreView: View {
                                 .controlSize(.mini)
                                 .tint(.white)
                         }
-                        Text("Get new insight")
+                        Text(L("Get new insight"))
                             .font(.custom("NeueHaasDisplay-Light", size: 14))
                             .foregroundStyle(.white)
                     }
@@ -442,7 +436,7 @@ struct ExploreView: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: savedCulturalInsight ? "bookmark.fill" : "bookmark")
-                            Text(savedCulturalInsight ? "Saved" : "Save")
+                            Text(L(savedCulturalInsight ? "Saved" : "Save"))
                                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                         }
                         .foregroundStyle(.white)
@@ -475,7 +469,7 @@ struct ExploreView: View {
 
     private var topicsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("You might like these topics:")
+            Text(L("You might like these topics:"))
                 .font(.custom("NeueHaasDisplay-Light", size: 18))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
@@ -522,10 +516,10 @@ struct ExploreView: View {
             VStack(spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
                     HStack(spacing: 4) {
-                        Text(preset.languageDisplay)
+                        Text(shortLanguageLabel(preset.language))
                             .font(.custom("NeueHaasDisplay-Light", size: 15))
                             .foregroundStyle(.black)
-                        Text(preset.level)
+                        Text(L(preset.level))
                             .font(.custom("NeueHaasDisplay-Light", size: 15))
                             .foregroundStyle(.secondary)
                     }
@@ -554,7 +548,16 @@ struct ExploreView: View {
                 Spacer(minLength: 0)
             }
             .frame(width: 220, height: 230)
-            .background(Color(white: 0.94))
+            // Subtle top-to-bottom gradient (darker gray up top → lighter,
+            // still off-white, at the bottom) for a more airy card, matching
+            // the Study tab's cards.
+            .background(
+                LinearGradient(
+                    colors: [Color(white: 0.93), Color(white: 0.975)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             // Title / count + add
@@ -564,7 +567,7 @@ struct ExploreView: View {
                         .font(.custom("NeueHaasDisplay-Light", size: 22))
                         .foregroundStyle(.black)
                         .lineLimit(1)
-                    Text("100 words")
+                    Text(L("100 words"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -634,7 +637,7 @@ struct ExploreView: View {
     // action once we have that flow.
     private var publicDecksSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Decks Others Have Made")
+            Text(L("Decks Others Have Made"))
                 .font(.custom("NeueHaasDisplay-Light", size: 18))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
@@ -658,7 +661,7 @@ struct ExploreView: View {
     // Card style is shared with `publicDecksSection` for consistency.
     private var decksOthersHaveCreatedSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Decks Others Have Created")
+            Text(L("Decks Others Have Created"))
                 .font(.custom("NeueHaasDisplay-Light", size: 18))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
@@ -683,7 +686,7 @@ struct ExploreView: View {
                         Text(shortLanguageLabel(deck.language))
                             .font(.custom("NeueHaasDisplay-Light", size: 15))
                             .foregroundStyle(.black)
-                        Text(deck.level)
+                        Text(L(deck.level))
                             .font(.custom("NeueHaasDisplay-Light", size: 15))
                             .foregroundStyle(.secondary)
                     }
@@ -712,7 +715,16 @@ struct ExploreView: View {
                 Spacer(minLength: 0)
             }
             .frame(width: 220, height: 230)
-            .background(Color(white: 0.94))
+            // Subtle top-to-bottom gradient (darker gray up top → lighter,
+            // still off-white, at the bottom) for a more airy card, matching
+            // the Study tab's cards.
+            .background(
+                LinearGradient(
+                    colors: [Color(white: 0.93), Color(white: 0.975)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             HStack(alignment: .center) {
@@ -735,13 +747,17 @@ struct ExploreView: View {
     // Compact "Mandarin" / "Cantonese" form for crowded card headers —
     // same logic as TopicPreset.languageDisplay but operating on a
     // raw string. Falls back to the original when there's no paren.
+    @MainActor
     private func shortLanguageLabel(_ language: String) -> String {
+        // Keep the compact form (the parenthetical qualifier, e.g.
+        // "Mandarin") but localize it; bare names get the full localized
+        // language name.
         if let open = language.firstIndex(of: "("),
            let close = language.firstIndex(of: ")"),
            open < close {
-            return String(language[language.index(after: open)..<close])
+            return L(String(language[language.index(after: open)..<close]))
         }
-        return language
+        return localizedLanguageName(language)
     }
 
     @MainActor
@@ -848,7 +864,7 @@ struct ExploreView: View {
 
     private var languagesNearYouSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Languages Based on Where You Are")
+            Text(L("Languages Based on Where You Are"))
                 .font(.custom("NeueHaasDisplay-Light", size: 18))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
@@ -875,7 +891,7 @@ struct ExploreView: View {
         let speakers = totalSpeakers(for: pref.language)
         let isAdded = addedNearbyLanguages.contains(pref.language)
         return VStack(alignment: .leading, spacing: 6) {
-            Text(pref.language)
+            Text(localizedLanguageName(pref.language))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.black)
                 .lineLimit(1)
@@ -894,7 +910,7 @@ struct ExploreView: View {
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .center) {
-                Text(isAdded ? "Added" : "Add Language")
+                Text(L(isAdded ? "Added" : "Add Language"))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(isAdded ? Color.secondary : Color.black)
                 Spacer()
@@ -936,7 +952,7 @@ struct ExploreView: View {
 
     private var destinationLanguagesSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Languages Based on Where You Want to Go")
+            Text(L("Languages Based on Where You Want to Go"))
                 .font(.custom("NeueHaasDisplay-Light", size: 18))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
@@ -957,7 +973,7 @@ struct ExploreView: View {
 
     private var adjacentLanguagesSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Languages from Adjacent Countries")
+            Text(L("Languages from Adjacent Countries"))
                 .font(.custom("NeueHaasDisplay-Light", size: 18))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
@@ -1092,11 +1108,11 @@ private struct LanguageFilterSheet: View {
         NavigationStack {
             List {
                 Section {
-                    row(label: "All", isOn: selection.isEmpty) {
+                    row(label: L("All"), isOn: selection.isEmpty) {
                         selection.removeAll()
                     }
                 }
-                Section("Your languages") {
+                Section(L("Your languages")) {
                     ForEach(languages, id: \.self) { language in
                         row(label: language, isOn: selection.contains(language)) {
                             if selection.contains(language) {
@@ -1108,11 +1124,11 @@ private struct LanguageFilterSheet: View {
                     }
                 }
             }
-            .navigationTitle("Filter by language")
+            .navigationTitle(L("Filter by language"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                         .tint(.black)
                 }
             }

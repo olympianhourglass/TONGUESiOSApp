@@ -125,51 +125,52 @@ struct LargeBodyTextPage: View {
 
     // MARK: Attributes
 
+    // Horizontal scroll so wide "label + selection" chips never push past
+    // the screen bounds (or skew the rest of the page wider). The leftmost
+    // chip inherits the parent VStack's 8pt leading inset.
     private var attributesSection: some View {
-        HStack(alignment: .top, spacing: 12) {
-            attribute(.language, value: language)
-            attribute(.dialect, value: dialect)
-            Spacer(minLength: 0)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .center, spacing: 10) {
+                attribute(.language, value: language)
+                attribute(.dialect, value: dialect)
+            }
         }
     }
 
+    // Same glass-pill style as the Generate page: label + selection on a
+    // single line, the label in the darker medium weight and the value in
+    // a lighter opacity.
     private func attribute(_ kind: DeckAttribute, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(kind.title)
-                .font(.custom("NeueHaasDisplay-Light", size: 12))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-            Button {
-                Haptics.light()
-                onAttributeTap(kind)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(value)
-                        .font(.custom("NeueHaasDisplay-Light", size: 16))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.black.opacity(0.05)))
+        Button {
+            Haptics.light()
+            onAttributeTap(kind)
+        } label: {
+            HStack(spacing: 6) {
+                Text(L(kind.title))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                    .foregroundStyle(.black)
+                Text(localizedAttributeValue(value, for: kind))
+                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .foregroundStyle(.black.opacity(0.4))
             }
-            .buttonStyle(.plain)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .glassEffect(.regular.interactive(), in: .capsule)
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Source actions
 
     private var sourceActions: some View {
         HStack(spacing: 12) {
-            sourceButton(label: "Upload Document", icon: "doc.fill") {
+            sourceButton(label: L("Upload Document"), icon: "doc.fill") {
                 Haptics.light()
                 showFileImporter = true
             }
-            sourceButton(label: "Paste Text", icon: "doc.on.clipboard") {
+            sourceButton(label: L("Paste Text"), icon: "doc.on.clipboard") {
                 Haptics.light()
                 showPasteSheet = true
             }
@@ -221,16 +222,16 @@ struct LargeBodyTextPage: View {
     private var sourceCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Source")
+                Text(L("Source"))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
                 Spacer()
-                Text("\(sourceText.count) chars")
+                Text(L("%d chars", sourceText.count))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.secondary)
-                Button("Clear") {
+                Button(L("Clear")) {
                     Haptics.light()
                     clearSource()
                 }
@@ -289,7 +290,7 @@ struct LargeBodyTextPage: View {
     private var processingBanner: some View {
         HStack(spacing: 10) {
             ProgressView().tint(.black)
-            Text("Picking out study-worthy words…")
+            Text(L("Picking out study-worthy words…"))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.secondary)
         }
@@ -309,7 +310,7 @@ struct LargeBodyTextPage: View {
                 // Foreign-source override notice: the user's
                 // selection was ignored because the pasted text was
                 // identified as another language.
-                Text("Detected as \(extracted.resolvedLanguage) — saving picks in that language regardless of your selection.")
+                Text(L("Detected as %@ — saving picks in that language regardless of your selection.", extracted.resolvedLanguage))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(.secondary)
                     .padding(10)
@@ -320,16 +321,16 @@ struct LargeBodyTextPage: View {
                     )
             }
             HStack {
-                Text(extracted.direction == .fromEnglish ? "Translated picks" : "Picks to study")
+                Text(L(extracted.direction == .fromEnglish ? "Translated picks" : "Picks to study"))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
                 Spacer()
-                Text("\(selectedItemIDs.count) / \(extracted.items.count) selected")
+                Text(L("%d / %d selected", selectedItemIDs.count, extracted.items.count))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.secondary)
-                Button(allSelected(in: extracted) ? "Deselect all" : "Select all") {
+                Button(L(allSelected(in: extracted) ? "Deselect all" : "Select all")) {
                     Haptics.light()
                     if allSelected(in: extracted) {
                         selectedItemIDs.removeAll()
@@ -419,7 +420,7 @@ struct LargeBodyTextPage: View {
     private var saveActions: some View {
         HStack(spacing: 12) {
             ActionCard(
-                title: isSavingNewDeck ? "Saving…" : "Create New Deck",
+                title: L(isSavingNewDeck ? "Saving…" : "Create New Deck"),
                 systemImage: isSavingNewDeck ? "arrow.up.circle" : "square.stack.3d.up",
                 isPrimary: false
             ) {
@@ -427,7 +428,7 @@ struct LargeBodyTextPage: View {
                 showCreateCover = true
             }
             .disabled(selectedItems.isEmpty || isSavingNewDeck)
-            ActionCard(title: "Save to Deck", systemImage: "plus.circle", isPrimary: true) {
+            ActionCard(title: L("Save to Deck"), systemImage: "plus.circle", isPrimary: true) {
                 Haptics.medium()
                 showDeckPicker = true
             }
@@ -440,13 +441,13 @@ struct LargeBodyTextPage: View {
     private func loadSourceText(_ raw: String, source: String) {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            errorText = "That \(source) was empty."
+            errorText = L("That %@ was empty.", source)
             return
         }
         let (capped, didTruncate) = clamp(trimmed, to: Self.maxInputChars)
         sourceText = capped
         truncationNotice = didTruncate
-            ? "Trimmed to the first \(Self.maxInputChars.formatted()) characters to keep the cost predictable."
+            ? L("Trimmed to the first %@ characters to keep the cost predictable.", Self.maxInputChars.formatted())
             : nil
         extracted = nil
         selectedItemIDs = []
@@ -478,14 +479,14 @@ struct LargeBodyTextPage: View {
 
             let attributes = try url.resourceValues(forKeys: [.fileSizeKey])
             if let size = attributes.fileSize, size > Self.maxUploadBytes {
-                errorText = "That file is \(formatBytes(size)). Please upload one under \(formatBytes(Self.maxUploadBytes))."
+                errorText = L("That file is %@. Please upload one under %@.", formatBytes(size), formatBytes(Self.maxUploadBytes))
                 return
             }
             let (text, kind) = try extractText(from: url)
             guard !text.isEmpty else {
                 errorText = kind == "PDF"
-                    ? "Couldn't read any text from that PDF — it may be a scan without an OCR layer."
-                    : "Couldn't read any text out of that \(kind)."
+                    ? L("Couldn't read any text from that PDF — it may be a scan without an OCR layer.")
+                    : L("Couldn't read any text out of that %@.", kind)
                 return
             }
             loadSourceText(text, source: kind)
@@ -506,7 +507,7 @@ struct LargeBodyTextPage: View {
             guard let document = PDFDocument(url: url) else {
                 throw NSError(
                     domain: "LargeBodyTextPage", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Couldn't open that PDF."]
+                    userInfo: [NSLocalizedDescriptionKey: L("Couldn't open that PDF.")]
                 )
             }
             return (extractPDF(document), "PDF")
@@ -518,7 +519,7 @@ struct LargeBodyTextPage: View {
             // Tell the user clearly instead of failing silently.
             throw NSError(
                 domain: "LargeBodyTextPage", code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Word files aren't supported yet — re-save as PDF, RTF, or plain text."]
+                userInfo: [NSLocalizedDescriptionKey: L("Word files aren't supported yet — re-save as PDF, RTF, or plain text.")]
             )
         default:
             // Plain text / .txt / unknown — try UTF-8 first.
@@ -674,11 +675,11 @@ struct PasteTextSheet: View {
                             .stroke(Color(white: 0.88), lineWidth: 1)
                     )
                 HStack {
-                    Text("\(text.count) / \(maxChars) characters")
+                    Text(L("%d / %d characters", text.count, maxChars))
                         .font(.system(size: 12))
                         .foregroundStyle(text.count > maxChars ? .red : .secondary)
                     Spacer()
-                    Button("Paste from clipboard") {
+                    Button(L("Paste from clipboard")) {
                         if let pasted = UIPasteboard.general.string {
                             Haptics.light()
                             text = pasted
@@ -689,14 +690,14 @@ struct PasteTextSheet: View {
                 }
             }
             .padding(20)
-            .navigationTitle("Paste text")
+            .navigationTitle(L("Paste text"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
+                    Button(L("Cancel")) { dismiss() }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Use") {
+                    Button(L("Use")) {
                         Haptics.medium()
                         onSubmit(text)
                     }

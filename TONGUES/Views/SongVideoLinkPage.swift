@@ -107,7 +107,7 @@ struct SongVideoLinkPage: View {
 
     private var linkField: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Paste a song or video link")
+            Text(L("Paste a song or video link"))
                 .font(.custom("NeueHaasDisplay-Light", size: 11))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
@@ -163,7 +163,7 @@ struct SongVideoLinkPage: View {
                         urlText = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                 } label: {
-                    Label("Paste", systemImage: "doc.on.clipboard")
+                    Label(L("Paste"), systemImage: "doc.on.clipboard")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(.black)
                 }
@@ -175,7 +175,7 @@ struct SongVideoLinkPage: View {
                     Haptics.medium()
                     startFetch()
                 } label: {
-                    Text(isProcessing ? "Reading…" : "Translate & Break Down")
+                    Text(L(isProcessing ? "Reading…" : "Translate & Break Down"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 14))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 18)
@@ -188,14 +188,14 @@ struct SongVideoLinkPage: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("We pull the captions or audio, then translate the whole thing and pull out study words and sentences.")
+                Text(L("We pull the captions or audio, then translate the whole thing and pull out study words and sentences."))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
                     Image(systemName: "clock")
                         .font(.system(size: 11))
-                    Text("Longer videos can take up to two minutes.")
+                    Text(L("Longer videos can take up to two minutes."))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 12))
                 }
                 .foregroundStyle(.secondary)
@@ -213,10 +213,10 @@ struct SongVideoLinkPage: View {
         HStack(alignment: .top, spacing: 12) {
             ProgressView().tint(.black)
             VStack(alignment: .leading, spacing: 4) {
-                Text("Transcribing + translating the whole thing…")
+                Text(L("Transcribing + translating the whole thing…"))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 14))
                     .foregroundStyle(.black)
-                Text("This can take up to two minutes for longer videos. You can keep this screen open.")
+                Text(L("This can take up to two minutes for longer videos. You can keep this screen open."))
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -235,7 +235,7 @@ struct SongVideoLinkPage: View {
             Image(systemName: "questionmark.circle.fill")
                 .font(.system(size: 14))
                 .foregroundStyle(.orange)
-            Text("Couldn't identify that link. Try a well-known song or a popular video — or paste the lyrics directly on the Large Body Text page.")
+            Text(L("Couldn't identify that link. Try a well-known song or a popular video — or paste the lyrics directly on the Large Body Text page."))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -252,7 +252,7 @@ struct SongVideoLinkPage: View {
 
     private func titleBanner(_ extraction: DeckGenerator.MediaLinkExtraction) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(extraction.title.isEmpty ? "Untitled" : extraction.title)
+            Text(extraction.title.isEmpty ? L("Untitled") : extraction.title)
                 .font(.custom("NeueHaasDisplay-Roman", size: 22))
                 .foregroundStyle(.black)
                 .lineLimit(2)
@@ -269,7 +269,7 @@ struct SongVideoLinkPage: View {
         HStack(spacing: 6) {
             Image(systemName: "globe")
                 .font(.system(size: 11))
-            Text("Detected: \(name)")
+            Text(L("Detected: %@", name))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 12))
         }
         .foregroundStyle(.black)
@@ -285,7 +285,7 @@ struct SongVideoLinkPage: View {
                 withAnimation(.easeInOut(duration: 0.2)) { showTranscript.toggle() }
             } label: {
                 HStack {
-                    Text("Transcript & Full Translation")
+                    Text(L("Transcript & Full Translation"))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
@@ -306,7 +306,7 @@ struct SongVideoLinkPage: View {
                         // Original transcript (the foreign language).
                         if !extraction.transcript.isEmpty {
                             transcriptBlock(
-                                label: "Original · \(extraction.resolvedLanguage)",
+                                label: L("Original · %@", extraction.resolvedLanguage),
                                 text: extraction.transcript,
                                 prominent: true
                             )
@@ -315,7 +315,7 @@ struct SongVideoLinkPage: View {
                         if !extraction.englishTranslation.isEmpty {
                             Divider()
                             transcriptBlock(
-                                label: "English translation",
+                                label: L("Translation"),
                                 text: extraction.englishTranslation,
                                 prominent: false
                             )
@@ -353,9 +353,9 @@ struct SongVideoLinkPage: View {
     // MARK: Segmented control
 
     private var segmentPicker: some View {
-        Picker("Breakdown", selection: $segment) {
+        Picker(L("Breakdown"), selection: $segment) {
             ForEach(Segment.allCases, id: \.self) { seg in
-                Text(seg.rawValue).tag(seg)
+                Text(L(seg.rawValue)).tag(seg)
             }
         }
         .pickerStyle(.segmented)
@@ -369,21 +369,21 @@ struct SongVideoLinkPage: View {
         let selection = currentSelectionBinding()
         VStack(alignment: .leading, spacing: 12) {
             if items.isEmpty {
-                Text("No \(segment.rawValue.lowercased()) found in this track.")
+                Text(L("No %@ found in this track.", L(segment.rawValue).lowercased()))
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.secondary)
             } else {
                 HStack {
-                    Text("Hardest first")
+                    Text(L("Hardest first"))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
                         .textCase(.uppercase)
                         .tracking(0.5)
                     Spacer()
-                    Text("\(selection.wrappedValue.count) / \(items.count) selected")
+                    Text(L("%d / %d selected", selection.wrappedValue.count, items.count))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
-                    Button(allSelected(items, selection.wrappedValue) ? "Deselect all" : "Select all") {
+                    Button(L(allSelected(items, selection.wrappedValue) ? "Deselect all" : "Select all")) {
                         Haptics.light()
                         if allSelected(items, selection.wrappedValue) {
                             selection.wrappedValue.removeAll()
@@ -454,7 +454,7 @@ struct SongVideoLinkPage: View {
     private var saveActions: some View {
         HStack(spacing: 12) {
             ActionCard(
-                title: isSavingNewDeck ? "Saving…" : "Create New Deck",
+                title: L(isSavingNewDeck ? "Saving…" : "Create New Deck"),
                 systemImage: isSavingNewDeck ? "arrow.up.circle" : "square.stack.3d.up",
                 isPrimary: false
             ) {
@@ -462,7 +462,7 @@ struct SongVideoLinkPage: View {
                 showCreateCover = true
             }
             .disabled(selectedItems.isEmpty || isSavingNewDeck)
-            ActionCard(title: "Save to Deck", systemImage: "plus.circle", isPrimary: true) {
+            ActionCard(title: L("Save to Deck"), systemImage: "plus.circle", isPrimary: true) {
                 Haptics.medium()
                 showDeckPicker = true
             }

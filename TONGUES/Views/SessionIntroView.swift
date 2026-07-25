@@ -123,7 +123,7 @@ struct SessionIntroView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Now Reviewing")
+            Text(L("Now Reviewing"))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.white.opacity(0.55))
             Text(deck.title)
@@ -157,7 +157,7 @@ struct SessionIntroView: View {
             // off this when it lands.
         } label: {
             HStack(spacing: 6) {
-                Text("Adjust Your Session")
+                Text(L("Adjust Your Session"))
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
                 Image(systemName: "arrow.right")
                     .font(.system(size: 12, weight: .semibold))
@@ -172,10 +172,10 @@ struct SessionIntroView: View {
 
     private var statsList: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("\(deck.language) \(deck.level)")
+            Text("\(localizedLanguageName(deck.language)) \(L(deck.level))")
                 .foregroundStyle(.white)
             HStack(spacing: 8) {
-                Text("\(learnedCount) Learned")
+                Text(L("%d Learned", learnedCount))
                     .foregroundStyle(.white.opacity(0.7))
                 Button {
                     Haptics.light()
@@ -188,7 +188,7 @@ struct SessionIntroView: View {
                 }
                 .buttonStyle(.plain)
             }
-            Text("\(remaining) Remaining")
+            Text(L("%d Remaining", remaining))
                 .foregroundStyle(.white.opacity(0.7))
         }
         .font(.custom("NeueHaasDisplay-Light", size: 15))
@@ -207,7 +207,7 @@ struct SessionIntroView: View {
                 }
             } label: {
                 HStack(spacing: 8) {
-                    Text("Begin")
+                    Text(L("Begin"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                     Image(systemName: "arrow.right")
                         .font(.system(size: 14, weight: .semibold))
@@ -261,21 +261,21 @@ private struct LearnedInfoSheet: View {
                 VStack(alignment: .leading, spacing: 22) {
                     header
 
-                    paragraph("A card moves into Learned once the spaced-repetition algorithm projects you'll still remember it at least \(thresholdDays) days from now — not just immediately after seeing the answer.")
+                    paragraph(L("A card moves into Learned once the spaced-repetition algorithm projects you'll still remember it at least %d days from now — not just immediately after seeing the answer.", thresholdDays))
 
                     section(
-                        title: "How a card graduates",
-                        body: "Each correct review pushes its memory strength up. A single Easy grade often clears the bar by itself; two Good grades a few days apart usually do too."
+                        title: L("How a card graduates"),
+                        body: L("Each correct review pushes its memory strength up. A single Easy grade often clears the bar by itself; two Good grades a few days apart usually do too.")
                     )
 
                     section(
-                        title: "How a card slips back out",
-                        body: "Marking a card Again drops its memory strength sharply. If it falls under the \(thresholdDays)-day mark, it leaves the Learned count until you rebuild it."
+                        title: L("How a card slips back out"),
+                        body: L("Marking a card Again drops its memory strength sharply. If it falls under the %d-day mark, it leaves the Learned count until you rebuild it.", thresholdDays)
                     )
 
                     section(
-                        title: "Why not just \"correct once\"",
-                        body: "Recalling something the moment after you saw the answer is recognition, not memory. Real learning is recalling it later, after you've nearly forgotten — and that's what the spacing is testing for."
+                        title: L("Why not just \"correct once\""),
+                        body: L("Recalling something the moment after you saw the answer is recognition, not memory. Real learning is recalling it later, after you've nearly forgotten — and that's what the spacing is testing for.")
                     )
                 }
                 .padding(.horizontal, 24)
@@ -288,7 +288,7 @@ private struct LearnedInfoSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("About Learned")
+            Text(L("About Learned"))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 26))
                 .foregroundStyle(.white)
         }

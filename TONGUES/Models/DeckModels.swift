@@ -188,20 +188,31 @@ enum ContentGenerationKind: String, CaseIterable, Identifiable {
         case .jokes:        return "e.g. medical school humor"
         }
     }
+
+    // Prose-style content (a story, dialogue, or article) supports reading
+    // comprehension questions. Songs, poems, and jokes are too short or too
+    // non-narrative for the three-question format to make sense.
+    var supportsComprehension: Bool {
+        switch self {
+        case .story, .conversation, .newsArticle: return true
+        case .songs, .poems, .jokes:              return false
+        }
+    }
 }
 
 enum RelationKind: String, CaseIterable, Identifiable {
-    case synonyms, antonyms, phrases, plurals, conjugations
+    case synonyms, antonyms, phrases, plurals, conjugations, similarSounding
 
     var id: String { rawValue }
 
     var pillLabel: String {
         switch self {
-        case .synonyms:     return "Add Synonyms"
-        case .antonyms:     return "Add Antonyms"
-        case .phrases:      return "Add Phrases"
-        case .plurals:      return "Add Plurals"
-        case .conjugations: return "Add Conjugations"
+        case .synonyms:        return "Add Synonyms"
+        case .antonyms:        return "Add Antonyms"
+        case .phrases:         return "Create Sentence"
+        case .plurals:         return "Add Plurals"
+        case .conjugations:    return "Add Conjugations"
+        case .similarSounding: return "Add Similar Sounding Words"
         }
     }
 
@@ -211,6 +222,7 @@ enum RelationKind: String, CaseIterable, Identifiable {
         case .antonyms:     return "antonyms (words with opposite meaning)"
         case .phrases:      return "natural phrases or short sentences that use the source word in context"
         case .plurals:      return "plural and other number inflections (e.g. singular ↔ plural; dual where the language has it)"
+        case .similarSounding: return "real, distinct words that sound similar to the source word (near-homophones whose pronunciation closely resembles it when spoken aloud), regardless of meaning — must be genuine words in the language and not the source word itself"
         case .conjugations: return "the most pedagogically useful conjugated forms of the source verb — pick the main tenses (present, past, future and any other commonly taught at this level) and the most representative person/number for each (often 1st-person singular). Where the language has aspect (Slavic), include the aspectual pair. Where the language has separable prefixes or auxiliary-based constructions (German, French passé composé, etc.), include them. Each item should be a single conjugated form, not a paragraph."
         }
     }

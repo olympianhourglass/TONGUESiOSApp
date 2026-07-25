@@ -25,7 +25,10 @@ enum AmbientCatalog {
     static let music: [AmbientTrack] = [
         AmbientTrack(id: "Ambient Music Transcend", displayName: "Transcend"),
         AmbientTrack(id: "Ambient Music Scientific", displayName: "Scientific"),
-        AmbientTrack(id: "Ambient Music Optimistic Future", displayName: "Optimistic Future")
+        AmbientTrack(id: "Ambient Music Optimistic Future", displayName: "Optimistic Future"),
+        AmbientTrack(id: "Ambient Music House 1", displayName: "House 1"),
+        AmbientTrack(id: "Ambient Music House 2", displayName: "House 2"),
+        AmbientTrack(id: "Ambient Music House 3", displayName: "House 3")
     ]
 }
 

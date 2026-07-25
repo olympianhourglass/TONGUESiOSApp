@@ -176,7 +176,9 @@ struct StatisticsView: View {
                 }
             }
             ToolbarItem(placement: .principal) {
-                TonguesWordmark(size: 18)
+                Text("TONGUES")
+                    .font(.custom("NeueHaasDisplay-Light", size: 18))
+                    .tracking(0)
                     .foregroundStyle(.white)
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -219,7 +221,7 @@ struct StatisticsView: View {
     @MainActor
     private func renderShareImage() -> UIImage? {
         let summary = overallSummary.isEmpty
-            ? "A language learner getting started on TONGUES."
+            ? L("A language learner getting started on TONGUES.")
             : overallSummary
         let card = StatisticsShareCard(
             overallSummary: summary,
@@ -237,14 +239,14 @@ struct StatisticsView: View {
     private var overallSummaryCard: some View {
         statCard {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Overall Summary")
+                Text(L("Overall Summary"))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.white.opacity(0.6))
                     .textCase(.uppercase)
                     .tracking(0.8)
 
                 Text(overallSummary.isEmpty
-                     ? "Start practicing to see your learner profile."
+                     ? L("Start practicing to see your learner profile.")
                      : overallSummary)
                     .font(.custom("NeueHaasDisplay-Light", size: 16))
                     .foregroundStyle(.white)
@@ -329,11 +331,11 @@ struct StatisticsView: View {
             if languageBreakdown.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     emphasizedLine(
-                        prefix: "Practice some flashcards to surface your ",
-                        emphasis: "preferred language",
+                        prefix: L("Practice some flashcards to surface your "),
+                        emphasis: L("preferred language"),
                         suffix: "."
                     )
-                    Text("We rank languages by how many reviews you've completed across all your decks.")
+                    Text(L("We rank languages by how many reviews you've completed across all your decks."))
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
                         .foregroundStyle(.white.opacity(0.55))
                         .fixedSize(horizontal: false, vertical: true)
@@ -341,7 +343,7 @@ struct StatisticsView: View {
             } else {
                 VStack(alignment: .leading, spacing: 16) {
                     emphasizedLine(
-                        prefix: "Your preferred language is ",
+                        prefix: L("Your preferred language is "),
                         emphasis: topLanguageName
                     )
 
@@ -396,12 +398,12 @@ struct StatisticsView: View {
         statCard {
             VStack(alignment: .leading, spacing: 6) {
                 emphasizedLine(
-                    prefix: "You've learned ",
+                    prefix: L("You've learned "),
                     emphasis: pluralized(itemsLearned, unit: learnedUnit),
                     suffix: "."
                 )
                 emphasizedLine(
-                    prefix: "Your library contains ",
+                    prefix: L("Your library contains "),
                     emphasis: pluralized(wordsInLibrary, unit: "word"),
                     suffix: "."
                 )
@@ -409,7 +411,7 @@ struct StatisticsView: View {
                 // card doesn't grow a phantom "0 sentences" line.
                 if sentencesInLibrary > 0 {
                     emphasizedLine(
-                        prefix: "Your library contains ",
+                        prefix: L("Your library contains "),
                         emphasis: pluralized(sentencesInLibrary, unit: "sentence"),
                         suffix: "."
                     )
@@ -425,14 +427,14 @@ struct StatisticsView: View {
                         .frame(height: 0.5)
                         .padding(.vertical, 8)
                     emphasizedLine(
-                        prefix: "You've added ",
+                        prefix: L("You've added "),
                         emphasis: pluralized(cardsAddedThisWeek, unit: "card"),
-                        suffix: " this week."
+                        suffix: L(" this week.")
                     )
                     emphasizedLine(
-                        prefix: "You've added ",
+                        prefix: L("You've added "),
                         emphasis: pluralized(cardsAddedThisMonth, unit: "card"),
-                        suffix: " this month."
+                        suffix: L(" this month.")
                     )
                 }
 
@@ -465,7 +467,7 @@ struct StatisticsView: View {
     }
 
     private func pluralized(_ count: Int, unit: String) -> String {
-        let label = count == 1 ? unit : "\(unit)s"
+        let label = L(count == 1 ? unit : "\(unit)s")
         return "\(StatisticsView.integerFormatter.string(from: NSNumber(value: count)) ?? "\(count)") \(label)"
     }
 
@@ -483,24 +485,24 @@ struct StatisticsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 if averageSessionSeconds > 0 {
                     emphasizedLine(
-                        prefix: "Your average session length is ",
+                        prefix: L("Your average session length is "),
                         emphasis: formattedAverageSession,
                         suffix: "."
                     )
                 } else {
                     emphasizedLine(
-                        prefix: "Start a session to surface your ",
-                        emphasis: "average session length",
+                        prefix: L("Start a session to surface your "),
+                        emphasis: L("average session length"),
                         suffix: "."
                     )
                 }
 
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Longest Session")
+                        Text(L("Longest Session"))
                             .font(.custom("NeueHaasDisplay-Light", size: 13))
                             .foregroundStyle(.white.opacity(0.7))
-                        Text("Longest Session Language")
+                        Text(L("Longest Session Language"))
                             .font(.custom("NeueHaasDisplay-Light", size: 13))
                             .foregroundStyle(.white.opacity(0.7))
                     }
@@ -517,13 +519,13 @@ struct StatisticsView: View {
 
                 if bestLearningTimeLabel.isEmpty {
                     emphasizedLine(
-                        prefix: "We'll surface your ",
-                        emphasis: "best learning time",
-                        suffix: " after a few sessions."
+                        prefix: L("We'll surface your "),
+                        emphasis: L("best learning time"),
+                        suffix: L(" after a few sessions.")
                     )
                 } else {
                     emphasizedLine(
-                        prefix: "Your best learning time is ",
+                        prefix: L("Your best learning time is "),
                         emphasis: bestLearningTimeLabel,
                         suffix: "."
                     )
@@ -681,8 +683,8 @@ struct StatisticsView: View {
                 }
 
                 HStack(spacing: 18) {
-                    legendDot(color: .white, label: "This week")
-                    legendDot(color: Color.white.opacity(0.30), label: "Last week", dashed: true)
+                    legendDot(color: .white, label: L("This week"))
+                    legendDot(color: Color.white.opacity(0.30), label: L("Last week"), dashed: true)
                     Spacer(minLength: 0)
                 }
             }
@@ -701,11 +703,11 @@ struct StatisticsView: View {
             Text(fullWeekdayLabel(forIndex: idx))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                 .foregroundStyle(.white)
-            Text("This week: \(thisXP) XP")
+            Text(L("This week: %d XP", thisXP))
                 .font(.custom("NeueHaasDisplay-Light", size: 11))
                 .foregroundStyle(.white.opacity(0.85))
             if lastXP > 0 {
-                Text("Last week: \(lastXP) XP")
+                Text(L("Last week: %d XP", lastXP))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.white.opacity(0.55))
             }
@@ -826,33 +828,33 @@ struct StatisticsView: View {
         let lastTotal = lastWeekChartData.reduce(0) { $0 + Int($1.xp) }
 
         if thisTotal == 0 && lastTotal == 0 {
-            Text("Practice this week to start building your XP trend.")
+            Text(L("Practice this week to start building your XP trend."))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: false, vertical: true)
         } else if lastTotal == 0 {
             emphasizedLine(
-                prefix: "You've earned ",
-                emphasis: "\(thisTotal) XP",
-                suffix: " this week — no baseline yet from last week."
+                prefix: L("You've earned "),
+                emphasis: L("%d XP", thisTotal),
+                suffix: L(" this week — no baseline yet from last week.")
             )
         } else if thisTotal == lastTotal {
             emphasizedLine(
-                prefix: "You're ",
-                emphasis: "matching last week's pace",
+                prefix: L("You're "),
+                emphasis: L("matching last week's pace"),
                 suffix: "."
             )
         } else if thisTotal > lastTotal {
             let percent = Int(((Double(thisTotal) - Double(lastTotal)) / Double(lastTotal) * 100).rounded())
             emphasizedLine(
-                prefix: "You are ",
-                emphasis: "outperforming last week by \(percent)%"
+                prefix: L("You are "),
+                emphasis: L("outperforming last week by %d%%", percent)
             )
         } else {
             let percent = Int(((Double(lastTotal) - Double(thisTotal)) / Double(lastTotal) * 100).rounded())
             emphasizedLine(
-                prefix: "You're ",
-                emphasis: "behind last week by \(percent)%"
+                prefix: L("You're "),
+                emphasis: L("behind last week by %d%%", percent)
             )
         }
     }
@@ -870,18 +872,18 @@ struct StatisticsView: View {
     private var dayStatisticsCard: some View {
         statCard {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Day Statistics")
+                Text(L("Day Statistics"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Optimal Learning Time:")
+                    Text(L("Optimal Learning Time:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.7))
                     Text(optimalLearningTimeLabel.isEmpty ? "—" : optimalLearningTimeLabel)
                         .font(.custom("NeueHaasDisplay-Light", size: 44))
                         .foregroundStyle(.white)
                 }
-                Text("Weighted average of the hour-of-day your reviews land correctly")
+                Text(L("Weighted average of the hour-of-day your reviews land correctly"))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.white.opacity(0.5))
             }
@@ -893,11 +895,11 @@ struct StatisticsView: View {
     private var topicsCard: some View {
         statCard {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Topics:")
+                Text(L("Topics:"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Your Favorite Topic:")
+                    Text(L("Your Favorite Topic:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.7))
                     Text(favoriteTopic.isEmpty ? "—" : favoriteTopic)
@@ -906,7 +908,7 @@ struct StatisticsView: View {
                         .lineLimit(2)
                         .minimumScaleFactor(0.6)
                 }
-                Text("Summarized from the decks you've practiced the most")
+                Text(L("Summarized from the decks you've practiced the most"))
                     .font(.custom("NeueHaasDisplay-Light", size: 11))
                     .foregroundStyle(.white.opacity(0.5))
             }
@@ -948,11 +950,11 @@ struct StatisticsView: View {
     private var learningExperienceCard: some View {
         statCard {
             VStack(alignment: .leading, spacing: 18) {
-                Text("Learning Experience:")
+                Text(L("Learning Experience:"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white)
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Preferred Learning Method:")
+                    Text(L("Preferred Learning Method:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.7))
                     Text(preferredLearningMethod)
@@ -960,7 +962,7 @@ struct StatisticsView: View {
                         .foregroundStyle(.white)
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Total Experience:")
+                    Text(L("Total Experience:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.7))
                     Text(formattedTotalXP)
@@ -1075,14 +1077,14 @@ private struct PracticeHeatmap: View {
         HStack(spacing: 0) {
             Menu {
                 ForEach(Mode.allCases) { m in
-                    Button(m.rawValue) {
+                    Button(L(m.rawValue)) {
                         mode = m
                         anchor = Date()
                     }
                 }
             } label: {
                 HStack(spacing: 6) {
-                    Text(mode.rawValue)
+                    Text(L(mode.rawValue))
                         .font(.custom("NeueHaasDisplay-Light", size: 14))
                         .foregroundStyle(.white)
                     Image(systemName: "chevron.down")
@@ -1361,7 +1363,8 @@ struct StatisticsShareCard: View {
             // Title — Playfair, generously sized so it reads as the
             // brand identifier in a feed thumbnail.
             HStack {
-                TonguesWordmark(size: 84)
+                Text("TONGUES")
+                    .font(.custom("NeueHaasDisplay-Light", size: 84))
                     .foregroundStyle(.white)
                 Spacer()
             }
@@ -1371,7 +1374,7 @@ struct StatisticsShareCard: View {
             // chrome the on-screen cards use, so the share card feels
             // like it was lifted straight from the Statistics tab.
             VStack(alignment: .leading, spacing: 18) {
-                Text("OVERALL SUMMARY")
+                Text(L("OVERALL SUMMARY"))
                     .font(.custom("NeueHaasDisplay-Light", size: 18))
                     .tracking(1.4)
                     .foregroundStyle(.white.opacity(0.6))
@@ -1398,11 +1401,11 @@ struct StatisticsShareCard: View {
             // Three-row stat block with right-aligned bold values, same
             // style as the longest-session rows in the on-screen card.
             VStack(spacing: 22) {
-                statRow(label: "Preferred Language", value: preferredLanguage)
+                statRow(label: L("Preferred Language"), value: preferredLanguage)
                 Divider().background(Color.white.opacity(0.12))
-                statRow(label: "Streak", value: "\(streakDays) \(streakDays == 1 ? "day" : "days")")
+                statRow(label: L("Streak"), value: "\(streakDays) \(L(streakDays == 1 ? "day" : "days"))")
                 Divider().background(Color.white.opacity(0.12))
-                statRow(label: "Experience", value: formattedXP)
+                statRow(label: L("Experience"), value: formattedXP)
             }
 
             // Footer wordmark in small caps so the card has the same
@@ -1457,7 +1460,7 @@ private struct SharePreviewSheet: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        Text("Preview your card. Tap Share when you're ready.")
+                        Text(L("Preview your card. Tap Share when you're ready."))
                             .font(.system(size: 14))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 24)
@@ -1488,11 +1491,11 @@ private struct SharePreviewSheet: View {
                 ShareLink(
                     item: Image(uiImage: image),
                     preview: SharePreview(
-                        "Your TONGUES stats",
+                        L("Your TONGUES stats"),
                         image: Image(uiImage: image)
                     )
                 ) {
-                    Text("Share")
+                    Text(L("Share"))
                         .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
@@ -1508,11 +1511,11 @@ private struct SharePreviewSheet: View {
                 .background(Color.white)
             }
             .background(Color.white.ignoresSafeArea())
-            .navigationTitle("Share")
+            .navigationTitle(L("Share"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Cancel") { dismiss() }
+                    Button(L("Cancel")) { dismiss() }
                 }
             }
         }

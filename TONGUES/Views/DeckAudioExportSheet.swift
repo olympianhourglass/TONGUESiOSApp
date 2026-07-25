@@ -34,40 +34,40 @@ struct DeckAudioExportSheet: View {
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
-                        Text("Download as audio")
+                        Text(L("Download as audio"))
                             .font(.custom("PlayfairDisplay-Regular", size: 28))
                             .tracking(-1.5)
                             .foregroundStyle(.black)
                             .padding(.top, 40)
 
-                        Text("Choose how the deck should sound, then download an audio file.")
+                        Text(L("Choose how the deck should sound, then download an audio file."))
                             .font(.custom("NeueHaasDisplay-Light", size: 14))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
 
                         choiceRow(
-                            "Read the native translation aloud",
-                            options: [("No", false), ("Yes", true)],
+                            L("Read the native translation aloud"),
+                            options: [(L("No"), false), (L("Yes"), true)],
                             selection: $readNative
                         )
 
                         if readNative {
                             choiceRow(
-                                "Native order",
-                                options: [("Before", true), ("After", false)],
+                                L("Native order"),
+                                options: [(L("Before"), true), (L("After"), false)],
                                 selection: $nativeBefore
                             )
                         }
 
                         choiceRow(
-                            "Seconds between words",
+                            L("Seconds between words"),
                             options: [("2", 2), ("4", 4), ("8", 8)],
                             selection: $gapSeconds
                         )
 
                         choiceRow(
-                            "Playback speed",
-                            options: [("Normal", false), ("Slower", true)],
+                            L("Playback speed"),
+                            options: [(L("Normal"), false), (L("Slower"), true)],
                             selection: $slower
                         )
                     }
@@ -85,8 +85,8 @@ struct DeckAudioExportSheet: View {
             }
             .toolbar(.hidden, for: .navigationBar)
         }
-        .alert("Export failed", isPresented: errorBinding) {
-            Button("OK") { errorText = nil }
+        .alert(L("Export failed"), isPresented: errorBinding) {
+            Button(L("OK")) { errorText = nil }
         } message: {
             Text(errorText ?? "")
         }
@@ -124,11 +124,11 @@ struct DeckAudioExportSheet: View {
             HStack(spacing: 10) {
                 if isGenerating {
                     ProgressView().tint(.white)
-                    Text("Generating… \(Int(progress * 100))%")
+                    Text(L("Generating… %d%%", Int(progress * 100)))
                 } else {
                     Image(systemName: "arrow.down.circle")
                         .font(.system(size: 18))
-                    Text("Download")
+                    Text(L("Download"))
                 }
             }
             .font(.custom("NeueHaasDisplay-Light", size: 17))

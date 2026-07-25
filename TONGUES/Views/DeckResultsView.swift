@@ -46,7 +46,7 @@ struct DeckResultsView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    Text("Showing \(items.count) \(deck.contentType.lowercased()) for:")
+                    Text(L("Showing %d %@ for:", items.count, deck.contentType.lowercased()))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .padding(.top, 8)
@@ -56,30 +56,34 @@ struct DeckResultsView: View {
                         .lineLimit(2)
 
                     HStack {
-                        Text("\(deck.language) \(deck.level)")
+                        Text("\(localizedLanguageName(deck.language)) \(L(deck.level))")
                             .font(.system(size: 15))
                             .foregroundStyle(.secondary)
                         Spacer()
                         Menu {
                             ForEach(ResultSort.allCases, id: \.self) { order in
-                                Button(order.rawValue) { sortOrder = order }
+                                Button(L(order.rawValue)) { sortOrder = order }
                             }
                         } label: {
                             HStack(spacing: 4) {
-                                Text(sortOrder.rawValue)
+                                Text(L(sortOrder.rawValue))
+                                    .font(.system(size: 13))
                                     .foregroundStyle(.black)
                                 Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: 9))
                                     .foregroundStyle(.secondary)
                             }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
                                     .stroke(Color(white: 0.85))
                             )
                         }
                     }
+                    // 40pt total gap under the title: the VStack's 18pt
+                    // spacing + 22pt here.
+                    .padding(.top, 22)
 
                     Divider()
 
@@ -122,13 +126,13 @@ struct DeckResultsView: View {
                 }
 
                 HStack(spacing: 8) {
-                    ActionCard(title: "Regenerate", systemImage: "arrow.2.circlepath", isPrimary: false) {
+                    ActionCard(title: L("Regenerate"), systemImage: "arrow.2.circlepath", isPrimary: false) {
                         Haptics.light()
                         onRegenerate()
                     }
                     .disabled(isSaving)
                     ActionCard(
-                        title: isSaving ? "Saving…" : "Create New Deck",
+                        title: isSaving ? L("Saving…") : L("Create New Deck"),
                         systemImage: isSaving ? "arrow.up.circle" : "square.stack.3d.up",
                         isPrimary: false
                     ) {
@@ -136,7 +140,7 @@ struct DeckResultsView: View {
                         showCoverCustomization = true
                     }
                     .disabled(isSaving)
-                    ActionCard(title: "Add to Deck", systemImage: "plus.circle", isPrimary: true) {
+                    ActionCard(title: L("Add to Deck"), systemImage: "plus.circle", isPrimary: true) {
                         Haptics.medium()
                         showAddToDeck = true
                     }
@@ -184,8 +188,8 @@ struct DeckResultsView: View {
             }
             .presentationDetents([.fraction(0.8), .large])
         }
-        .alert("Something went wrong", isPresented: errorBinding) {
-            Button("OK") { actionError = nil }
+        .alert(L("Something went wrong"), isPresented: errorBinding) {
+            Button(L("OK")) { actionError = nil }
         } message: {
             Text(actionError ?? "")
         }
@@ -402,11 +406,14 @@ struct ResultRow: View {
     // inflections (prepositions, conjunctions, interjections) skip the
     // fourth pill entirely.
     private var availableRelations: [RelationKind] {
-        var pills: [RelationKind] = [.synonyms, .antonyms, .phrases]
+        // The part-of-speech-specific pill — Conjugations for verbs,
+        // Plurals for nouns/adjectives/determiners — sits prominently
+        // right after Add Phrases and before Add Synonyms.
+        // "Add Similar Sounding Words" always sits last in the strip.
         if let fourth = fourthRelationKind {
-            pills.append(fourth)
+            return [.phrases, fourth, .synonyms, .antonyms, .similarSounding]
         }
-        return pills
+        return [.phrases, .synonyms, .antonyms, .similarSounding]
     }
 
     private var fourthRelationKind: RelationKind? {
@@ -457,19 +464,23 @@ struct ResultRow: View {
             }
 
             if isLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Adding…")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
+                // Preview the rows about to arrive with shimmering skeletons
+                // rather than a spinner, so the wait reads as "content is
+                // materializing here" and lines up with where the generated
+                // related items will insert.
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(0..<3, id: \.self) { index in
+                        SkeletonResultRow()
+                        if index < 2 { Divider() }
+                    }
                 }
-                .padding(.vertical, 2)
+                .padding(.top, 2)
+                .transition(.opacity)
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         Button(action: onRemove) {
-                            ActionPill(text: "Remove", style: .remove)
+                            ActionPill(text: L("Remove"), style: .remove)
                         }
                         .buttonStyle(.plain)
 
@@ -478,7 +489,7 @@ struct ResultRow: View {
                                 Button {
                                     onAddRelated(kind)
                                 } label: {
-                                    ActionPill(text: kind.pillLabel, style: .add)
+                                    ActionPill(text: L(kind.pillLabel), style: .add)
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -489,6 +500,66 @@ struct ResultRow: View {
             }
         }
         .padding(.vertical, 12)
+    }
+}
+
+// A placeholder standing in for a `ResultRow` while related items load.
+// Mirrors the real row's word / transliteration / translation stack and
+// speaker button so the incoming content settles into the same footprint.
+// Bar widths are varied per index to keep a set of placeholders from
+// looking mechanically identical.
+private struct SkeletonResultRow: View {
+    private let fill = Color(white: 0.91)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    bar(width: 130, height: 16)   // word
+                    bar(width: 66, height: 9)     // transliteration
+                    bar(width: 168, height: 13)   // translation
+                }
+                Spacer()
+                Circle()
+                    .fill(fill)
+                    .frame(width: 26, height: 26)
+            }
+        }
+        .padding(.vertical, 12)
+        .modifier(SkeletonShimmer())
+    }
+
+    private func bar(width: CGFloat, height: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(fill)
+            .frame(width: width, height: height)
+    }
+}
+
+// Sweeps a soft highlight left-to-right across its content, looping
+// forever — the shimmer that signals a skeleton placeholder is loading.
+private struct SkeletonShimmer: ViewModifier {
+    @State private var phase: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color.white.opacity(0.7), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width)
+                    .offset(x: phase * geo.size.width)
+                }
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                    phase = 1
+                }
+            }
     }
 }
 
@@ -526,7 +597,24 @@ struct ActionCard: View {
     let title: String
     let systemImage: String
     let isPrimary: Bool
+    // When true, colors are flipped for dark backgrounds (e.g. the
+    // inverted Camera page): the primary card becomes white-on-black text,
+    // the secondary card becomes an outlined white-on-dark chip.
+    var inverted: Bool = false
     let action: () -> Void
+
+    private var foreground: Color {
+        if inverted { return isPrimary ? .black : .white }
+        return isPrimary ? .white : .black
+    }
+    private var background: Color {
+        if inverted { return isPrimary ? .white : .white.opacity(0.08) }
+        return isPrimary ? .black : .white
+    }
+    private var border: Color {
+        if inverted { return isPrimary ? .clear : .white.opacity(0.3) }
+        return isPrimary ? .clear : Color(white: 0.88)
+    }
 
     var body: some View {
         Button(action: action) {
@@ -538,13 +626,13 @@ struct ActionCard: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
             }
-            .foregroundStyle(isPrimary ? .white : .black)
+            .foregroundStyle(foreground)
             .frame(maxWidth: .infinity)
             .frame(height: 92)
-            .background(isPrimary ? Color.black : Color.white)
+            .background(background)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(isPrimary ? Color.clear : Color(white: 0.88), lineWidth: 1)
+                    .stroke(border, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
@@ -560,7 +648,7 @@ struct PromptInfoSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    sectionHeader("Prompt sent to Claude")
+                    sectionHeader(L("Prompt sent to Claude"))
                     Text(deck.promptSent)
                         .font(.system(size: 13, design: .monospaced))
                         .textSelection(.enabled)
@@ -568,7 +656,7 @@ struct PromptInfoSheet: View {
 
                     Divider()
 
-                    sectionHeader("Raw JSON response")
+                    sectionHeader(L("Raw JSON response"))
                     Text(deck.rawJSON)
                         .font(.system(size: 12, design: .monospaced))
                         .textSelection(.enabled)
@@ -576,11 +664,11 @@ struct PromptInfoSheet: View {
                 }
                 .padding()
             }
-            .navigationTitle("Generation Details")
+            .navigationTitle(L("Generation Details"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                 }
             }
         }
@@ -958,7 +1046,7 @@ struct DeckCoverCustomizationSheet: View {
     // pair reads as a single toggle without a control chrome.
     private var visibilityRow: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("PUBLIC")
+            Text(L("PUBLIC"))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 17.6))
                 .foregroundStyle(.black.opacity(0.85))
             HStack(spacing: 16) {
@@ -966,7 +1054,7 @@ struct DeckCoverCustomizationSheet: View {
                     Haptics.light()
                     isPublic = true
                 } label: {
-                    Text("YES")
+                    Text(L("YES"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                         .foregroundStyle(isPublic ? .black : .black.opacity(0.35))
                 }
@@ -976,7 +1064,7 @@ struct DeckCoverCustomizationSheet: View {
                     Haptics.light()
                     isPublic = false
                 } label: {
-                    Text("NO")
+                    Text(L("NO"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                         .foregroundStyle(isPublic ? .black.opacity(0.35) : .black)
                 }
@@ -997,7 +1085,7 @@ struct DeckCoverCustomizationSheet: View {
                         selectedCategory = category
                     }
                 } label: {
-                    Text(category.rawValue)
+                    Text(L(category.rawValue))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 14))
                         .foregroundStyle(selectedCategory == category ? .black : .secondary)
                         .contentShape(Rectangle())
@@ -1018,7 +1106,7 @@ struct DeckCoverCustomizationSheet: View {
                 Image(systemName: "hourglass")
                     .font(.system(size: 24, weight: .light))
                     .foregroundStyle(.secondary)
-                Text("Coming soon")
+                Text(L("Coming soon"))
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -1058,22 +1146,22 @@ struct DeckCoverCustomizationSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("TITLE")
+                        Text(L("TITLE"))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                             .tracking(0.8)
                             .foregroundStyle(.secondary)
-                        TextField("Deck title", text: $title, axis: .vertical)
+                        TextField(L("Deck title"), text: $title, axis: .vertical)
                             .font(.custom("NeueHaasDisplay-Mediu", size: 24))
                             .textFieldStyle(.plain)
                             .lineLimit(1...3)
                         Divider()
-                        Text("\(language) · \(level)")
+                        Text("\(localizedLanguageName(language)) · \(L(level))")
                             .font(.custom("NeueHaasDisplay-Light", size: 13))
                             .foregroundStyle(.secondary)
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("COVER")
+                        Text(L("COVER"))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                             .tracking(0.8)
                             .foregroundStyle(.secondary)
@@ -1110,7 +1198,7 @@ struct DeckCoverCustomizationSheet: View {
                         let finalTitle = trimmedTitle.isEmpty ? initialTitle : trimmedTitle
                         onSave(finalTitle, chosen, isPublic)
                     } label: {
-                        Text("Save deck")
+                        Text(L("Save deck"))
                             .font(.custom("PlayfairDisplay-Regular", size: 20))
                             .tracking(-1.2)
                             .foregroundStyle(.white)
@@ -1126,7 +1214,7 @@ struct DeckCoverCustomizationSheet: View {
                 .padding(.top, 8)
                 .padding(.bottom, 32)
             }
-            .navigationTitle("New Deck")
+            .navigationTitle(L("New Deck"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -1166,7 +1254,7 @@ private struct DeckCoverSwatch: View {
                             .padding(-2)
                     )
                     .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
-                Text(style.displayName)
+                Text(L(style.displayName))
                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                     .foregroundStyle(isSelected ? .black : .secondary)
             }

@@ -104,16 +104,18 @@ enum ConversationClient {
             let english_translation: String?
             let corrections: [DecodedCorrection]?
         }
+        let native = AppLanguage.currentNative.promptName
         let schema = JSONValue.schemaObject(
             properties: [
                 "reply": .schemaString("Your next conversational turn in \(context.dialect) \(context.language), using its native script."),
                 "transliteration": .schemaNullableString("Latin-script romanization of `reply` for non-Latin scripts; null for languages that already use Latin script."),
-                "english_translation": .schemaString("Natural English translation of `reply`."),
+                // Field name kept for Codable stability; holds the native translation.
+                "english_translation": .schemaString("Natural \(native) translation of `reply`."),
                 "corrections": .schemaArray(items: .schemaObject(
                     properties: [
                         "original": .schemaString("Exact substring from the user's last message containing the mistake."),
                         "corrected": .schemaString("What they should have written."),
-                        "explanation": .schemaString("Short English explanation (under 25 words) of why.")
+                        "explanation": .schemaString("Short \(native) explanation (under 25 words) of why.")
                     ],
                     required: ["original", "corrected", "explanation"]
                 ))
@@ -195,13 +197,14 @@ enum ConversationClient {
             let summary: String
             let phrases: [DecodedPhrase]
         }
+        let native = AppLanguage.currentNative.promptName
         let schema = JSONValue.schemaObject(
             properties: [
-                "summary": .schemaString("One or two sentences describing what the conversation was about, written warmly in second person ('you talked about…')."),
+                "summary": .schemaString("One or two sentences in \(native) describing what the conversation was about, written warmly in second person ('you talked about…')."),
                 "phrases": .schemaArray(items: .schemaObject(
                     properties: [
                         "foreign": .schemaString("The phrase in \(context.dialect) \(context.language) using its native script."),
-                        "translation": .schemaString("Natural English translation."),
+                        "translation": .schemaString("Natural \(native) translation."),
                         "transliteration": .schemaNullableString("Latin-script romanization for non-Latin scripts; null for Latin-script languages."),
                         "partsOfSpeech": .schemaArray(
                             items: .schemaString("Standard English grammatical category."),
@@ -312,10 +315,11 @@ enum ConversationClient {
             let coaching_tip: String
             let words: [DecodedWord]
         }
+        let native = AppLanguage.currentNative.promptName
         let schema = JSONValue.schemaObject(
             properties: [
                 "overall_score": .schemaInt("Integer 0-100, weighted by word importance."),
-                "coaching_tip": .schemaString("One warm, specific English sentence (under 30 words)."),
+                "coaching_tip": .schemaString("One warm, specific sentence in \(native) (under 30 words)."),
                 "words": .schemaArray(items: .schemaObject(
                     properties: [
                         "expected": .schemaString("The word as it appears in TARGET."),
@@ -324,7 +328,7 @@ enum ConversationClient {
                             ["good", "shaky", "off", "missing"],
                             description: "Per-word grade."
                         ),
-                        "hint": .schemaNullableString("Short phoneme / mouth-position tip (under 25 words); null if the word was good.")
+                        "hint": .schemaNullableString("Short phoneme / mouth-position tip in \(native) (under 25 words); null if the word was good.")
                     ],
                     required: ["expected", "grade"]
                 ))
@@ -366,8 +370,9 @@ enum ConversationClient {
         _ token: String,
         in language: String
     ) async throws -> String {
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        Translate the following \(language) word or short phrase into English. Output ONLY the translation, no quotes, no preamble, no explanation.
+        Translate the following \(language) word or short phrase into \(native). Output ONLY the translation, no quotes, no preamble, no explanation.
 
         \(language): \(token)
         """
@@ -382,14 +387,16 @@ enum ConversationClient {
     // MARK: - System-prompt construction
 
     private static func buildSystemPrompt(context: Context) -> String {
+        let native = AppLanguage.currentNative.promptName
         var lines: [String] = []
         lines.append("You are a warm, patient language-learning conversation partner inside the TONGUES app.")
         lines.append("")
         lines.append("Target language: \(context.dialect) \(context.language)")
         lines.append("Learner proficiency level: \(context.level)")
+        lines.append("The learner's native language is \(native); any explanations or translations you give must be in \(native).")
         lines.append("")
         lines.append("Behavior:")
-        lines.append("• ALWAYS reply in \(context.dialect) \(context.language) using its native script unless the learner explicitly switches to English to ask a question about the language itself.")
+        lines.append("• ALWAYS reply in \(context.dialect) \(context.language) using its native script unless the learner explicitly switches to \(native) to ask a question about the language itself.")
         lines.append("• Calibrate your vocabulary and grammar to the learner's level: simpler structures and high-frequency vocab at beginner levels, richer constructions at advanced levels.")
         lines.append("• Keep turns short. Beginners: 1 short sentence. Intermediate: 1–2 sentences. Advanced: 2–3.")
         lines.append("• Maintain a warm, encouraging tone. Use the target language's natural register for friendly conversation.")

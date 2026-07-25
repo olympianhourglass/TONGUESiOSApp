@@ -28,6 +28,8 @@ struct WordInfoSheet: View {
     @State private var wordInfo: WordInfo?
     @State private var isLoading = true
     @State private var errorText: String?
+    // Guards the one-time writing-practice XP grant for this presentation.
+    @State private var didAwardWritingXP = false
 
     var body: some View {
         NavigationStack {
@@ -44,7 +46,44 @@ struct WordInfoSheet: View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
 
-            ScrollView {
+            pagesContent
+
+            Button {
+                Haptics.light()
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.85))
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(0.12))
+                    .clipShape(Circle())
+            }
+            .padding(.top, 16)
+            .padding(.trailing, 8)
+            .zIndex(1)
+        }
+    }
+
+    // When the deck's language supports handwriting (Chinese, Japanese,
+    // Korean, Arabic) and this entry is a single word, page 0 is the word
+    // info and swiping left reveals a dark-themed writing-practice page.
+    @ViewBuilder
+    private var pagesContent: some View {
+        if let script = handwritingScript {
+            TabView {
+                wordDetailPage.tag(0)
+                writingPracticePage(script: script).tag(1)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .always))
+            .indexViewStyle(.page(backgroundDisplayMode: .interactive))
+        } else {
+            wordDetailPage
+        }
+    }
+
+    private var wordDetailPage: some View {
+        ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     Text(item.word)
                         .font(.system(size: 36, weight: .regular))
@@ -54,7 +93,7 @@ struct WordInfoSheet: View {
                     Divider()
                         .background(Color.white.opacity(0.25))
 
-                    Text("WORD INFORMATION")
+                    Text(L("WORD INFORMATION"))
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
                         .tracking(0.5)
                         .foregroundStyle(.white.opacity(0.55))
@@ -63,7 +102,7 @@ struct WordInfoSheet: View {
                         HStack(spacing: 10) {
                             ProgressView()
                                 .tint(.white)
-                            Text("Loading word info…")
+                            Text(L("Loading word info…"))
                                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                                 .foregroundStyle(.white.opacity(0.7))
                         }
@@ -80,7 +119,7 @@ struct WordInfoSheet: View {
                         .background(Color.white.opacity(0.25))
                         .padding(.top, 8)
 
-                    Text("Generate:")
+                    Text(L("Generate:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 17))
                         .foregroundStyle(.white)
 
@@ -104,19 +143,20 @@ struct WordInfoSheet: View {
                                         }
                                     )
                                 } label: {
-                                    generatePill("Sentence Studio")
+                                    generatePill(L("Sentence Studio"))
                                 }
                                 .buttonStyle(.plain)
                                 .simultaneousGesture(TapGesture().onEnded { Haptics.light() })
                             } else {
-                                relationChip("Add Phrase", kind: .phrases)
+                                relationChip(L("Add Phrase"), kind: .phrases)
                                 ForEach(inflectionPills, id: \.self) { label in
                                     if let kind = relationKind(for: label) {
-                                        relationChip(label, kind: kind)
+                                        relationChip(L(label), kind: kind)
                                     }
                                 }
-                                relationChip("Add Synonyms", kind: .synonyms)
-                                relationChip("Add Antonyms", kind: .antonyms)
+                                relationChip(L("Add Synonyms"), kind: .synonyms)
+                                relationChip(L("Add Antonyms"), kind: .antonyms)
+                                relationChip(L("Add Similar Sounding Words"), kind: .similarSounding)
                             }
                         }
                     }
@@ -124,20 +164,55 @@ struct WordInfoSheet: View {
                 .padding(.horizontal, 8)
                 .padding(.bottom, 40)
             }
+    }
 
-            Button {
-                Haptics.light()
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 16, weight: .regular))
-                    .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: 36, height: 36)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Circle())
+    // Dark-themed writing practice, reusing the flash-card handwriting engine
+    // with an inverted palette so it reads on the sheet's black background.
+    // Completing the word grants a small one-time XP award.
+    private func writingPracticePage(script: HandwritingScript) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                Text(item.word)
+                    .font(.system(size: 36, weight: .regular))
+                    .foregroundStyle(.white)
+                    .padding(.top, 40)
+
+                Text(L("WRITING PRACTICE"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .tracking(0.5)
+                    .foregroundStyle(.white.opacity(0.55))
+
+                HandwritingPracticeView(word: item.word, script: script, inverted: true) {
+                    awardWritingXPOnce()
+                }
+
+                Text(L("‹ Swipe right to return to word info"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 4)
             }
-            .padding(.top, 16)
-            .padding(.trailing, 8)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 40)
+        }
+    }
+
+    // Non-nil only for single words in a handwriting-capable language, which
+    // is exactly when the swipe-left writing page should exist.
+    private var handwritingScript: HandwritingScript? {
+        guard !isPhraseOrSentence else { return nil }
+        return HandwritingScript.resolve(itemLanguage: item.language, deckLanguage: deckLanguage)
+    }
+
+    // Awards the small writing-practice XP once per sheet presentation so the
+    // user can't farm it by clearing and re-completing the same word.
+    private func awardWritingXPOnce() {
+        guard !didAwardWritingXP else { return }
+        didAwardWritingXP = true
+        Haptics.success()
+        Task {
+            let grants = (try? await XPService.awardHandwritingPractice()) ?? []
+            await MainActor.run { XPToastCenter.shared.enqueue(grants) }
         }
     }
 
@@ -148,7 +223,7 @@ struct WordInfoSheet: View {
             // centered against the whole Meaning block).
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Meaning:")
+                    Text(L("Meaning:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.55))
                     Text(info.meaning)
@@ -172,7 +247,7 @@ struct WordInfoSheet: View {
 
             // Parts of speech
             VStack(alignment: .leading, spacing: 10) {
-                Text("Parts of Speech:")
+                Text(L("Parts of Speech:"))
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.white.opacity(0.55))
                 HStack(spacing: 8) {
@@ -190,20 +265,20 @@ struct WordInfoSheet: View {
 
             // Pronunciation
             labelValueRow(
-                "Pronunciation:",
+                L("Pronunciation:"),
                 value: info.pronunciation,
                 valueFont: .custom("NeueHaasDisplay-Light", size: 14)
             )
 
             // Language
-            labelValueRow("Language:", value: info.language)
+            labelValueRow(L("Language:"), value: info.language)
 
             // Word Frequency
-            labelValueRow("Word Frequency:", value: info.wordFrequency)
+            labelValueRow(L("Word Frequency:"), value: info.wordFrequency)
 
             // Pronunciation Difficulty
             labelValueRow(
-                "Pronunciation Difficulty Level:",
+                L("Pronunciation Difficulty Level:"),
                 value: info.pronunciationDifficulty,
                 valueFont: .custom("NeueHaasDisplay-Light", size: 14)
             )
@@ -226,7 +301,7 @@ struct WordInfoSheet: View {
                         )
                     } label: {
                         HStack(spacing: 6) {
-                            Text("View Etymology")
+                            Text(L("View Etymology"))
                             Image(systemName: "arrow.right")
                         }
                         .font(.custom("NeueHaasDisplay-Light", size: 14))
@@ -430,7 +505,7 @@ private struct EtymologyDetailView: View {
                     Divider()
                         .background(Color.white.opacity(0.25))
 
-                    Text("ETYMOLOGY")
+                    Text(L("ETYMOLOGY"))
                         .font(.custom("NeueHaasDisplay-Light", size: 12))
                         .tracking(0.5)
                         .foregroundStyle(.white.opacity(0.55))
@@ -439,7 +514,7 @@ private struct EtymologyDetailView: View {
                         HStack(spacing: 10) {
                             ProgressView()
                                 .tint(.white)
-                            Text("Tracing the roots…")
+                            Text(L("Tracing the roots…"))
                                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                                 .foregroundStyle(.white.opacity(0.7))
                         }
@@ -463,7 +538,7 @@ private struct EtymologyDetailView: View {
                 HStack(spacing: 4) {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 13, weight: .medium))
-                    Text("Back")
+                    Text(L("Back"))
                         .font(.custom("NeueHaasDisplay-Light", size: 14))
                 }
                 .foregroundStyle(.white.opacity(0.85))
@@ -503,16 +578,16 @@ private struct EtymologyDetailView: View {
             // Hero — origin language + root form + the "aha" highlight.
             VStack(alignment: .leading, spacing: 14) {
                 labelValueRow(
-                    "Origin Language:",
+                    L("Origin Language:"),
                     value: etymology.summary.originLanguage
                 )
                 labelValueRow(
-                    "Root Form:",
+                    L("Root Form:"),
                     value: etymology.summary.rootForm,
                     valueFont: .custom("NeueHaasDisplay-Light", size: 26)
                 )
                 labelValueRow(
-                    "Original Meaning:",
+                    L("Original Meaning:"),
                     value: etymology.summary.originalMeaning
                 )
                 Text(etymology.summary.highlight)
@@ -536,7 +611,7 @@ private struct EtymologyDetailView: View {
 
     private func morphemeSection(_ morphemes: [Etymology.Morpheme]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Morphemes:")
+            Text(L("Morphemes:"))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .foregroundStyle(.white.opacity(0.55))
             VStack(alignment: .leading, spacing: 10) {
@@ -565,7 +640,7 @@ private struct EtymologyDetailView: View {
 
     private func lineageSection(_ lineage: [Etymology.LineageStep]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Lineage:")
+            Text(L("Lineage:"))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .foregroundStyle(.white.opacity(0.55))
             VStack(alignment: .leading, spacing: 16) {
@@ -600,7 +675,7 @@ private struct EtymologyDetailView: View {
 
     private func relatedSection(_ related: [Etymology.Related]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Related:")
+            Text(L("Related:"))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .foregroundStyle(.white.opacity(0.55))
             FlowLayout(spacing: 8) {
@@ -656,11 +731,11 @@ private struct EtymologyDetailView: View {
     }
 
     // Maps the device's preferred language code (e.g., "en", "fr", "zh-Hans")
-    // to a human-readable English name we hand to the Claude prompt. Falls
-    // back to English when no localized name is available.
+    // The user's chosen app/native language, handed to the Claude prompt so
+    // etymology explanations come back in it. Uses the app's language choice
+    // (not the device locale) so it tracks the in-app picker.
     private static var userExplanationLanguage: String {
-        let code = Locale.current.language.languageCode?.identifier ?? "en"
-        return Locale(identifier: "en").localizedString(forLanguageCode: code) ?? "English"
+        AppLanguage.currentNative.promptName
     }
 }
 
@@ -828,7 +903,7 @@ struct SentenceStudioView: View {
                         // still reads as the current focus.
                         VStack(alignment: .leading, spacing: 6) {
                             if version.action != "Original" {
-                                Text(version.action)
+                                Text(L(version.action))
                                     .font(.custom("NeueHaasDisplay-Light", size: 12))
                                     .foregroundStyle(.white.opacity(0.30))
                             }
@@ -855,7 +930,7 @@ struct SentenceStudioView: View {
                     if let active = history.last {
                         VStack(alignment: .leading, spacing: 10) {
                             if history.count > 1 {
-                                Text(active.action)
+                                Text(L(active.action))
                                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                                     .foregroundStyle(.white.opacity(0.55))
                             }
@@ -910,7 +985,7 @@ struct SentenceStudioView: View {
         // the screen edge as the user scrolls.
         VStack(alignment: .leading, spacing: 20) {
             HStack(spacing: 10) {
-                Text("EDIT")
+                Text(L("EDIT"))
                     .font(.custom("NeueHaasDisplay-Bold", size: 17))
                     .foregroundStyle(.white)
                 if isProcessing {
@@ -923,25 +998,25 @@ struct SentenceStudioView: View {
             .padding(.leading, 20)
 
             VStack(alignment: .leading, spacing: 10) {
-                sectionLabel("STRUCTURE")
+                sectionLabel(L("STRUCTURE"))
                     .padding(.leading, 20)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         studioButton(
                             systemImage: "arrow.right.and.line.vertical.and.arrow.left",
-                            title: "Shorten Sentence"
+                            title: L("Shorten Sentence")
                         ) {
                             runClaudeTransformation(.shorten, label: "Sentence Shortened")
                         }
                         studioButton(
                             systemImage: "arrow.left.and.right",
-                            title: "Lengthen Sentence"
+                            title: L("Lengthen Sentence")
                         ) {
                             runClaudeTransformation(.lengthen, label: "Sentence Lengthened")
                         }
                         studioButton(
                             systemImage: "arrow.triangle.branch",
-                            title: "Add Clause"
+                            title: L("Add Clause")
                         ) {
                             Haptics.light()
                             showAddClauseSheet = true
@@ -952,27 +1027,27 @@ struct SentenceStudioView: View {
             }
 
             VStack(alignment: .leading, spacing: 10) {
-                sectionLabel("STYLE")
+                sectionLabel(L("STYLE"))
                     .padding(.leading, 20)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
                         studioButton(
                             systemImage: "face.smiling",
-                            title: "Change Tone"
+                            title: L("Change Tone")
                         ) {
                             Haptics.light()
                             showChangeToneSheet = true
                         }
                         studioButton(
                             systemImage: "clock",
-                            title: "Change Tense"
+                            title: L("Change Tense")
                         ) {
                             Haptics.light()
                             showChangeTenseSheet = true
                         }
                         studioButton(
                             systemImage: "chart.line.uptrend.xyaxis",
-                            title: "Change Level"
+                            title: L("Change Level")
                         ) {
                             Haptics.light()
                             showChangeLevelSheet = true
@@ -995,7 +1070,7 @@ struct SentenceStudioView: View {
                         Image(systemName: "plus.circle")
                             .font(.system(size: 18))
                     }
-                    Text("Save sentence")
+                    Text(L("Save sentence"))
                         .font(.custom("NeueHaasDisplay-Light", size: 17))
                     Spacer(minLength: 0)
                 }
@@ -1178,7 +1253,7 @@ private struct AddClauseSheet: View {
 
     var body: some View {
         StudioOptionsSheet(
-            title: "Add a Phrase or Clause",
+            title: L("Add a Phrase or Clause"),
             options: DeckGenerator.ClauseKind.allCases,
             label: { $0.displayName },
             onSelect: onSelect
@@ -1193,7 +1268,7 @@ private struct ChangeToneSheet: View {
 
     var body: some View {
         StudioOptionsSheet(
-            title: "Change Tone",
+            title: L("Change Tone"),
             options: DeckGenerator.ToneKind.allCases,
             label: { $0.displayName },
             onSelect: onSelect
@@ -1257,7 +1332,7 @@ private struct ChangeLevelSheet: View {
 
     var body: some View {
         StudioOptionsSheet(
-            title: "Change Level",
+            title: L("Change Level"),
             options: levels,
             label: { $0 },
             onSelect: onSelect
@@ -1291,14 +1366,14 @@ private struct ChangeTenseSheet: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("Change Tense")
+                Text(L("Change Tense"))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 22))
                     .foregroundStyle(.black)
                     .padding(.top, 16)
 
                 ForEach(sections, id: \.title) { section in
                     VStack(alignment: .leading, spacing: 12) {
-                        Text(section.title)
+                        Text(L(section.title))
                             .font(.custom("NeueHaasDisplay-Roman", size: 17))
                             .foregroundStyle(.black)
 

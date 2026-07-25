@@ -22,7 +22,7 @@ struct ConversationRecapSheet: View {
                 if isBuilding {
                     VStack(spacing: 14) {
                         ProgressView()
-                        Text("Pulling together what you covered…")
+                        Text(L("Pulling together what you covered…"))
                             .font(.custom("NeueHaasDisplay-Light", size: 13))
                             .foregroundStyle(.secondary)
                     }
@@ -31,17 +31,17 @@ struct ConversationRecapSheet: View {
                     recapContent(recap)
                 } else {
                     ContentUnavailableView(
-                        "Nothing to recap yet",
+                        L("Nothing to recap yet"),
                         systemImage: "checkmark.seal",
-                        description: Text("Have a bit more of a conversation, then come back.")
+                        description: Text(L("Have a bit more of a conversation, then come back."))
                     )
                 }
             }
-            .navigationTitle("Recap")
+            .navigationTitle(L("Recap"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { onDismiss() }
+                    Button(L("Close")) { onDismiss() }
                 }
             }
             .sheet(isPresented: $deckPickerOpen) {
@@ -73,7 +73,7 @@ struct ConversationRecapSheet: View {
                 Divider()
                     .padding(.horizontal, 16)
 
-                Text("PHRASES TO KEEP")
+                Text(L("PHRASES TO KEEP"))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
@@ -92,7 +92,7 @@ struct ConversationRecapSheet: View {
                 } label: {
                     HStack {
                         Image(systemName: "plus.circle")
-                        Text("Add \(selectedItems.count) to deck")
+                        Text(L("Add %d to deck", selectedItems.count))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                     }
                     .foregroundStyle(.white)

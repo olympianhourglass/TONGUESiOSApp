@@ -300,20 +300,24 @@ func totalSpeakers(for language: String) -> Int {
 
 // MARK: - Speaker count formatting
 
+@MainActor
 func formatSpeakers(_ count: Int) -> String {
+    let number: String
     if count >= 1_000_000_000 {
-        return String(format: "%.1fB speakers", Double(count) / 1_000_000_000)
+        number = String(format: "%.1fB", Double(count) / 1_000_000_000)
     } else if count >= 10_000_000 {
-        return "\(count / 1_000_000)M speakers"
+        number = "\(count / 1_000_000)M"
     } else if count >= 1_000_000 {
-        return String(format: "%.1fM speakers", Double(count) / 1_000_000)
+        number = String(format: "%.1fM", Double(count) / 1_000_000)
     } else if count >= 1_000 {
-        return "\(count / 1_000)K speakers"
+        number = "\(count / 1_000)K"
     } else if count > 0 {
-        return "\(count) speakers"
+        number = "\(count)"
     } else {
         return ""
     }
+    // Only the word "speakers" is localized; the magnitude (B/M/K) stays.
+    return L("%@ speakers", number)
 }
 
 // MARK: - Dialect speaker estimates

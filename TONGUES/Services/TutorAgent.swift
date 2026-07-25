@@ -65,21 +65,28 @@ enum TutorAgent {
         let trimmed = userText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 4 else { return .conversation }
 
-        // ASCII-letter ratio gate: messages written mostly in a non-Latin
-        // script can't be English meta requests.
-        let letters = trimmed.unicodeScalars.filter { CharacterSet.letters.contains($0) }
-        guard !letters.isEmpty else { return .conversation }
-        let asciiLetters = letters.filter { $0.isASCII }
-        let asciiRatio = Double(asciiLetters.count) / Double(letters.count)
-        guard asciiRatio > 0.7 else { return .conversation }
+        // ASCII-letter ratio gate: for a Latin-script native language, a
+        // message written mostly in a non-Latin script is target-language
+        // practice, not a meta request — skip the API call. For non-Latin
+        // native languages (Japanese/Chinese/Korean) the learner's OWN meta
+        // requests are non-ASCII, so this shortcut would misfire; skip it and
+        // let the classifier decide.
+        let native = AppLanguage.currentNative
+        if native.usesLatinScript {
+            let letters = trimmed.unicodeScalars.filter { CharacterSet.letters.contains($0) }
+            guard !letters.isEmpty else { return .conversation }
+            let asciiLetters = letters.filter { $0.isASCII }
+            let asciiRatio = Double(asciiLetters.count) / Double(letters.count)
+            guard asciiRatio > 0.7 else { return .conversation }
+        }
 
         let prompt = """
-        A user is inside a language-learning chat where they normally practice speaking a foreign language with an AI tutor. Classify their latest message:
+        A user is inside a language-learning chat where they normally practice speaking a foreign language with an AI tutor. Their native language is \(native.promptName). Classify their latest message:
 
         "\(trimmed.prefix(300))"
 
-        • "meta" — the message is in English and asks ABOUT their learning: progress, level, what to study next, making/changing a study plan or curriculum, creating flashcard decks, reviewing weak areas, statistics.
-        • "conversation" — anything else: target-language practice, small talk, questions about vocabulary/grammar usage, continuing a roleplay (even in English).
+        • "meta" — the message is in their native language (\(native.promptName)) and asks ABOUT their learning: progress, level, what to study next, making/changing a study plan or curriculum, creating flashcard decks, reviewing weak areas, statistics.
+        • "conversation" — anything else: target-language practice, small talk, questions about vocabulary/grammar usage, continuing a roleplay.
 
         Reply with exactly one word: meta or conversation.
         """
@@ -222,7 +229,7 @@ enum TutorAgent {
                     description: "CEFR level."
                 ),
                 "confidence": .schemaNumber("Confidence in the placement, 0.0-1.0."),
-                "rationale": .schemaString("One sentence in English explaining the placement.")
+                "rationale": .schemaString("One sentence in the learner's native language (\(AppLanguage.currentNative.promptName)) explaining the placement.")
             ],
             required: ["level", "confidence", "rationale"]
         )
@@ -270,13 +277,14 @@ enum TutorAgent {
         lines.append("• create_deck and update_curriculum only STAGE proposals — the learner confirms in the UI. After staging, briefly describe what you built and tell them they can save/accept it with the card below your message.")
         lines.append("• Make at most one curriculum proposal and at most \(maxDecksPerTurn) decks per reply.")
         lines.append("• Plans should have 4–6 units, each ≤ 2 weeks at the learner's observed pace, with concrete can-do goals and activities. Build units around their goals, destinations, interests, and weak areas. Recycle lapsing vocabulary.")
-        lines.append("• Conduct planning/meta discussion in English. Keep replies concise — a short paragraph, not a lecture.")
+        lines.append("• Conduct planning/meta discussion in the learner's native language (\(AppLanguage.currentNative.promptName)). Keep replies concise — a short paragraph, not a lecture.")
         lines.append("• If the user's message was actually target-language practice, just reply conversationally in \(context.language) without tools.")
         return lines.joined(separator: "\n")
     }
 
     private static func wrapUserTurn(_ userText: String, context: Context) -> String {
-        """
+        let native = AppLanguage.currentNative.promptName
+        return """
         \(userText)
 
         ---
@@ -284,13 +292,13 @@ enum TutorAgent {
         After any tool use, your FINAL message must be ONLY a single JSON object, no prose or markdown fences, matching:
 
         {
-          "reply": "your answer to the user (English for meta/planning topics; \(context.language) for conversational practice)",
+          "reply": "your answer to the user (\(native) for meta/planning topics; \(context.language) for conversational practice)",
           "transliteration": "Latin-script romanization if `reply` is in a non-Latin script, else null",
-          "english_translation": "English translation if `reply` is not in English, else null",
+          "english_translation": "\(native) translation if `reply` is not in \(native), else null",
           "corrections": []
         }
 
-        `corrections` follows the usual rules (genuine errors in the user's last message only, max 3, ignore punctuation/capitalization) — it will almost always be [] for English meta requests.
+        `corrections` follows the usual rules (genuine errors in the user's last message only, max 3, ignore punctuation/capitalization) — it will almost always be [] for \(native) meta requests.
         """
     }
 

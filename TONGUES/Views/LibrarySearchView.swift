@@ -179,7 +179,7 @@ struct LibrarySearchView: View {
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
                     .foregroundStyle(.black)
                     .lineLimit(1)
-                Text("\(deck.language) | \(deck.level)")
+                Text("\(localizedLanguageName(deck.language)) | \(L(deck.level))")
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.secondary)
             }

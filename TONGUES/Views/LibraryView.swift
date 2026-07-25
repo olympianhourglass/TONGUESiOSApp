@@ -44,9 +44,9 @@ struct LibraryView: View {
         var id: String { rawValue }
         var label: String {
             switch self {
-            case .recent:       return "Recently created"
-            case .forgetting:   return "Likely to forget"
-            case .alphabetical: return "Alphabetical"
+            case .recent:       return L("Recently created")
+            case .forgetting:   return L("Likely to forget")
+            case .alphabetical: return L("Alphabetical")
             }
         }
     }
@@ -57,8 +57,8 @@ struct LibraryView: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .decks: return "DECKS"
-            case .words: return "CONTENT"
+            case .decks: return L("DECKS")
+            case .words: return L("CONTENT")
             }
         }
     }
@@ -279,7 +279,7 @@ struct LibraryView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 14))
                     .foregroundStyle(.white.opacity(0.7))
-                Text("Search decks, languages, words…")
+                Text(L("Search decks, languages, words…"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white.opacity(0.5))
                 Spacer(minLength: 0)
@@ -318,10 +318,10 @@ struct LibraryView: View {
                 ],
                 spacing: 8
             ) {
-                metricCard(label: "Preferred Language", value: mostPracticedLanguage)
-                metricCard(label: "Streak", value: streakLabel)
-                metricCard(label: "Longest Session", value: longestSessionLabel)
-                metricCard(label: "Experience", value: experienceLabel)
+                metricCard(label: L("Preferred Language"), value: mostPracticedLanguage)
+                metricCard(label: L("Streak"), value: streakLabel)
+                metricCard(label: L("Longest Session"), value: longestSessionLabel)
+                metricCard(label: L("Experience"), value: experienceLabel)
             }
 
             HStack {
@@ -350,7 +350,7 @@ struct LibraryView: View {
                     )
                 } label: {
                     HStack(spacing: 8) {
-                        Text("View Statistics")
+                        Text(L("View Statistics"))
                             .font(.custom("NeueHaasDisplay-Light", size: 16))
                         Image(systemName: "arrow.right")
                             .font(.system(size: 14))
@@ -377,14 +377,14 @@ struct LibraryView: View {
 
     private var streakLabel: String {
         let days = vm.dailyStreak
-        return "\(days) \(days == 1 ? "Day" : "Days")"
+        return "\(days) \(L(days == 1 ? "Day" : "Days"))"
     }
 
     private var experienceLabel: String {
         let formatter = NumberFormatter()
         formatter.numberStyle = .decimal
         let number = formatter.string(from: NSNumber(value: vm.totalXP)) ?? "\(vm.totalXP)"
-        return "\(number) XP"
+        return L("%@ XP", number)
     }
 
     // Formats the longest meta-session as H:MM Hours when ≥ 1 hour, or
@@ -396,8 +396,8 @@ struct LibraryView: View {
         let totalMinutes = max(1, Int(seconds / 60))
         let hours = totalMinutes / 60
         let mins = totalMinutes % 60
-        if hours == 0 { return "\(mins) min" }
-        return String(format: "%d:%02d Hours", hours, mins)
+        if hours == 0 { return L("%d min", mins) }
+        return L("%d:%02d Hours", hours, mins)
     }
 
     private var profileAvatar: some View {
@@ -470,7 +470,7 @@ struct LibraryView: View {
                     .padding(.horizontal, 24)
                     .padding(.vertical, 40)
             } else if vm.decks.isEmpty {
-                Text("No decks yet — create one from the Study tab.")
+                Text(L("No decks yet — create one from the Study tab."))
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -552,7 +552,7 @@ struct LibraryView: View {
     private var decksSection: some View {
         let decks = visibleDecks
         if decks.isEmpty {
-            Text("No decks match this filter.")
+            Text(L("No decks match this filter."))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -585,7 +585,7 @@ struct LibraryView: View {
     @ViewBuilder
     private var wordsSection: some View {
         if wordsToShow.isEmpty {
-            Text("No words match this filter.")
+            Text(L("No words match this filter."))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -641,7 +641,7 @@ struct LibraryView: View {
                     levelFilter = nil
                     contentFilter = nil
                 } label: {
-                    Text("Clear")
+                    Text(L("Clear"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -687,9 +687,9 @@ struct LibraryView: View {
                 selection.wrappedValue = nil
             } label: {
                 if selection.wrappedValue == nil {
-                    Label("All", systemImage: "checkmark")
+                    Label(L("All"), systemImage: "checkmark")
                 } else {
-                    Text("All")
+                    Text(L("All"))
                 }
             }
             if !options.isEmpty {
@@ -700,9 +700,9 @@ struct LibraryView: View {
                         selection.wrappedValue = value
                     } label: {
                         if selection.wrappedValue == value {
-                            Label(value, systemImage: "checkmark")
+                            Label(L(value), systemImage: "checkmark")
                         } else {
-                            Text(value)
+                            Text(L(value))
                         }
                     }
                 }
@@ -722,7 +722,7 @@ struct LibraryView: View {
                 Image(systemName: icon)
                     .font(.system(size: 11))
             }
-            Text(text)
+            Text(L(text))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .lineLimit(1)
             Image(systemName: "chevron.down")
@@ -848,7 +848,7 @@ private struct LibraryDeckRow: View {
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
                     .foregroundStyle(.black)
                     .lineLimit(1)
-                Text("\(deck.language) | \(deck.level)")
+                Text("\(localizedLanguageName(deck.language)) | \(L(deck.level))")
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.secondary)
             }
@@ -919,12 +919,12 @@ struct DeckRow: View {
         let countLabel = "\(deck.items.count) \(deck.contentType.lowercased())"
         let head: String
         if langs.count > 1 {
-            head = "\(langs.joined(separator: ", ")) · \(countLabel)"
+            head = "\(langs.map { localizedLanguageName($0) }.joined(separator: ", ")) · \(countLabel)"
         } else {
-            head = "\(deck.language) \(deck.level) · \(countLabel)"
+            head = "\(localizedLanguageName(deck.language)) \(L(deck.level)) · \(countLabel)"
         }
         if let label = urgency?.statusLabel {
-            return "\(head) · \(label)"
+            return "\(head) · \(L(label))"
         }
         return head
     }

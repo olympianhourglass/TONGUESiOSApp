@@ -62,7 +62,7 @@ struct PronunciationDrillSheet: View {
             }
             .scrollContentBackground(.hidden)
             .background(Color.black)
-            .navigationTitle("Practice")
+            .navigationTitle(L("Practice"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
@@ -70,7 +70,7 @@ struct PronunciationDrillSheet: View {
             .tint(.white)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Done") {
+                    Button(L("Done")) {
                         speech.stop()
                         dismiss()
                     }
@@ -87,15 +87,15 @@ struct PronunciationDrillSheet: View {
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "speaker.wave.2")
-                            Text("Listen")
+                            Text(L("Listen"))
                                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                         }
                         .foregroundStyle(.white)
                     }
                 }
             }
-            .alert("Couldn't grade attempt", isPresented: errorAlertBinding) {
-                Button("OK") { errorText = nil }
+            .alert(L("Couldn't grade attempt"), isPresented: errorAlertBinding) {
+                Button(L("OK")) { errorText = nil }
             } message: {
                 Text(errorText ?? "")
             }
@@ -116,11 +116,11 @@ struct PronunciationDrillSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Read it aloud")
+            Text(L("Read it aloud"))
                 .font(.custom("PlayfairDisplay-Regular", size: 24))
                 .tracking(-1.2)
                 .foregroundStyle(.white)
-            Text("Tap the mic, say the sentence in \(language), tap again to grade. Your past scores show below as you go.")
+            Text(L("Tap the mic, say the sentence in %@, tap again to grade. Your past scores show below as you go.", language))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .foregroundStyle(.white.opacity(0.6))
         }
@@ -241,7 +241,7 @@ struct PronunciationDrillSheet: View {
                 Text("\(grade.overallScore)")
                     .font(.custom("NeueHaasDisplay-Mediu", size: 60))
                     .foregroundStyle(scoreColor(grade.overallScore))
-                Text("/ 100")
+                Text(L("/ 100"))
                     .font(.custom("NeueHaasDisplay-Light", size: 18))
                     .foregroundStyle(.white.opacity(0.6))
                 Spacer()
@@ -260,7 +260,7 @@ struct PronunciationDrillSheet: View {
                         allowForvo: false
                     )
                 } label: {
-                    Label("Hear native", systemImage: "speaker.wave.2")
+                    Label(L("Hear native"), systemImage: "speaker.wave.2")
                         .font(.custom("NeueHaasDisplay-Light", size: 14))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
@@ -277,7 +277,7 @@ struct PronunciationDrillSheet: View {
                         toggleAttemptPlayback()
                     } label: {
                         Label(
-                            isPlayingBack ? "Stop" : "Hear yourself",
+                            isPlayingBack ? L("Stop") : L("Hear yourself"),
                             systemImage: isPlayingBack ? "stop.fill" : "person.wave.2"
                         )
                         .font(.custom("NeueHaasDisplay-Light", size: 14))
@@ -300,7 +300,7 @@ struct PronunciationDrillSheet: View {
                     attemptPlayer = nil
                     isPlayingBack = false
                 } label: {
-                    Label("Try again", systemImage: "arrow.clockwise")
+                    Label(L("Try again"), systemImage: "arrow.clockwise")
                         .font(.custom("NeueHaasDisplay-Mediu", size: 14))
                         .foregroundStyle(.black)
                         .padding(.horizontal, 14)
@@ -320,7 +320,7 @@ struct PronunciationDrillSheet: View {
     // don't crowd the sheet.
     private var pastAttemptHistory: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("PAST ATTEMPTS ON THIS PHRASE")
+            Text(L("PAST ATTEMPTS ON THIS PHRASE"))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                 .tracking(0.8)
                 .foregroundStyle(.white.opacity(0.55))
@@ -341,7 +341,7 @@ struct PronunciationDrillSheet: View {
 
     private var attemptHistory: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("THIS SESSION")
+            Text(L("THIS SESSION"))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                 .tracking(0.8)
                 .foregroundStyle(.white.opacity(0.55))

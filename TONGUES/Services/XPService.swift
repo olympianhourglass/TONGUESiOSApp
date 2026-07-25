@@ -271,6 +271,34 @@ enum XPService {
         return grants
     }
 
+    // MARK: - Standalone handwriting practice
+
+    // Awarded when the learner completes writing practice for a single word
+    // outside of a flashcard session (e.g. swiping into the writing page on
+    // the word detail sheet). Deliberately small; the call site guards
+    // against farming the same word repeatedly.
+    @discardableResult
+    static func awardHandwritingPractice() async throws -> [XPGrant] {
+        var state = try await fetchState()
+        let grants = [XPGrant(amount: 3, reason: "Handwriting")]
+        try await commit(grants: grants, into: &state)
+        return grants
+    }
+
+    // MARK: - Reading comprehension
+
+    // Awarded each time the learner answers a reading-comprehension question
+    // correctly. Small per-question reward; the call site guards against
+    // double-awarding the same question. Streak credit is handled separately
+    // at the call site by saving a StudySession for the day.
+    @discardableResult
+    static func awardComprehensionCorrect() async throws -> [XPGrant] {
+        var state = try await fetchState()
+        let grants = [XPGrant(amount: 3, reason: "Reading comprehension")]
+        try await commit(grants: grants, into: &state)
+        return grants
+    }
+
     // MARK: - Daily & streak bonuses
 
     // Awards the daily first-session bonus exactly once per local

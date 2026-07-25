@@ -409,15 +409,19 @@ enum FirebaseDeckService {
     // Removes a single item from a deck. Used by the deck detail list's
     // swipe-to-delete. Rewrites the doc with the item filtered out; the
     // deck's other fields are preserved verbatim.
-    static func removeItem(inDeck deckId: String, itemId: UUID) async throws {
+    // Overwrites a deck's items with `items`. The caller (deck detail)
+    // already knows the exact list it wants — e.g. after removing one row —
+    // so we persist that directly instead of trying to re-match the removed
+    // item against a freshly-decoded copy on the server (GeneratedItem.id
+    // isn't persisted, so id-matching fails and content-matching is
+    // fragile). Uses the same fetch + setData path as addItems.
+    static func setItems(inDeck deckId: String, items: [GeneratedItem]) async throws {
         let collection = try userDecks()
         let ref = collection.document(deckId)
         let snapshot = try await ref.getDocument()
         let existing = try snapshot.data(as: DeckDocument.self)
 
-        let remaining = existing.items.filter { $0.id != itemId }
-        // Nothing matched — no write needed.
-        guard remaining.count != existing.items.count else { return }
+        let remaining = items
 
         let updated = DeckDocument(
             id: existing.id,

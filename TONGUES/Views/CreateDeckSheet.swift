@@ -164,7 +164,8 @@ struct CreateDeckSheet: View {
             // BACKGROUND layer, not `.ignoresSafeArea` on the TabView itself
             // (which blanks the non-initial pages), so paging stays intact.
             .background {
-                Color.white.ignoresSafeArea()
+                // The Camera tab is inverted: black page, light chrome.
+                (currentPage == 1 ? Color.black : Color.white).ignoresSafeArea()
             }
             // The nav bar carries no title/items (the close X is a custom
             // overlay), so hide it outright.
@@ -184,7 +185,7 @@ struct CreateDeckSheet: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 16, weight: .regular))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(currentPage == 1 ? .white : .black)
                         .frame(width: 36, height: 36)
                         .glassEffect(.regular.interactive(), in: .circle)
                 }
@@ -194,15 +195,40 @@ struct CreateDeckSheet: View {
                 .padding(.top, 8)
             }
             .safeAreaInset(edge: .bottom) {
-                VStack(spacing: 0) {
-                    if isInterestFieldFocused {
-                        keyboardAccessory
+                if isInterestFieldFocused {
+                    // While typing, the tab + pinned bar give way to a single
+                    // elegant Liquid Glass "Done" pill floating just above the
+                    // keyboard, trailing-aligned.
+                    HStack {
+                        Spacer()
+                        Button {
+                            Haptics.light()
+                            isInterestFieldFocused = false
+                        } label: {
+                            Text(L("Done"))
+                                .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                                .foregroundStyle(.black)
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 12)
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    bottomPageToggle
-                        .padding(.horizontal, 24)
-                        // 44pt above the bottom safe area, matching the
-                        // gap a tab bar would normally hold.
-                        .padding(.bottom, 44)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 8)
+                } else {
+                    VStack(spacing: 0) {
+                        if currentPage == 0 {
+                            // The Generate form's drop-downs + Generate button
+                            // live in a pinned white bar above the page tab.
+                            generateBottomBar
+                        }
+                        bottomPageToggle
+                            .padding(.horizontal, 24)
+                            // 44pt above the bottom safe area, matching the
+                            // gap a tab bar would normally hold.
+                            .padding(.bottom, 44)
+                    }
                 }
             }
             .navigationDestination(for: GenerationRoute.self) { route in
@@ -220,6 +246,7 @@ struct CreateDeckSheet: View {
                         togglePosition = newValue
                     }
                 }
+                applyCreateStatusBar()
             }
             .onChange(of: togglePosition) { _, newValue in
                 // Toggle-driven change (swiping/tapping the chip
@@ -230,9 +257,15 @@ struct CreateDeckSheet: View {
                     }
                 }
             }
+            .onChange(of: navPath) { _, _ in applyCreateStatusBar() }
         }
-        .alert("Generation failed", isPresented: errorAlertBinding) {
-            Button("OK") { vm.generationError = nil }
+        .onAppear { applyCreateStatusBar() }
+        .onDisappear {
+            AppTabRouter.shared.forceLightStatusBar = false
+            AppTabRouter.shared.forceDarkStatusBar = false
+        }
+        .alert(L("Generation failed"), isPresented: errorAlertBinding) {
+            Button(L("OK")) { vm.generationError = nil }
         } message: {
             Text(vm.generationError ?? "")
         }
@@ -401,9 +434,9 @@ struct CreateDeckSheet: View {
     private var generateFormPage: some View {
         ScrollViewReader { vProxy in
         ScrollView {
-                VStack(alignment: .leading, spacing: 36) {
+                VStack(alignment: .leading, spacing: 40) {
                     TextField(
-                        "Enter what you're interested in…",
+                        L("Enter what you're interested in…"),
                         text: $vm.interestPrompt,
                         axis: .vertical
                     )
@@ -413,6 +446,9 @@ struct CreateDeckSheet: View {
                     .lineLimit(1...4)
                     .focused($isInterestFieldFocused)
                     .padding(.top, 8)
+                    // Extra breathing room below the title so it floats in
+                    // the white top area, matching the design comp.
+                    .padding(.bottom, 20)
 
                     // Two-row horizontal-scrolling chip strip. Each row
                     // is its own HStack with a uniform 8pt spacing so
@@ -454,77 +490,35 @@ struct CreateDeckSheet: View {
                     }
                     .scrollClipDisabled()
 
-                    referenceDecksSection
-
-                    ScrollViewReader { hProxy in
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            AttributesRow(
-                                language: vm.language,
-                                dialect: vm.dialect,
-                                content: vm.contentType,
-                                amount: vm.amount,
-                                level: vm.level,
-                                onTap: { vm.activeAttribute = $0 },
-                                coachStore: coachStore
-                            )
-                        }
-                        .scrollClipDisabled()
-                        .onAppear { hScrollProxy = hProxy }
-                        // Track the strip's viewport (global) + live offset
-                        // so the tour computes each pill's on-screen frame
-                        // deterministically — no per-pill scroll callbacks.
-                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { newValue in
-                            coachStore.hViewport = newValue
-                        }
-                        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, newValue in
-                            coachStore.hOffsetX = newValue
-                        }
-                    }
-                    .id("coach.attributes")
-
-                    HStack(spacing: 24) {
-                        ToneLabel(title: "Casual", isSelected: vm.selectedTones.contains("Casual")) {
+                    HStack(spacing: 12) {
+                        ToneLabel(title: L("Casual"), isSelected: vm.selectedTones.contains("Casual")) {
                             vm.toggleTone("Casual")
                         }
-                        ToneLabel(title: "Formal", isSelected: vm.selectedTones.contains("Formal")) {
+                        ToneLabel(title: L("Formal"), isSelected: vm.selectedTones.contains("Formal")) {
                             vm.toggleTone("Formal")
                         }
                     }
                     .padding(.top, 8)
-
-                    Button {
-                        Haptics.medium()
-                        runGeneration()
-                    } label: {
-                        ZStack {
-                            Text("Generate")
-                                .font(.custom("PlayfairDisplay-Regular", size: 22))
-                                .tracking(-1.76)
-                                .foregroundStyle(.white)
-                                .opacity(vm.isGenerating ? 0 : 1)
-                            if vm.isGenerating {
-                                ProgressView()
-                                    .tint(.white)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 64)
-                        .background(Color.red)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .coachAnchor(.generate, store: coachStore)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(vm.isGenerating)
-                    .padding(.top, 16)
-                    .id("coach.generate")
                 }
                 // Clears the 44pt-tall custom close button overlay
-                // (36pt circle + 8pt top inset) so the TextField never
-                // scrolls under it at rest, with breathing room above.
-                .padding(.top, 80)
+                // (36pt circle + 8pt top inset) and adds the generous white
+                // top area from the design comp so the title floats.
+                .padding(.top, 96)
                 .padding(.horizontal, 8)
-                .padding(.bottom, 32)
+                // Breathing room before the pinned bottom bar takes over.
+                .padding(.bottom, 24)
             }
+            // Subtle white→light-gray gradient behind the scrolling content.
+            // The pinned bottom bar (attribute pills + Generate) is solid
+            // white, so it reads as "interrupting" this gradient.
+            .background(
+                LinearGradient(
+                    colors: [Color.white, Color(white: 0.93)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+            )
             // Drag-to-dismiss the keyboard inside the scroll view —
             // standard iOS Mail/Notes behavior. Combined with the
             // toolbar Done button this gives the user three ways out:
@@ -549,52 +543,51 @@ struct CreateDeckSheet: View {
 
     // "Reference decks" affordance: attached decks show as removable
     // chips, followed by an add pill that opens the multi-select picker.
-    // Feeds vm.referencedDecks into the generation prompt.
-    private var referenceDecksSection: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(vm.referencedDecks) { deck in
-                    HStack(spacing: 6) {
-                        Text(deck.title)
-                            .font(.custom("NeueHaasDisplay-Mediu", size: 14))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                        Button {
-                            Haptics.light()
-                            vm.referencedDecks.removeAll { $0.id == deck.id }
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.8))
-                        }
-                        .buttonStyle(.plain)
+    // Feeds vm.referencedDecks into the generation prompt. Rendered inline
+    // (no own ScrollView) so it trails the attribute pills inside the
+    // bottom strip's single horizontal scroll.
+    private var referenceDeckPills: some View {
+        HStack(spacing: 10) {
+            ForEach(vm.referencedDecks) { deck in
+                HStack(spacing: 6) {
+                    Text(deck.title)
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Button {
+                        Haptics.light()
+                        vm.referencedDecks.removeAll { $0.id == deck.id }
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.8))
                     }
-                    .padding(.leading, 14)
-                    .padding(.trailing, 10)
-                    .padding(.vertical, 8)
-                    .background(Capsule().fill(Color.black))
+                    .buttonStyle(.plain)
                 }
-
-                Button {
-                    Haptics.light()
-                    isInterestFieldFocused = false
-                    showReferencePicker = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 12, weight: .medium))
-                        Text(vm.referencedDecks.isEmpty ? "Reference a deck" : "Add")
-                            .font(.custom("NeueHaasDisplay-Mediu", size: 14))
-                    }
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .overlay(Capsule().stroke(Color(white: 0.82), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
+                .padding(.leading, 16)
+                .padding(.trailing, 12)
+                .padding(.vertical, 10)
+                .background(Capsule().fill(Color.black))
             }
+
+            Button {
+                Haptics.light()
+                isInterestFieldFocused = false
+                showReferencePicker = true
+            } label: {
+                // Same glass-capsule style as the attribute drop-down pills,
+                // no icon.
+                Text(L(vm.referencedDecks.isEmpty ? "Reference a deck" : "Add"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .buttonStyle(.plain)
         }
-        .scrollClipDisabled()
     }
 
     // Display names for each page. Page 0 ("Generate") is the existing
@@ -608,7 +601,7 @@ struct CreateDeckSheet: View {
     private var comingSoonPage: some View {
         VStack {
             Spacer()
-            Text("Coming Soon")
+            Text(L("Coming Soon"))
                 .font(.custom("NeueHaasDisplay-Light", size: 20))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -621,7 +614,7 @@ struct CreateDeckSheet: View {
     private func blankPage(index: Int) -> some View {
         VStack {
             Spacer()
-            Text(pageTitles[index])
+            Text(L(pageTitles[index]))
                 .font(.custom("NeueHaasDisplay-Light", size: 20))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -631,21 +624,73 @@ struct CreateDeckSheet: View {
 
     // MARK: - Bottom controls
 
-    // Keyboard Done button — same behavior as the original
-    // safeAreaInset bottom accessory, now stacked above the page
-    // toggle so both can coexist.
-    private var keyboardAccessory: some View {
-        HStack {
-            Spacer()
-            Button("Done") {
-                Haptics.light()
-                isInterestFieldFocused = false
+    // Pinned white bar for the Generate form: the attribute drop-downs in
+    // a horizontally-scrolling glass-pill strip, then the black Generate
+    // button. Sits on solid white so it "interrupts" the scroll area's
+    // subtle gradient, matching the design comp.
+    private var generateBottomBar: some View {
+        VStack(spacing: 16) {
+            ScrollViewReader { hProxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .center, spacing: 10) {
+                        AttributesRow(
+                            language: vm.language,
+                            dialect: vm.dialect,
+                            content: vm.contentType,
+                            amount: vm.amount,
+                            level: vm.level,
+                            onTap: { vm.activeAttribute = $0 },
+                            coachStore: coachStore
+                        )
+                        // Reference-deck chips + pill trail after the Level
+                        // pill in the same horizontal strip.
+                        referenceDeckPills
+                    }
+                    .padding(.horizontal, 20)
+                }
+                .scrollClipDisabled()
+                .onAppear { hScrollProxy = hProxy }
+                // Track the strip's viewport (global) + live offset so the
+                // tour computes each pill's on-screen frame deterministically.
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { newValue in
+                    coachStore.hViewport = newValue
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, newValue in
+                    coachStore.hOffsetX = newValue
+                }
             }
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(.black)
+            .id("coach.attributes")
+
+            Button {
+                Haptics.medium()
+                runGeneration()
+            } label: {
+                ZStack {
+                    Text(L("Generate"))
+                        .font(.custom("NeueHaasDisplay-Light", size: 22))
+                        .foregroundStyle(.white)
+                        .opacity(vm.isGenerating ? 0 : 1)
+                    if vm.isGenerating {
+                        ProgressView()
+                            .tint(.white)
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 64)
+                .background(Color.black)
+                .clipShape(Capsule())
+                .coachAnchor(.generate, store: coachStore)
+            }
+            .buttonStyle(.plain)
+            .disabled(vm.isGenerating)
+            .padding(.horizontal, 20)
+            .id("coach.generate")
         }
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8)
+        .padding(.top, 12)
+        // ~40pt gap between the Generate button and the page tab below it,
+        // which shifts the whole bar (and the scroll content above) upward.
+        .padding(.bottom, 40)
+        .frame(maxWidth: .infinity)
         .background(Color.white)
     }
 
@@ -668,9 +713,10 @@ struct CreateDeckSheet: View {
                                 togglePosition = idx
                             }
                         } label: {
-                            Text(pageTitles[idx])
+                            Text(L(pageTitles[idx]))
                                 .font(.system(size: 15, weight: currentPage == idx ? .semibold : .regular))
-                                .foregroundStyle(currentPage == idx ? .black : .black.opacity(0.4))
+                                // White chips on the inverted Camera tab.
+                                .foregroundStyle((currentPage == 1 ? Color.white : Color.black).opacity(currentPage == idx ? 1 : 0.4))
                                 .padding(.vertical, 10)
                                 .contentShape(Rectangle())
                         }
@@ -868,6 +914,9 @@ struct CreateDeckSheet: View {
             guard navPath.last == .curating else { return }
 
             if let deck = vm.generatedDeck {
+                // A deck was actually generated in this language, so it now
+                // qualifies for the picker's "Recently Used" section.
+                RecentAttributeStore.recordLanguage(vm.language)
                 // Soft hand-off: signal CuratingView to fade visuals +
                 // audio, give it a beat to do so, then swap
                 // [.curating] → [.results] in one mutation so the
@@ -890,6 +939,21 @@ struct CreateDeckSheet: View {
         }
     }
 
+    // Drives the status bar across the Create-New flow: white (light)
+    // content over the black surfaces (the Camera tab and the black
+    // Curating screen), black (dark) content over the white surfaces
+    // (the Generate/other forms and the white Results screen).
+    private func applyCreateStatusBar() {
+        let wantsLight: Bool
+        switch navPath.last {
+        case .curating: wantsLight = true          // black immersive screen
+        case .results:  wantsLight = false         // white results screen
+        case .none:     wantsLight = (currentPage == 1)  // black Camera tab vs white forms
+        }
+        AppTabRouter.shared.forceLightStatusBar = wantsLight
+        AppTabRouter.shared.forceDarkStatusBar = !wantsLight
+    }
+
     private var errorAlertBinding: Binding<Bool> {
         Binding(
             get: { vm.generationError != nil },
@@ -910,12 +974,12 @@ struct CreateDeckSheet: View {
     // Ordered walkthrough for the first-run coach tour.
     private var tourSteps: [CreateDeckTourStep] {
         [
-            .init(target: .language, caption: "Choose the language you're learning"),
-            .init(target: .dialect, caption: "Pick a dialect or regional variety"),
-            .init(target: .content, caption: "Words or full sentences — your call"),
-            .init(target: .amount, caption: "Set how many cards to generate"),
-            .init(target: .level, caption: "Match it to your proficiency level"),
-            .init(target: .generate, caption: "Tap Generate, and your deck is ready")
+            .init(target: .language, caption: L("Choose the language you're learning")),
+            .init(target: .dialect, caption: L("Pick a dialect or regional variety")),
+            .init(target: .content, caption: L("Words or full sentences — your call")),
+            .init(target: .amount, caption: L("Set how many cards to generate")),
+            .init(target: .level, caption: L("Match it to your proficiency level")),
+            .init(target: .generate, caption: L("Tap Generate, and your deck is ready"))
         ]
     }
 

@@ -3,15 +3,20 @@ import Combine
 
 // The practice rectangle that appears below the flash card when handwriting
 // mode is on. Drives two tiers behind one UI:
-//   • strokeMatch (Chinese/Japanese) — validate each stroke against bundled
-//     medians, in order; animate the correct stroke as a hint after failures.
-//   • template   (Korean/Arabic, and any CJK word outside the bundled subset)
-//     — trace a faint rendered guide; score by ink-coverage overlap.
+//   • strokeMatch (Chinese/Japanese, and Korean via jamo composition) —
+//     validate each stroke against medians, in order; animate the correct
+//     stroke as a hint after failures.
+//   • template   (Arabic, and any CJK/Korean word outside available data) —
+//     trace a faint rendered guide with an auto-playing directional hint;
+//     score by ink-coverage overlap.
 //
 // Styling mirrors the flash card: white surface, 4pt corners, soft shadow.
 struct HandwritingPracticeView: View {
     let word: String
     let script: HandwritingScript
+    // When true, the whole surface flips to a dark palette so it reads on a
+    // black background (used by the word detail sheet's writing page).
+    var inverted: Bool = false
     // Fired once when the whole word has been written successfully, so the
     // session can count it toward the summary + bonus XP.
     var onCompleted: (() -> Void)? = nil
@@ -26,14 +31,33 @@ struct HandwritingPracticeView: View {
     @State private var demoProgress: CGFloat = 0
     @State private var demoTask: Task<Void, Never>?
     @State private var drawSide: CGFloat = 0
+    // Template-mode (Arabic) guided-tracing animation: an auto-playing sweep
+    // in the writing direction that shows the path without grading strokes.
+    @State private var templateGuiding = false
+    @State private var templateGuideTask: Task<Void, Never>?
 
     private let accent = Color(red: 0.20, green: 0.48, blue: 0.92)
     private let goodColor = Color(red: 0.16, green: 0.55, blue: 0.36)
     private let badColor = Color(red: 0.80, green: 0.28, blue: 0.28)
 
-    init(word: String, script: HandwritingScript, onCompleted: (() -> Void)? = nil) {
+    // Palette that flips between the light (in-card) look and the dark
+    // (inverted) look. Keeps every baked color in one place.
+    private var surfaceColor: Color { inverted ? .clear : .white }
+    private var primaryText: Color { inverted ? .white : .black }
+    private var secondaryText: Color { inverted ? Color(white: 0.6) : Color.secondary }
+    private var canvasFill: Color { inverted ? Color(white: 0.12) : Color(white: 0.975) }
+    private var gridColor: Color { inverted ? Color(white: 0.30) : Color(white: 0.86) }
+    private var skeletonFaint: Color { inverted ? Color(white: 0.34) : Color(white: 0.82) }
+    private var skeletonDone: Color { inverted ? Color(white: 0.50) : Color(white: 0.72) }
+    private var inkUIColor: UIColor { inverted ? UIColor(white: 0.95, alpha: 1) : UIColor(white: 0.05, alpha: 1) }
+    private var chipFill: Color { inverted ? Color(white: 0.18) : Color(white: 0.93) }
+    private var filledButtonBg: Color { inverted ? .white : .black }
+    private var filledButtonText: Color { inverted ? .black : .white }
+
+    init(word: String, script: HandwritingScript, inverted: Bool = false, onCompleted: (() -> Void)? = nil) {
         self.word = word
         self.script = script
+        self.inverted = inverted
         self.onCompleted = onCompleted
         _model = StateObject(wrappedValue: HandwritingPracticeModel(word: word, script: script))
     }
@@ -48,18 +72,26 @@ struct HandwritingPracticeView: View {
             controlsRow
         }
         .padding(16)
-        .background(Color.white)
+        .background(surfaceColor)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 4)
+        .shadow(color: .black.opacity(inverted ? 0 : 0.06), radius: 8, x: 0, y: 4)
         .onAppear {
             model.attach(canvas: canvas)
             model.loadStrokesIfNeeded()
+            startTemplateGuide()
         }
         .onChange(of: model.hintToken) { _, _ in replayHint() }
+        .onChange(of: model.mode) { _, _ in startTemplateGuide() }
         .onChange(of: model.status) { _, newValue in
-            if newValue == .complete { onCompleted?() }
+            if newValue == .complete {
+                stopTemplateGuide()
+                onCompleted?()
+            }
         }
-        .onDisappear { stopStrokeDemo() }
+        .onDisappear {
+            stopStrokeDemo()
+            stopTemplateGuide()
+        }
     }
 
     // MARK: Character stepper (multi-character words)
@@ -79,9 +111,9 @@ struct HandwritingPracticeView: View {
                 } label: {
                     Text(String(character))
                         .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(isCurrent ? .white : .black)
+                        .foregroundStyle(isCurrent ? filledButtonText : primaryText)
                         .frame(width: 34, height: 34)
-                        .background(Circle().fill(isCurrent ? Color.black : Color(white: 0.93)))
+                        .background(Circle().fill(isCurrent ? filledButtonBg : chipFill))
                         .overlay(Circle().stroke(done ? goodColor : .clear, lineWidth: 2))
                 }
                 .buttonStyle(.plain)
@@ -97,20 +129,20 @@ struct HandwritingPracticeView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.title)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(primaryText)
                 Text(model.subtitle)
                     .font(.system(size: 11))
-                    .foregroundStyle(model.feedbackColorHint(good: goodColor, bad: badColor) ?? .secondary)
+                    .foregroundStyle(model.feedbackColorHint(good: goodColor, bad: badColor) ?? secondaryText)
             }
             Spacer()
             if model.mode == .strokeMatch {
                 Text("\(model.completedStrokes)/\(model.totalStrokes)")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryText)
             } else {
                 Text("\(Int(model.lastRecall * 100))%")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(model.lastRecall > 0.001 ? .black : .secondary)
+                    .foregroundStyle(model.lastRecall > 0.001 ? primaryText : secondaryText)
             }
         }
     }
@@ -122,10 +154,10 @@ struct HandwritingPracticeView: View {
             let side = min(geo.size.width, 210)
             ZStack {
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(Color(white: 0.975))
+                    .fill(canvasFill)
 
                 GuideGridShape()
-                    .stroke(Color(white: 0.86), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                    .stroke(gridColor, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     .allowsHitTesting(false)
 
                 // Tier-specific faint guide.
@@ -133,11 +165,11 @@ struct HandwritingPracticeView: View {
                     // Whole-character skeleton (very faint) + already-done
                     // strokes slightly darker so progress reads at a glance.
                     PolylineShape(strokes: layout.viewStrokes)
-                        .stroke(Color(white: 0.82),
+                        .stroke(skeletonFaint,
                                 style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
                         .allowsHitTesting(false)
                     PolylineShape(strokes: Array(layout.viewStrokes.prefix(model.completedStrokes)))
-                        .stroke(Color(white: 0.72),
+                        .stroke(skeletonDone,
                                 style: StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round))
                         .allowsHitTesting(false)
                 } else if let img = model.templateImage {
@@ -145,13 +177,15 @@ struct HandwritingPracticeView: View {
                         .resizable()
                         .frame(width: side, height: side)
                         .opacity(model.templateOpacity)
+                        // Dark guide ink flips light so it shows on the dark canvas.
+                        .colorInverted(inverted)
                         .allowsHitTesting(false)
                 }
 
                 // The ink surface.
                 HandwritingCanvasView(
                     controller: canvas,
-                    strokeColor: UIColor(white: 0.05, alpha: 1),
+                    strokeColor: inkUIColor,
                     onStrokeEnd: { last, all in
                         model.handleStroke(last: last, all: all)
                     }
@@ -191,17 +225,27 @@ struct HandwritingPracticeView: View {
                     }
                 }
 
-                // Template direction sweep hint.
-                if model.mode == .template, model.hintLevel >= 2, let img = model.templateImage {
+                // Template direction guide: an auto-playing sweep (plus a
+                // travelling pen dot) that reveals the shape in the writing
+                // direction — right→left for Arabic. Shown while the guide is
+                // running or once the learner has asked for a stronger hint.
+                if model.mode == .template, (templateGuiding || model.hintLevel >= 2),
+                   let img = model.templateImage {
                     Image(uiImage: img)
                         .resizable()
                         .frame(width: side, height: side)
                         .opacity(0.9)
+                        .colorInverted(inverted)
                         .mask(
                             Rectangle()
                                 .frame(width: side * 0.28)
                                 .position(x: sweepX(side: side), y: side / 2)
                         )
+                        .allowsHitTesting(false)
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 12, height: 12)
+                        .position(x: sweepX(side: side), y: side / 2)
                         .allowsHitTesting(false)
                 }
 
@@ -247,10 +291,10 @@ struct HandwritingPracticeView: View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(filled ? .white : .black)
+                .foregroundStyle(filled ? filledButtonText : primaryText)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 9)
-                .background(filled ? Color.black : Color(white: 0.93),
+                .background(filled ? filledButtonBg : chipFill,
                             in: RoundedRectangle(cornerRadius: 4))
         }
         .buttonStyle(.plain)
@@ -266,11 +310,38 @@ struct HandwritingPracticeView: View {
 
     private func replayHint() {
         if model.mode == .template {
-            hintProgress = 0
-            withAnimation(.easeInOut(duration: 1.15)) { hintProgress = 1 }
+            startTemplateGuide()
         } else {
             playStrokeDemo()
         }
+    }
+
+    // Auto-plays the directional guide a few times for template scripts
+    // (Arabic). Non-grading: it just animates the sweep + dot along the
+    // writing direction so the learner sees the path and flow.
+    private func startTemplateGuide() {
+        templateGuideTask?.cancel()
+        guard model.mode == .template else { return }
+        templateGuideTask = Task { @MainActor in
+            // Let the template image render before the first pass.
+            try? await Task.sleep(for: .milliseconds(400))
+            for _ in 0..<3 {
+                if Task.isCancelled { return }
+                templateGuiding = true
+                hintProgress = 0
+                withAnimation(.easeInOut(duration: 1.5)) { hintProgress = 1 }
+                try? await Task.sleep(for: .milliseconds(1650))
+                if Task.isCancelled { return }
+                try? await Task.sleep(for: .milliseconds(450))
+            }
+            templateGuiding = false
+        }
+    }
+
+    private func stopTemplateGuide() {
+        templateGuideTask?.cancel()
+        templateGuideTask = nil
+        templateGuiding = false
     }
 
     // Animates the current character stroke-by-stroke, in the correct
@@ -664,6 +735,15 @@ final class HandwritingPracticeModel: ObservableObject {
 private extension Array {
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+private extension View {
+    // Applies `.colorInvert()` only when `on` is true, so a caller can flip
+    // baked-in image colors for the dark presentation.
+    @ViewBuilder
+    func colorInverted(_ on: Bool) -> some View {
+        if on { self.colorInvert() } else { self }
     }
 }
 

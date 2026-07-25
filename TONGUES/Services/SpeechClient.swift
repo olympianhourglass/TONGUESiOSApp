@@ -147,9 +147,11 @@ final class SpeechClient {
         appleSynth.isSpeaking || (player?.isPlaying ?? false)
     }
 
-    // Dedicated path for English translation playback. Tries ElevenLabs first
-    // for a natural voice, then falls back to Apple TTS so onFinish still fires
-    // even when the API key isn't set or the request fails.
+    // Dedicated path for native-language translation playback. For English
+    // it uses ElevenLabs (a natural voice) with an Apple-TTS fallback. For any
+    // other native language, ElevenLabs here is the English-only monolingual
+    // model — which would mispronounce — so we route straight to Apple TTS in
+    // the native language for correct pronunciation.
     func speakElevenLabs(_ text: String, rate: Float = 1.0, onFinish: (() -> Void)? = nil) {
         let trimmed = text.strippingEmoji()
         guard !trimmed.isEmpty else {
@@ -163,6 +165,14 @@ final class SpeechClient {
         appleSynth.stopSpeaking(at: .immediate)
         currentSpokenWordRange = nil
         pendingCompletion = onFinish
+
+        let native = AppLanguage.currentNative
+        guard native == .en else {
+            // Native-language audio via Apple TTS in that language.
+            emitStatus("\(native.speechLanguageName) voice")
+            speakWithApple(trimmed, language: native.speechLanguageName, rate: rate)
+            return
+        }
 
         guard ElevenLabsClient.isConfigured else {
             emitStatus("ElevenLabs key missing — system English fallback")

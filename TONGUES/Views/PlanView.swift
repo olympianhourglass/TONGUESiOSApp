@@ -23,7 +23,7 @@ struct PlanView: View {
                 createState
             }
         }
-        .navigationTitle("Your Plan")
+        .navigationTitle(L("Your Plan"))
         .navigationBarTitleDisplayMode(.inline)
         .task { await vm.load() }
         .overlay(alignment: .top) {
@@ -50,13 +50,13 @@ struct PlanView: View {
     private var createState: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("No plan yet")
+                Text(L("No plan yet"))
                     .font(.custom("PlayfairDisplay-Regular", size: 28))
                     .tracking(-1.5)
                     .foregroundStyle(.black)
                 Text(vm.language == nil
-                     ? "Finish onboarding to pick a language first."
-                     : "Your tutor will look at your goals, your decks, and what you keep forgetting, then lay out a unit-by-unit path for \(vm.language ?? "")."
+                     ? L("Finish onboarding to pick a language first.")
+                     : L("Your tutor will look at your goals, your decks, and what you keep forgetting, then lay out a unit-by-unit path for %@.", vm.language ?? "")
                 )
                 .font(.custom("NeueHaasDisplay-Light", size: 15))
                 .foregroundStyle(.secondary)
@@ -75,7 +75,7 @@ struct PlanView: View {
                         Haptics.medium()
                         Task { await vm.createPlan() }
                     } label: {
-                        Text("Create my plan")
+                        Text(L("Create my plan"))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
@@ -119,13 +119,13 @@ struct PlanView: View {
                     .frame(width: 20)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(step.label)
+                        Text(L(step.label))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 15))
                             .foregroundStyle(isDone || isActive ? .black : .secondary)
                         if isActive, let detail = step.detail {
                             Text(vm.stageSeconds >= 3
-                                 ? "\(detail) · \(vm.stageSeconds)s"
-                                 : detail)
+                                 ? L("%@ · %ds", L(detail), vm.stageSeconds)
+                                 : L(detail))
                                 .font(.custom("NeueHaasDisplay-Light", size: 12))
                                 .foregroundStyle(.secondary)
                         }
@@ -156,7 +156,7 @@ struct PlanView: View {
                         .tracking(-1.2)
                         .foregroundStyle(.black)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("\(plan.language) · toward \(plan.targetLevel) · \(plan.completedUnitCount)/\(plan.units.count) units done")
+                    Text(L("%@ · toward %@ · %d/%d units done", plan.language, plan.targetLevel, plan.completedUnitCount, plan.units.count))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -253,7 +253,7 @@ struct PlanView: View {
                     .foregroundStyle(.black)
                     .fixedSize(horizontal: false, vertical: true)
                 if activity.type != "deck" && activity.completedAt == nil {
-                    Text(activityHint(activity.type))
+                    Text(L(activityHint(activity.type)))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -272,7 +272,7 @@ struct PlanView: View {
                         ProgressView()
                             .frame(width: 70, height: 30)
                     } else {
-                        Text("Generate")
+                        Text(L("Generate"))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 12))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 12)
@@ -435,7 +435,7 @@ final class PlanViewModel {
             advance(to: .saving)
             try await FirebaseCurriculumService.save(generated)
             plan = generated
-            showToast("Plan created")
+            showToast(L("Plan created"))
         } catch {
             errorText = error.localizedDescription
         }
@@ -496,12 +496,12 @@ final class PlanViewModel {
                 self.plan = plan
             }
             decks = (try? await FirebaseDeckService.fetchDecks()) ?? decks
-            showToast("Saved “\(deck.title)” to your library")
+            showToast(L("Saved “%@” to your library", deck.title))
         } catch let error as SubscriptionError {
             capError = error
         } catch {
             errorText = error.localizedDescription
-            showToast("Couldn't generate that deck")
+            showToast(L("Couldn't generate that deck"))
         }
     }
 

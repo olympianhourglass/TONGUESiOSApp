@@ -56,8 +56,9 @@ enum CurriculumPlanner {
         let dateLine = targetDate.map {
             "Target date: \(ISO8601DateFormatter().string(from: $0)) — fit the plan inside it."
         } ?? "No hard deadline."
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        Design a study curriculum for this language learner.
+        Design a study curriculum for this language learner. Write ALL learner-facing text — the goalStatement, every unit title, and every can-do goal — in \(native).
 
         Their full profile (level estimate, goals, vocabulary state, recurring errors, habits):
 
@@ -116,8 +117,9 @@ enum CurriculumPlanner {
         existing: CurriculumPlan,
         learnerModel: LearnerModel
     ) async throws -> (plan: CurriculumPlan, changes: [String]) {
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        You maintain a language-learning curriculum.
+        You maintain a language-learning curriculum. Write ALL learner-facing text — unit titles, can-do goals, and change notes — in \(native).
 
         Here is the current plan:
 

@@ -278,8 +278,8 @@ struct CameraPage: View {
             camera.stop()
             arManager.pause()
         }
-        .alert("Something went wrong", isPresented: errorBinding) {
-            Button("OK") {
+        .alert(L("Something went wrong"), isPresented: errorBinding) {
+            Button(L("OK")) {
                 errorText = nil
                 arManager.errorText = nil
             }
@@ -420,7 +420,9 @@ struct CameraPage: View {
                 }
             }
         }
-        .frame(height: mode == .ar ? 420 : 360)
+        // All three modes share the AR window's height so switching
+        // between Object / Sign / AR doesn't resize the viewfinder.
+        .frame(height: 420)
         // Zoom read-out, shown only while zoomed in. Matches the mode
         // picker's tinted-glass capsule so it reads on any camera feed.
         .overlay(alignment: .top) {
@@ -506,10 +508,10 @@ struct CameraPage: View {
                 Image(systemName: "arkit")
                     .font(.system(size: 36))
                     .foregroundStyle(.white.opacity(0.7))
-                Text("AR isn't available on this device")
+                Text(L("AR isn't available on this device"))
                     .font(.custom("NeueHaasDisplay-Light", size: 16))
                     .foregroundStyle(.white)
-                Text("Use Object mode to identify one thing at a time instead.")
+                Text(L("Use Object mode to identify one thing at a time instead."))
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.white.opacity(0.6))
                     .multilineTextAlignment(.center)
@@ -558,7 +560,7 @@ struct CameraPage: View {
                     HStack(spacing: 6) {
                         Image(systemName: candidate.systemImage)
                             .font(.system(size: 12, weight: .semibold))
-                        Text(candidate.title)
+                        Text(L(candidate.title))
                             .font(.custom("NeueHaasDisplay-Medium", size: 13))
                     }
                     .foregroundStyle(mode == candidate ? .black : .white)
@@ -587,10 +589,10 @@ struct CameraPage: View {
             Image(systemName: "camera.fill.badge.ellipsis")
                 .font(.system(size: 36))
                 .foregroundStyle(.white.opacity(0.7))
-            Text("Camera access required")
+            Text(L("Camera access required"))
                 .font(.custom("NeueHaasDisplay-Light", size: 16))
                 .foregroundStyle(.white)
-            Text("Enable Camera for TONGUES in Settings to identify objects.")
+            Text(L("Enable Camera for TONGUES in Settings to identify objects."))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .foregroundStyle(.white.opacity(0.6))
                 .multilineTextAlignment(.center)
@@ -606,11 +608,11 @@ struct CameraPage: View {
                 ProgressView()
                     .tint(.white)
                     .scaleEffect(0.8)
-                Text("Looking around…")
+                Text(L("Looking around…"))
             } else {
                 Image(systemName: "viewfinder")
                     .font(.system(size: 13, weight: .medium))
-                Text(arManager.labels.isEmpty ? "Point at objects · tap to scan" : "Keep panning · tap to scan")
+                Text(L(arManager.labels.isEmpty ? "Point at objects · tap to scan" : "Keep panning · tap to scan"))
             }
         }
         .font(.custom("NeueHaasDisplay-Medium", size: 13))
@@ -667,44 +669,41 @@ struct CameraPage: View {
 
     // MARK: Attributes (language + dialect only)
 
+    // Horizontal scroll so wide "label + selection" chips never push past
+    // the screen bounds (or skew the rest of the page wider). The leftmost
+    // chip inherits the parent VStack's 8pt leading inset.
     private var attributesSection: some View {
-        HStack(alignment: .top, spacing: 12) {
-            attribute(.language, value: language)
-            attribute(.dialect, value: dialect)
-            Spacer(minLength: 0)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .center, spacing: 10) {
+                attribute(.language, value: language)
+                attribute(.dialect, value: dialect)
+            }
         }
     }
 
-    // Mirrors the AttributesRow tile style so the Camera page reads
-    // visually consistent with the Generate page — same chevron pill,
-    // same font, same tap behavior driven by the parent sheet's
-    // existing attribute picker.
+    // Mirrors the Generate page's glass-pill style so the Camera page reads
+    // visually consistent — label + selection on a single line, tinted white
+    // for this page's dark background (label solid, value lighter opacity).
     private func attribute(_ kind: DeckAttribute, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(kind.title)
-                .font(.custom("NeueHaasDisplay-Light", size: 12))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-            Button {
-                Haptics.light()
-                onAttributeTap(kind)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(value)
-                        .font(.custom("NeueHaasDisplay-Light", size: 16))
-                        .foregroundStyle(.black)
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.black.opacity(0.05)))
+        Button {
+            Haptics.light()
+            onAttributeTap(kind)
+        } label: {
+            HStack(spacing: 6) {
+                Text(L(kind.title))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                    .foregroundStyle(.white)
+                Text(localizedAttributeValue(value, for: kind))
+                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .foregroundStyle(.white.opacity(0.5))
             }
-            .buttonStyle(.plain)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .glassEffect(.regular.interactive(), in: .capsule)
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: Result section
@@ -722,22 +721,22 @@ struct CameraPage: View {
     // toggleable in/out of the batch that the save flows operate on.
     private var collectedSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Collected")
+            Text(L("Collected"))
                 .font(.custom("NeueHaasDisplay-Light", size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.6))
                 .textCase(.uppercase)
                 .tracking(0.5)
 
             if arManager.labels.isEmpty {
-                Text("Just point your camera around the room — labels appear automatically on everything we recognize. Tap a label to keep it or drop it.")
+                Text(L("Just point your camera around the room — labels appear automatically on everything we recognize. Tap a label to keep it or drop it."))
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.6))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 24)
                     .padding(.horizontal, 18)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color(white: 0.92), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
                     )
             } else {
                 VStack(alignment: .leading, spacing: 0) {
@@ -749,20 +748,20 @@ struct CameraPage: View {
                             HStack(spacing: 12) {
                                 Image(systemName: label.isCollected ? "checkmark.circle.fill" : "circle")
                                     .font(.system(size: 18))
-                                    .foregroundStyle(label.isCollected ? .black : Color(white: 0.75))
+                                    .foregroundStyle(label.isCollected ? .white : Color.white.opacity(0.4))
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(label.item.word)
                                         .font(.custom("NeueHaasDisplay-Mediu", size: 17))
-                                        .foregroundStyle(.black)
+                                        .foregroundStyle(.white)
                                     HStack(spacing: 6) {
                                         Text(label.english)
                                             .font(.custom("NeueHaasDisplay-Light", size: 13))
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(.white.opacity(0.6))
                                         if let translit = label.item.transliteration, !translit.isEmpty {
                                             Text(translit)
                                                 .font(.system(size: 12))
                                                 .italic()
-                                                .foregroundStyle(.secondary)
+                                                .foregroundStyle(.white.opacity(0.6))
                                         }
                                     }
                                 }
@@ -773,7 +772,7 @@ struct CameraPage: View {
                         }
                         .buttonStyle(.plain)
                         if label.id != arManager.labels.last?.id {
-                            Divider()
+                            Divider().overlay(Color.white.opacity(0.12))
                         }
                     }
                 }
@@ -781,7 +780,7 @@ struct CameraPage: View {
                 .padding(.vertical, 6)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(white: 0.88), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
                 )
             }
         }
@@ -789,24 +788,24 @@ struct CameraPage: View {
 
     private var recognizedSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Recognized")
+            Text(L("Recognized"))
                 .font(.custom("NeueHaasDisplay-Light", size: 11))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.6))
                 .textCase(.uppercase)
                 .tracking(0.5)
             if let item = identifiedItem, let english = identifiedEnglish {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(english)
                         .font(.custom("NeueHaasDisplay-Light", size: 22))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(.white)
                     Text(item.word)
                         .font(.custom("NeueHaasDisplay-Mediu", size: 28))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(.white)
                     if let translit = item.transliteration, !translit.isEmpty {
                         Text(translit)
                             .font(.system(size: 14))
                             .italic()
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.6))
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -814,18 +813,18 @@ struct CameraPage: View {
                 .padding(.horizontal, 18)
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color(white: 0.88), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
                 )
             } else {
-                Text(placeholderText)
+                Text(L(placeholderText))
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.6))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 24)
                     .padding(.horizontal, 18)
                     .overlay(
                         RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color(white: 0.92), lineWidth: 1)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
                     )
             }
         }
@@ -847,15 +846,16 @@ struct CameraPage: View {
     private var actionsSection: some View {
         HStack(spacing: 12) {
             ActionCard(
-                title: isSavingNewDeck ? "Saving…" : "Create New Deck",
+                title: L(isSavingNewDeck ? "Saving…" : "Create New Deck"),
                 systemImage: isSavingNewDeck ? "arrow.up.circle" : "square.stack.3d.up",
-                isPrimary: false
+                isPrimary: false,
+                inverted: true
             ) {
                 Haptics.medium()
                 showCreateCover = true
             }
             .disabled(itemsForSave.isEmpty || isSavingNewDeck)
-            ActionCard(title: "Save to Deck", systemImage: "plus.circle", isPrimary: true) {
+            ActionCard(title: L("Save to Deck"), systemImage: "plus.circle", isPrimary: true, inverted: true) {
                 Haptics.medium()
                 showDeckPicker = true
             }
@@ -871,7 +871,7 @@ struct CameraPage: View {
         camera.capture { image in
             guard let image else {
                 isIdentifying = false
-                errorText = "Couldn't read the photo. Try again."
+                errorText = L("Couldn't read the photo. Try again.")
                 return
             }
             // Both modes send a ~1024px JPEG to the vision model — small
@@ -879,7 +879,7 @@ struct CameraPage: View {
             // read an object or the text on a sign.
             guard let jpeg = image.tongues_downscaledJPEG(maxDimension: 1024, quality: 0.85) else {
                 isIdentifying = false
-                errorText = "Couldn't encode the photo. Try again."
+                errorText = L("Couldn't encode the photo. Try again.")
                 return
             }
             switch mode {

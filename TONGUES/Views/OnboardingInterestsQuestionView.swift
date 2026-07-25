@@ -60,16 +60,15 @@ struct OnboardingInterestsQuestionView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             if showsProgress {
-                Text("Question \(questionNumber) of \(totalQuestions)")
+                Text(L("Question %d of %d", questionNumber, totalQuestions))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            Text("What are you most interested in?")
-                .font(.custom("PlayfairDisplay-Regular", size: 28))
-                .tracking(-2.24)
+            Text(L("What are you most interested in?"))
+                .font(.custom("NeueHaasDisplay-Light", size: 28))
                 .foregroundStyle(.black)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -82,7 +81,7 @@ struct OnboardingInterestsQuestionView: View {
             Image(systemName: "plus")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.secondary)
-            TextField("Add your own interest…", text: $customDraft)
+            TextField(L("Add your own interest…"), text: $customDraft)
                 .font(.system(size: 15))
                 .submitLabel(.done)
                 .focused($customFieldFocused)
@@ -137,7 +136,7 @@ struct OnboardingInterestsQuestionView: View {
         lookup: ((String) -> [String]?)? = nil
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(title)
+            Text(L(title))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
@@ -157,7 +156,7 @@ struct OnboardingInterestsQuestionView: View {
                         // return sub-chips for a custom entry.
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Finding related interests for \(parent)…")
+                            Text(L("Finding related interests for %@…", parent))
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
                         }
@@ -172,7 +171,7 @@ struct OnboardingInterestsQuestionView: View {
 
     private func subChipRow(parent: String, subs: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(parent.uppercased())
+            Text(L(parent).uppercased())
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.secondary.opacity(0.7))
                 .tracking(0.6)
@@ -206,7 +205,7 @@ struct OnboardingInterestsQuestionView: View {
                 selected.insert(chip)
             }
         } label: {
-            Text(chip)
+            Text(L(chip))
                 .font(.system(size: isParent ? 14 : 13, weight: .medium))
                 .foregroundStyle(isSelected ? Color.white : Color.black)
                 .padding(.horizontal, isParent ? 14 : 12)
@@ -231,7 +230,7 @@ struct OnboardingInterestsQuestionView: View {
             state.interests = Array(selected)
             onNext()
         } label: {
-            Text(ctaTitle ?? "Next")
+            Text(L(ctaTitle ?? "Next"))
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)

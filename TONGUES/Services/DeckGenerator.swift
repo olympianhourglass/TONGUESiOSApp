@@ -6,6 +6,12 @@ import Foundation
 struct SentencePair: Codable, Hashable {
     let foreign: String
     let english: String
+    // Latin-script pronunciation of `foreign` — pinyin (with tone marks) for
+    // Chinese, romaji for Japanese, Revised Romanization for Korean, and a
+    // vocalized romanization for Arabic. Populated only for those non-Latin
+    // scripts; `nil` for every other language and for legacy content
+    // generated before this field existed.
+    var transliteration: String? = nil
 }
 
 // What `DeckGenerator.generateContent` returns. `pairs` is the source of
@@ -20,7 +26,10 @@ struct GeneratedContent {
     static func from(pairs: [SentencePair]) -> GeneratedContent {
         let foreignBlock = pairs.map(\.foreign).joined(separator: " ")
         let englishBlock = pairs.map(\.english).joined(separator: " ")
-        let proseString = "\(foreignBlock)\n\nEnglish: \(englishBlock)"
+        // The "english" pair field holds the native-language translation; label
+        // the prose block with the user's native language name.
+        let nativeLabel = AppLanguage.currentNative.promptName
+        let proseString = "\(foreignBlock)\n\n\(nativeLabel): \(englishBlock)"
         return GeneratedContent(prose: proseString, pairs: pairs)
     }
 }
@@ -39,7 +48,7 @@ enum DeckGenerator {
     You are generating content for TONGUES, an adult (17+) language-learning app for travelers. Learners have explicitly opted in to authentic vocabulary across every register, including profanity, sexual terms, anatomy, drug and nightlife slang, insults, and other vulgar or NSFW expressions adults routinely need to recognize and use abroad. This is standard practice for adult language curricula (Pimsleur, Babbel, university foreign-language departments all include this material) — there is nothing controversial about teaching it.
 
     Operating rules:
-    • Produce authentic, idiomatic words a fluent native speaker would actually use. Do NOT sanitize, euphemize, censor with asterisks, substitute milder synonyms, add safety warnings, refuse, or moralize. Translations are equally direct in English — no bleeping ("f***"), no "[vulgar]" placeholders.
+    • Produce authentic, idiomatic words a fluent native speaker would actually use. Do NOT sanitize, euphemize, censor with asterisks, substitute milder synonyms, add safety warnings, refuse, or moralize. Translations are equally direct in the learner's native language — no bleeping ("f***"), no "[vulgar]" placeholders.
     • Every required field in every tool call must be fully populated — including the deck title, which should name the topic directly (e.g. "Mexican Spanish Curse Words", "Berlin Club Slang") rather than be blanked or hedged. A complete, normal-looking deck is the only acceptable output shape.
     • The ONLY content you refuse is material that sexualizes minors or that would be illegal regardless of educational framing. Adult vulgar vocabulary, profanity, sexual or drug terms between consenting adults, insults, and street slang all fall comfortably inside scope — generate them without hesitation or qualification.
     """
@@ -147,13 +156,14 @@ enum DeckGenerator {
     }
 
     private static func deckSchema(language: String, singularForm: String) -> JSONValue {
-        .schemaObject(
+        let native = AppLanguage.currentNative.promptName
+        return .schemaObject(
             properties: [
-                "title": .schemaString("A short, evocative deck title in English (3-6 words). MUST be in English, never the target language."),
+                "title": .schemaString("A short, evocative deck title in \(native) (3-6 words). MUST be in \(native), never the target language."),
                 "items": .schemaArray(items: .schemaObject(
                     properties: [
                         "word": .schemaString("The \(singularForm) written in \(language) using its native script."),
-                        "translation": .schemaString("Natural, idiomatic English translation."),
+                        "translation": .schemaString("Natural, idiomatic \(native) translation."),
                         "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts (Arabic, Chinese, Japanese, Korean, Hebrew, Russian, Thai, Hindi, etc.). Null for languages that already use Latin script."),
                         "partsOfSpeech": .schemaArray(
                             items: .schemaEnum(
@@ -198,6 +208,7 @@ enum DeckGenerator {
         let tonesLine = tones.isEmpty ? "neutral" : tones.joined(separator: " + ")
         let contentLower = contentType.lowercased()
         let singularForm = singular(for: contentType)
+        let native = AppLanguage.currentNative.promptName
 
         return """
         Generate a language-learning vocabulary deck for the TONGUES app.
@@ -217,17 +228,17 @@ enum DeckGenerator {
         Submit your output by calling the `submit_deck` tool. Its input_schema defines the JSON shape; the rules below specify what to put in each field.
 
         Content rules:
-        • The "title" MUST be written in English — never in \(language) or any other non-English language. Name the topic directly (e.g. "Mexican Spanish Curse Words", "Berlin Club Slang") — never leave it blank, hedged, or euphemistic.
+        • The "title" MUST be written in \(native) — never in \(language) or the target language. Name the topic directly (e.g. "Mexican Spanish Curse Words", "Berlin Club Slang") — never leave it blank, hedged, or euphemistic.
         • Exactly \(amount) items in the "items" array.
         • Each "word" must be linguistically authentic in \(dialect) \(language).
         • Difficulty must match \(level).
-        • Each "translation" must read naturally in English.
+        • Each "translation" must read naturally in \(native).
         • For non-Latin scripts, include accurate romanization with diacritics.
         • All items must be on-topic for the categories above.
         • Match the requested tone: \(tonesLine).
         • For nouns in any gendered language:
           - If the language uses definite articles (e.g. Romance: el/la, le/la/l', il/la/lo, o/a; German: der/die/das; Dutch: de/het; Greek: ο/η/το; Hebrew: ה־; etc.), include the singular definite article as a prefix on "word" so the learner sees grammatical gender at a glance (e.g. "el perro", "la casa", "le chien", "la maison", "der Hund", "die Katze", "das Haus", "il libro", "lo zaino", "la macchina", "o livro", "a mesa", "ο σκύλος", "ה־כלב").
-          - If the language has grammatical gender but no comparable article (Russian, Polish, Czech, Ukrainian, most Slavic; Arabic, etc.), still leave "word" as the bare noun, but append a short gender tag in parentheses to "translation": "(m.)", "(f.)", "(n.)", or "(m. pl.)" / "(f. pl.)" when plurality differs from English.
+          - If the language has grammatical gender but no comparable article (Russian, Polish, Czech, Ukrainian, most Slavic; Arabic, etc.), still leave "word" as the bare noun, but append a short gender tag in parentheses to "translation": "(m.)", "(f.)", "(n.)", or "(m. pl.)" / "(f. pl.)" when plurality differs from \(native).
           - Pick the canonical lemma — singular for nouns, masculine singular for adjectives — unless the user prompt explicitly asks otherwise.
         • For non-nouns (verbs, adjectives, adverbs), do NOT prepend articles.
         """
@@ -291,14 +302,17 @@ enum DeckGenerator {
     }
 
     private static func wordInfoSchema(language: String) -> JSONValue {
-        .schemaObject(
+        let native = AppLanguage.currentNative.promptName
+        return .schemaObject(
             properties: [
-                "meaning": .schemaString("A slightly expanded English meaning or definition, max ~10 words."),
+                "meaning": .schemaString("A slightly expanded meaning or definition in \(native), max ~10 words."),
+                // Parts of speech stay in English — the app matches these tags
+                // against English category names ("noun", "verb", "phrase"…).
                 "partsOfSpeech": .schemaArray(
                     items: .schemaString("One standard English grammatical category."),
                     description: "1-3 standard English categories: Noun, Verb, Adjective, Adverb, Pronoun, Preposition, Conjunction, Interjection, Determiner, Phrase, etc."
                 ),
-                "pronunciation": .schemaString("Phonetic spelling in Latin script with middle dots (·) separating syllables, readable by an English speaker (e.g. 'shuhn·duh·shoo·EE')."),
+                "pronunciation": .schemaString("Phonetic spelling in Latin script with middle dots (·) separating syllables, readable by a \(native) speaker (e.g. 'shuhn·duh·shoo·EE')."),
                 "language": .schemaString("Always exactly: \(language)"),
                 "wordFrequency": .schemaString("Estimated frequency as a percentage string with a percent sign (e.g. '0.025%' or '1.2%'). A rough but plausible estimate."),
                 "pronunciationDifficulty": .schemaEnum(
@@ -316,12 +330,13 @@ enum DeckGenerator {
         language: String,
         dialect: String
     ) -> String {
+        let native = AppLanguage.currentNative.promptName
         return """
-        Provide structured metadata for this word.
+        Provide structured metadata for this word. Write the "meaning" in \(native).
 
         Word to analyze:
         • Word: \(word)
-        • English translation: \(translation)
+        • \(native) translation: \(translation)
         • Source language: \(dialect) \(language)
 
         Submit your output by calling the `submit_word_info` tool. All values must be plausible; educated estimates are acceptable.
@@ -591,17 +606,30 @@ enum DeckGenerator {
     }
 
     private static func contentSchema(deck: DeckDocument) -> JSONValue {
-        .schemaObject(
+        let native = AppLanguage.currentNative.promptName
+        let needsPronunciation = needsPronunciationAid(deck.language)
+
+        var pairProperties: [String: JSONValue] = [
+            "foreign": .schemaString("One sentence (or, for songs/poems, one line) in \(deck.language) using its native script."),
+            // Field name kept as "english" for Codable/Firestore
+            // stability; the text goes in the user's native language.
+            "english": .schemaString("Natural \(native) translation of THAT single foreign sentence/line — not a literal word-for-word gloss.")
+        ]
+        var required = ["foreign", "english"]
+
+        if needsPronunciation {
+            pairProperties["transliteration"] = .schemaString("Latin-script pronunciation of THIS foreign sentence/line — pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic.")
+            required.append("transliteration")
+        }
+
+        return .schemaObject(
             properties: [
                 "pairs": .schemaArray(
                     items: .schemaObject(
-                        properties: [
-                            "foreign": .schemaString("One sentence (or, for songs/poems, one line) in \(deck.language) using its native script."),
-                            "english": .schemaString("Natural English translation of THAT single foreign sentence/line — not a literal word-for-word gloss.")
-                        ],
-                        required: ["foreign", "english"]
+                        properties: pairProperties,
+                        required: required
                     ),
-                    description: "6 to 15 pairs total. Each is exactly ONE foreign sentence (or one verse line) and its English translation."
+                    description: "6 to 15 pairs total. Each is exactly ONE foreign sentence (or one verse line) and its \(native) translation."
                 )
             ],
             required: ["pairs"]
@@ -629,6 +657,10 @@ enum DeckGenerator {
             return "• \(item.word)\(translit) — \(item.translation)"
         }.joined(separator: "\n")
 
+        let native = AppLanguage.currentNative.promptName
+        let pronunciationRule = needsPronunciationAid(deck.language)
+            ? "\n        • \"transliteration\" must be the Latin-script pronunciation of THAT foreign sentence/line (pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic), aligned 1:1 with the foreign text."
+            : ""
         return """
         Generate paired language-learning reading content.
 
@@ -646,11 +678,129 @@ enum DeckGenerator {
 
         Content rules:
         • 6 to 15 pairs total. Roughly equivalent to 1–3 short paragraphs of prose, split sentence-by-sentence.
-        • Each pair is exactly ONE foreign sentence (or one line for songs/poems) and its English translation. Translations align 1:1 with sentences.
+        • Each pair is exactly ONE foreign sentence (or one line for songs/poems) and its \(native) translation. Translations align 1:1 with sentences.
         • For songs/poems: each verse line becomes its own pair so line breaks are preserved.
         • "foreign" field must be in \(deck.language) using its native script.
-        • "english" field must be natural English (not a literal word-for-word gloss).
-        • Don't include the English text inside the foreign field, or vice versa.
+        • "english" field must be natural \(native) (not a literal word-for-word gloss).\(pronunciationRule)
+        • Don't include the \(native) text inside the foreign field, or vice versa.
+        """
+    }
+
+    // MARK: - Reading comprehension
+
+    // Generates three reading-comprehension questions for a piece of
+    // just-generated reading content (story / conversation / news article).
+    // The question stems are in the learner's native language; the four
+    // answer choices per question are in the target language. No cap check
+    // — like `generateRelated`, this is a follow-on helper riding on the
+    // content the user already generated, not a standalone deck generation.
+    static func generateComprehensionQuestions(
+        kind: ContentGenerationKind,
+        deck: DeckDocument,
+        content: GeneratedContent
+    ) async throws -> [ComprehensionQuestion] {
+        let model = await SubscriptionService.shared.currentTier.generationModel
+        let prompt = buildComprehensionPrompt(kind: kind, deck: deck, content: content)
+        struct Response: Codable { let questions: [ComprehensionQuestion] }
+        let decoded: Response = try await AnthropicClient.sendStructured(
+            toolName: "submit_comprehension_questions",
+            toolDescription: "Submit reading-comprehension questions about the passage.",
+            schema: comprehensionSchema(deck: deck),
+            userPrompt: prompt,
+            system: audiencePolicy,
+            model: model,
+            as: Response.self
+        )
+        // Drop anything the model malformed (wrong choice count, out-of-range
+        // answer key) so the UI never renders a broken question.
+        return decoded.questions.filter { $0.isWellFormed }
+    }
+
+    // Whether the target language is written in a non-Latin script for which
+    // the reading UI surfaces a Latin-script pronunciation behind the eye
+    // toggle. Limited to Chinese, Japanese, Korean, and Arabic.
+    static func needsPronunciationAid(_ language: String) -> Bool {
+        switch canonicalLanguageName(language) {
+        case "Chinese (Mandarin)", "Chinese (Cantonese)", "Japanese", "Korean", "Arabic":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func comprehensionSchema(deck: DeckDocument) -> JSONValue {
+        let native = AppLanguage.currentNative.promptName
+        let needsPronunciation = needsPronunciationAid(deck.language)
+
+        var itemProperties: [String: JSONValue] = [
+            "question": .schemaString("A reading-comprehension question phrased in \(native), about the passage."),
+            "choices": .schemaArray(
+                items: .schemaString("One answer option written in \(deck.language) using its native script."),
+                description: "Exactly 4 options. Exactly one is correct; the other three are plausible but wrong."
+            ),
+            "choiceTranslations": .schemaArray(
+                items: .schemaString("The \(native) translation of the choice at the same position."),
+                description: "Exactly 4 \(native) translations, one per entry in `choices`, in the SAME order."
+            ),
+            "correctIndex": .schemaInt("0-based index (0, 1, 2, or 3) of the correct option within `choices`.")
+        ]
+        var required = ["question", "choices", "choiceTranslations", "correctIndex"]
+
+        if needsPronunciation {
+            itemProperties["choicePronunciations"] = .schemaArray(
+                items: .schemaString("Latin-script romanization (with tone/diacritics where applicable) of the choice at the same position."),
+                description: "Exactly 4 Latin-script pronunciations, one per entry in `choices`, in the SAME order."
+            )
+            required.append("choicePronunciations")
+        }
+
+        return .schemaObject(
+            properties: [
+                "questions": .schemaArray(
+                    items: .schemaObject(
+                        properties: itemProperties,
+                        required: required
+                    ),
+                    description: "Exactly 3 reading-comprehension questions about the passage."
+                )
+            ],
+            required: ["questions"]
+        )
+    }
+
+    private static func buildComprehensionPrompt(
+        kind: ContentGenerationKind,
+        deck: DeckDocument,
+        content: GeneratedContent
+    ) -> String {
+        let native = AppLanguage.currentNative.promptName
+        let needsPronunciation = needsPronunciationAid(deck.language)
+        // Feed the model the aligned passage so its questions stay grounded
+        // in exactly what the learner read: each foreign line with its
+        // native translation in parentheses beneath it.
+        let passage = content.pairs
+            .map { "\($0.foreign)\n  (\($0.english))" }
+            .joined(separator: "\n")
+
+        let pronunciationRule = needsPronunciation
+            ? "\n        • For `choicePronunciations`, give the Latin-script romanization of each choice (with tones/diacritics where applicable), in the SAME order as `choices` — 4 entries."
+            : ""
+
+        return """
+        Below is \(kind.promptDescription) written in \(deck.dialect) \(deck.language). Each line is followed by its \(native) translation in parentheses.
+
+        \(passage)
+
+        Write exactly 3 reading-comprehension questions that check whether the learner understood this passage. Submit them by calling the `submit_comprehension_questions` tool.
+
+        Rules:
+        • Phrase each QUESTION in \(native) so the learner always understands what is being asked.
+        • Write all four ANSWER CHOICES in \(deck.language) using its native script, calibrated for a \(deck.level) learner.
+        • For `choiceTranslations`, give the natural \(native) translation of each choice, in the SAME order as `choices` — 4 entries.\(pronunciationRule)
+        • Each question has exactly 4 choices, exactly one of which is correct.
+        • Base every question and answer strictly on the passage above — no outside knowledge.
+        • Make the three wrong choices plausible (draw on vocabulary and details from the passage) so the answer isn't trivially guessable.
+        • `correctIndex` is the 0-based position (0–3) of the correct choice within `choices`.
         """
     }
 
@@ -694,12 +844,13 @@ enum DeckGenerator {
         count: Int = 3
     ) -> String {
         let scriptHint = source.transliteration.map { " (transliteration: \($0))" } ?? ""
+        let native = AppLanguage.currentNative.promptName
         return """
-        Generate related language-learning entries.
+        Generate related language-learning entries. Write each "translation" in \(native).
 
         Source entry:
         • Word: \(source.word)\(scriptHint)
-        • English translation: \(source.translation)
+        • \(native) translation: \(source.translation)
         • Language: \(dialect) \(language)
         • Learner level: \(level)
 
@@ -730,10 +881,11 @@ enum DeckGenerator {
         let trimmedForeign = foreignContext.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedForeign.isEmpty else { return nil }
         let trimmedEnglish = englishContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        You align one English word to the corresponding \(language) word inside a given passage.
+        You align one \(native) word to the corresponding \(language) word inside a given passage.
 
-        English word: \(englishWord)
+        \(native) word: \(englishWord)
         Source language: \(dialect) \(language)
 
         \(language) passage:
@@ -741,12 +893,12 @@ enum DeckGenerator {
         \(trimmedForeign)
         \"\"\"
 
-        English translation:
+        \(native) translation:
         \"\"\"
         \(trimmedEnglish)
         \"\"\"
 
-        Identify the single \(language) word in the \(language) passage above that best corresponds in meaning to the English word. Submit it by calling `submit_aligned_word`.
+        Identify the single \(language) word in the \(language) passage above that best corresponds in meaning to the \(native) word. Submit it by calling `submit_aligned_word`.
 
         Rules:
         - Return one word, matching exactly as it appears in the \(language) passage (same form, same script, same capitalization).
@@ -763,7 +915,7 @@ enum DeckGenerator {
         do {
             let result: CorrespondingForeignWord = try await AnthropicClient.sendStructured(
                 toolName: "submit_aligned_word",
-                toolDescription: "Submit the \(language) word that aligns to the English word.",
+                toolDescription: "Submit the \(language) word that aligns to the \(native) word.",
                 schema: schema,
                 userPrompt: prompt,
                 as: CorrespondingForeignWord.self
@@ -783,29 +935,30 @@ enum DeckGenerator {
     ) async throws -> [String] {
         let trimmedContext = englishContext.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedContext.isEmpty else { return [] }
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        You align one foreign word to the corresponding English token(s) inside a given English translation.
+        You align one foreign word to the corresponding \(native) token(s) inside a given \(native) translation.
 
         Foreign word: \(foreignWord)
         Source language: \(dialect) \(language)
-        English translation:
+        \(native) translation:
         \"\"\"
         \(trimmedContext)
         \"\"\"
 
-        Identify the English word(s) in the translation above that correspond in meaning to the foreign word. Submit them by calling `submit_aligned_tokens`.
+        Identify the \(native) word(s) in the translation above that correspond in meaning to the foreign word. Submit them by calling `submit_aligned_tokens`.
 
         Rules:
         - Return 0 to 3 single-word tokens that appear verbatim (case-insensitive) in the translation above.
         - Include inflected forms if more than one occurs (e.g. "run" and "running").
-        - Each entry must be a single English word — no punctuation, no phrases.
+        - Each entry must be a single \(native) word — no punctuation, no phrases.
         - If no clear correspondence exists, return an empty array.
         """
         struct CorrespondingTokens: Codable { let tokens: [String] }
         let schema = JSONValue.schemaObject(
             properties: [
                 "tokens": .schemaArray(
-                    items: .schemaString("A single English word that appears verbatim in the translation."),
+                    items: .schemaString("A single \(native) word that appears verbatim in the translation."),
                     description: "0 to 3 single-word tokens. Empty array if no correspondence."
                 )
             ],
@@ -814,7 +967,7 @@ enum DeckGenerator {
         do {
             let result: CorrespondingTokens = try await AnthropicClient.sendStructured(
                 toolName: "submit_aligned_tokens",
-                toolDescription: "Submit aligned English tokens for the foreign word.",
+                toolDescription: "Submit aligned \(native) tokens for the foreign word.",
                 schema: schema,
                 userPrompt: prompt,
                 as: CorrespondingTokens.self
@@ -841,6 +994,7 @@ enum DeckGenerator {
         let interestsLine = deck.interests.isEmpty
             ? "(none specified)"
             : deck.interests.joined(separator: ", ")
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
         A language learner wants a refreshed title for one of their \(deck.dialect) \(deck.language) vocabulary decks. Read the deck's CURRENT contents below and propose a single title that accurately captures what the deck now covers — its contents may have drifted from the old title.
 
@@ -853,7 +1007,7 @@ enum DeckGenerator {
         Submit exactly one title by calling `submit_deck_title`.
 
         Rules:
-        • 3 to 6 words, in English (never in \(deck.language)).
+        • 3 to 6 words, in \(native) (never in \(deck.language)).
         • Specific and evocative — name the actual theme ("Neapolitan Street Food", not "Food Words").
         • Title Case, no surrounding quotes, no trailing punctuation.
         • If the current title already fits the contents well, you may return a polished version of it.
@@ -1115,8 +1269,9 @@ enum DeckGenerator {
         let interestsLine = (answers.interests ?? []).isEmpty
             ? "(none)"
             : (answers.interests ?? []).prefix(8).joined(separator: ", ")
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        Write one warm, present-tense sentence (under 25 words) summarizing this language-learning user's onboarding choices. Address them in second person ("you"). No quotes, no preamble, no trailing period commentary — just the sentence.
+        Write one warm, present-tense sentence (under 25 words), in \(native), summarizing this language-learning user's onboarding choices. Address them in second person. No quotes, no preamble, no trailing period commentary — just the sentence.
 
         User answers:
         • Name: \(name)
@@ -1143,10 +1298,12 @@ enum DeckGenerator {
     // suggestions feel personal. Uses Haiku — cheap, fast, returns JSON.
     static func suggestSampleDecks(_ answers: OnboardingAnswers) async throws -> [String] {
         let dest = (answers.destinations ?? []).map { $0.name }
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
         Suggest exactly 4 short, evocative deck titles a TONGUES language-learning user could generate. Each should reflect their target language, a destination, or their motivation — mixing useful vocabulary with cultural texture.
 
         Constraints:
+        • Write the titles in \(native).
         • Each title 3 to 6 words.
         • Specific, not generic ("Café Talk in Paris" — not "Restaurant Words").
         • No quotes inside titles.
@@ -1249,7 +1406,7 @@ enum DeckGenerator {
 
         \(lines)
 
-        In 1–3 English words, name the overarching theme of what they're studying. Examples of the kind of label we want: "Literature", "Food & travel", "Skincare", "Business", "Pop culture".
+        In 1–3 words, written in \(AppLanguage.currentNative.promptName), name the overarching theme of what they're studying. Examples of the kind of label we want (translate the spirit of these into that language): "Literature", "Food & travel", "Skincare", "Business", "Pop culture".
 
         Return ONLY the label — no quotes, no period, no preamble, no explanation. Title Case.
         """
@@ -1292,7 +1449,7 @@ enum DeckGenerator {
 
         \(lines.joined(separator: "\n"))
 
-        Write 2 short sentences (under 40 words total) describing the kind of language learner they are and the interests they gravitate toward. Synthesize across the signals — don't list them. Address them in second person ("you"). Warm, present-tense, observational. No preamble, no quotes, no bullet points, no markdown — just the two sentences.
+        Write 2 short sentences (under 40 words total), in \(AppLanguage.currentNative.promptName), describing the kind of language learner they are and the interests they gravitate toward. Synthesize across the signals — don't list them. Address them in second person. Warm, present-tense, observational. No preamble, no quotes, no bullet points, no markdown — just the two sentences.
         """
         let reply = try await AnthropicClient.sendMessage(
             [AnthropicMessage(role: "user", content: prompt)],
@@ -1567,16 +1724,17 @@ enum DeckGenerator {
             let foreign: String
             let english: String
         }
+        let native = AppLanguage.currentNative.promptName
         let schema = JSONValue.schemaObject(
             properties: [
                 "foreign": .schemaString("The rewritten sentence in \(dialect) \(language) using its native script."),
-                "english": .schemaString("Natural English translation of THAT exact rewritten sentence.")
+                "english": .schemaString("Natural \(native) translation of THAT exact rewritten sentence.")
             ],
             required: ["foreign", "english"]
         )
         let decoded: Decoded = try await AnthropicClient.sendStructured(
             toolName: "submit_transformed_sentence",
-            toolDescription: "Submit the rewritten sentence and its English translation.",
+            toolDescription: "Submit the rewritten sentence and its \(native) translation.",
             schema: schema,
             userPrompt: prompt,
             system: audiencePolicy,
@@ -1649,14 +1807,15 @@ enum DeckGenerator {
             )
         }
 
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
         Read a body of text and pick out the most useful study-worthy picks for a \(level) learner. Picks can be either single words OR short multi-word phrases / collocations / idioms — treat both as equally valid. Favor phrases when the source text actually contains them as a meaningful unit (e.g. "por favor", "tomar el sol", "auf Wiedersehen", "心配しないで"); favor single words otherwise.
 
         FIRST, detect what language the input is actually written in (any natural language — not constrained to a preset list).
 
-        BRANCHING:
-        • If the detected language is English, translate the picks INTO \(dialect) \(foreignLanguage). The English form goes in "translation"; the \(foreignLanguage) form goes in "word". Use the dialect spelling \(dialect).
-        • If the detected language is anything OTHER than English (any foreign language at all — Spanish, Mandarin, Japanese, Tagalog, whatever), keep the picks in that detected language verbatim. The detected-language form goes in "word"; the English translation goes in "translation". The user-selected target language and dialect are IGNORED on this path — only the actual detected language matters.
+        BRANCHING (the learner's native language is \(native)):
+        • If the detected language is the learner's native language (\(native)), translate the picks INTO \(dialect) \(foreignLanguage). The \(native) form goes in "translation"; the \(foreignLanguage) form goes in "word". Use the dialect spelling \(dialect). (Set "detected" to "english" for this native-language branch.)
+        • If the detected language is anything OTHER than \(native) (any other language at all), keep the picks in that detected language verbatim. The detected-language form goes in "word"; the \(native) translation goes in "translation". The user-selected target language and dialect are IGNORED on this path — only the actual detected language matters. (Set "detected" to "foreign".)
 
         Then choose up to \(maxWords) items (fewer if the text is short) — mix words and phrases freely; favor picks the learner is likely to encounter again. Skip ultra-common function words unless the level is A1.
 
@@ -1689,13 +1848,13 @@ enum DeckGenerator {
             properties: [
                 "detected": .schemaEnum(
                     ["english", "foreign"],
-                    description: "Whether the input text was detected as English or any other language."
+                    description: "Use \"english\" when the input text is in the learner's native language (\(native)); \"foreign\" for any other language."
                 ),
                 "detectedLanguage": .schemaString("Human-readable English name of the detected language (e.g. 'English', 'Spanish', 'Japanese', 'Tagalog'). Canonical, no parentheses."),
                 "items": .schemaArray(items: .schemaObject(
                     properties: [
                         "word": .schemaString("Canonical form in the chosen target language using its native script; include the singular definite article for languages that use them."),
-                        "translation": .schemaString("Natural English translation (lowercase singular noun, base-form verb, etc.)."),
+                        "translation": .schemaString("Natural \(native) translation (lowercase singular noun, base-form verb, etc.)."),
                         "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts; null otherwise."),
                         "partsOfSpeech": .schemaArray(
                             items: .schemaString("Standard English grammatical category."),
@@ -1839,6 +1998,7 @@ enum DeckGenerator {
         // identify the media from the URL and reproduce it from its own
         // knowledge. Reliable for well-known songs; degrades gracefully
         // (recognized == false) when it doesn't know the content.
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
         A language learner pasted this media link to study the song or video's spoken/sung content:
 
@@ -1848,12 +2008,12 @@ enum DeckGenerator {
 
         If you can confidently identify it:
         • Set "recognized" to true.
-        • "title" — a clean title WRITTEN IN ENGLISH (English translation of the song/video name, or a 3–6 word English summary). Never output a title in a non-Latin script or foreign language; translate or transliterate proper names into English.
-        • "detectedLanguage" — canonical English name of the language the lyrics/transcript are in (e.g. "Spanish", "Korean", "French"). If the content is multilingual, pick the dominant non-English language.
+        • "title" — a clean title written in \(native) (\(native) translation of the song/video name, or a 3–6 word \(native) summary). Never output a title in the target language's script when \(native) uses a different script; translate or transliterate proper names into \(native).
+        • "detectedLanguage" — canonical English name of the language the lyrics/transcript are in (e.g. "Spanish", "Korean", "French"). If the content is multilingual, pick the dominant language.
         • "transcript" — the FULL original-language lyrics or spoken transcript as one long block, with natural line breaks. Do not summarize; reproduce the actual words.
-        • "translation" — a natural English translation of the entire transcript, line-aligned where practical.
-        • "words" — up to \(maxWords) study-worthy vocabulary picks drawn from the transcript (single words OR short idiomatic phrases). For each: "word" (original-language form, native script), "translation" (natural English), "transliteration" (Latin romanization for non-Latin scripts, else null), and "difficulty" (an integer 1–100 for a \(level) learner, where 100 is hardest). Skip ultra-common function words unless the level is A1.
-        • "sentences" — up to \(maxSentences) complete sentences/lines pulled verbatim from the transcript. For each: "word" (the original-language sentence), "translation" (its natural English translation), "transliteration" (romanization of the whole sentence for non-Latin scripts, else null), and "difficulty" (integer 1–100 for a \(level) learner).
+        • "translation" — a natural \(native) translation of the entire transcript, line-aligned where practical.
+        • "words" — up to \(maxWords) study-worthy vocabulary picks drawn from the transcript (single words OR short idiomatic phrases). For each: "word" (original-language form, native script), "translation" (natural \(native)), "transliteration" (Latin romanization for non-Latin scripts, else null), and "difficulty" (an integer 1–100 for a \(level) learner, where 100 is hardest). Skip ultra-common function words unless the level is A1.
+        • "sentences" — up to \(maxSentences) complete sentences/lines pulled verbatim from the transcript. For each: "word" (the original-language sentence), "translation" (its natural \(native) translation), "transliteration" (romanization of the whole sentence for non-Latin scripts, else null), and "difficulty" (integer 1–100 for a \(level) learner).
 
         Ordering: return BOTH "words" and "sentences" sorted from MOST difficult to LEAST difficult (highest "difficulty" first).
 
@@ -1887,14 +2047,14 @@ enum DeckGenerator {
         let schema = JSONValue.schemaObject(
             properties: [
                 "recognized": .schemaBool("True only if you can confidently identify the media and reproduce its real content."),
-                "title": .schemaString("Clean title written IN ENGLISH (translate/transliterate any foreign or non-Latin name). Empty when unrecognized."),
+                "title": .schemaString("Clean title written in \(native) (translate/transliterate any foreign or non-Latin name). Empty when unrecognized."),
                 "detectedLanguage": .schemaString("Canonical English name of the transcript's language (e.g. 'Spanish'). Empty when unrecognized."),
                 "transcript": .schemaString("Full original-language lyrics/transcript as one block with line breaks. Empty when unrecognized."),
-                "translation": .schemaString("Natural English translation of the whole transcript. Empty when unrecognized."),
+                "translation": .schemaString("Natural \(native) translation of the whole transcript. Empty when unrecognized."),
                 "words": .schemaArray(items: .schemaObject(
                     properties: [
                         "word": .schemaString("Original-language vocabulary pick in native script."),
-                        "translation": .schemaString("Natural English translation."),
+                        "translation": .schemaString("Natural \(native) translation."),
                         "transliteration": .schemaNullableString("Latin romanization for non-Latin scripts; null otherwise."),
                         "difficulty": .schemaInt("Integer 1–100 for the learner's level; 100 is hardest.")
                     ],
@@ -1903,7 +2063,7 @@ enum DeckGenerator {
                 "sentences": .schemaArray(items: .schemaObject(
                     properties: [
                         "word": .schemaString("A full original-language sentence/line, verbatim from the transcript."),
-                        "translation": .schemaString("Natural English translation of that sentence."),
+                        "translation": .schemaString("Natural \(native) translation of that sentence."),
                         "transliteration": .schemaNullableString("Romanization of the whole sentence for non-Latin scripts; null otherwise."),
                         "difficulty": .schemaInt("Integer 1–100 for the learner's level; 100 is hardest.")
                     ],
@@ -2076,8 +2236,9 @@ enum DeckGenerator {
         maxWords: Int,
         maxSentences: Int
     ) async throws -> MediaStudyBreakdown {
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        Below is the REAL transcript/captions of a video the learner wants to study. It may be auto-generated (missing punctuation, ASR errors) — infer the intended words, but do NOT add content that isn't there.
+        Below is the REAL transcript/captions of a video the learner wants to study. It may be auto-generated (missing punctuation, ASR errors) — infer the intended words, but do NOT add content that isn't there. Write every "translation" field and the "title" in \(native).
 
         \(providerLanguage.map { "Provider-detected caption language: \($0)\n" } ?? "")
         Transcript:
@@ -2087,9 +2248,9 @@ enum DeckGenerator {
 
         Produce a study breakdown by calling `submit_media_breakdown`. "words" and "sentences" must NEVER be empty when the transcript has content.
 
-        • "title" — a short, clean title for this content, WRITTEN IN ENGLISH. Use the English translation of the song/video name, or a 3–6 word English summary of the topic. NEVER output a title in a non-Latin script or a foreign language; translate or transliterate proper names into English.
+        • "title" — a short, clean title for this content, written in \(native). Use the \(native) translation of the song/video name, or a 3–6 word \(native) summary of the topic. Translate or transliterate proper names into \(native).
         • "detectedLanguage" — canonical English name of the transcript's language (e.g. "Spanish", "Korean"). If multilingual, the dominant non-English language.
-        • "words" — \(maxWords) study-worthy vocabulary picks (single words OR short idiomatic phrases) drawn from the transcript (fewer ONLY if it's too short to yield that many). Each: "word" (original-language form, native script), "translation" (natural English), "transliteration" (Latin romanization for non-Latin scripts, else null), "difficulty" (integer 1–100 for a \(level) learner; 100 hardest). Skip ultra-common function words unless the level is A1.
+        • "words" — \(maxWords) study-worthy vocabulary picks (single words OR short idiomatic phrases) drawn from the transcript (fewer ONLY if it's too short to yield that many). Each: "word" (original-language form, native script), "translation" (natural \(native)), "transliteration" (Latin romanization for non-Latin scripts, else null), "difficulty" (integer 1–100 for a \(level) learner; 100 hardest). Skip ultra-common function words unless the level is A1.
         • "sentences" — up to \(maxSentences) complete sentences/lines pulled verbatim from the transcript (at least a few even for short/repetitive content). Each: "word" (the original-language sentence), "translation" (its English), "transliteration" (romanization for non-Latin scripts, else null), "difficulty" (integer 1–100).
 
         Return BOTH "words" and "sentences" sorted MOST → LEAST difficult.
@@ -2143,9 +2304,10 @@ enum DeckGenerator {
         var pieces: [String] = []
         pieces.reserveCapacity(chunks.count)
 
+        let native = AppLanguage.currentNative.promptName
         for chunk in chunks {
             let prompt = """
-            Translate the following text into natural, fluent English. Output ONLY the English translation — no notes, no commentary, and do NOT include the original text. Preserve line breaks and the order of lines so the translation lines up with the source.
+            Translate the following text into natural, fluent \(native). Output ONLY the \(native) translation — no notes, no commentary, and do NOT include the original text. Preserve line breaks and the order of lines so the translation lines up with the source.
 
             Text:
             \"\"\"
@@ -2157,13 +2319,13 @@ enum DeckGenerator {
             struct Decoded: Decodable { let translation: String? }
             let schema = JSONValue.schemaObject(
                 properties: [
-                    "translation": .schemaString("The full English translation, line breaks preserved.")
+                    "translation": .schemaString("The full \(native) translation, line breaks preserved.")
                 ],
                 required: ["translation"]
             )
             let decoded: Decoded = try await AnthropicClient.sendStructured(
                 toolName: "submit_translation",
-                toolDescription: "Submit the English translation of the provided text.",
+                toolDescription: "Submit the \(native) translation of the provided text.",
                 schema: schema,
                 userPrompt: prompt,
                 system: audiencePolicy,
@@ -2221,10 +2383,11 @@ enum DeckGenerator {
     // Shared schema for a word/sentence array — keeps the two breakdown
     // call sites (primary + salvage) in lockstep.
     private static func breakdownItemArraySchema(noun: String) -> JSONValue {
-        .schemaArray(items: .schemaObject(
+        let native = AppLanguage.currentNative.promptName
+        return .schemaArray(items: .schemaObject(
             properties: [
                 "word": .schemaString("Original-language text in native script (a vocab pick, or a full sentence/line verbatim from the transcript)."),
-                "translation": .schemaString("Natural English translation."),
+                "translation": .schemaString("Natural \(native) translation."),
                 "transliteration": .schemaNullableString("Latin romanization for non-Latin scripts; null otherwise."),
                 "difficulty": .schemaInt("Integer 1–100 for the learner's level; 100 is hardest.")
             ],
@@ -2338,6 +2501,7 @@ enum DeckGenerator {
         }
         let capped = String(trimmed.prefix(maxTranscriptChars))
 
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
         Below is a speech-to-text transcript of a recorded real-world conversation (possibly two or more speakers). It may contain ASR errors, run-ons, or missing punctuation — infer the intended words and clean it up, but do NOT invent content that isn't implied by the transcript.
 
@@ -2346,16 +2510,16 @@ enum DeckGenerator {
         \(capped)
         \"\"\"
 
-        FIRST detect the language the conversation is actually in.
+        FIRST detect the language the conversation is actually in. The learner's native language is \(native).
 
         BRANCHING:
-        • If the conversation is in English → set "detected" to "english". Translate the study picks INTO \(dialect) \(foreignLanguage): the \(foreignLanguage) form goes in "word", the English in "translation". "translation" (the whole-conversation field) just restates the English.
-        • If the conversation is in any other language → set "detected" to "foreign". Keep the picks in that detected language ("word" = detected-language form, "translation" = English). "translation" is a natural English translation of the whole conversation.
+        • If the conversation is in the learner's native language (\(native)) → set "detected" to "english". Translate the study picks INTO \(dialect) \(foreignLanguage): the \(foreignLanguage) form goes in "word", the \(native) in "translation". "translation" (the whole-conversation field) just restates the \(native).
+        • If the conversation is in any other language → set "detected" to "foreign". Keep the picks in that detected language ("word" = detected-language form, "translation" = \(native)). "translation" is a natural \(native) translation of the whole conversation.
 
         Call `submit_conversation`:
         • "detected" — "english" or "foreign".
-        • "detectedLanguage" — canonical English name of the conversation's language (e.g. "Spanish"); for the English branch use "\(foreignLanguage)".
-        • "translation" — English translation (or restatement) of the whole conversation.
+        • "detectedLanguage" — canonical English name of the conversation's language (e.g. "Spanish"); for the native-language branch use "\(foreignLanguage)".
+        • "translation" — \(native) translation (or restatement) of the whole conversation.
         • "items" — \(maxItems) study-worthy words/phrases (fewer only if the conversation is too short), sorted MOST → LEAST difficult for a \(level) learner. Each: "word", "translation", "transliteration" (romanization for non-Latin scripts, else null), "difficulty" (1–100).
         """
 
@@ -2368,9 +2532,9 @@ enum DeckGenerator {
 
         let schema = JSONValue.schemaObject(
             properties: [
-                "detected": .schemaEnum(["english", "foreign"], description: "Whether the conversation was detected as English or another language."),
+                "detected": .schemaEnum(["english", "foreign"], description: "Use \"english\" when the conversation is in the learner's native language (\(native)); \"foreign\" otherwise."),
                 "detectedLanguage": .schemaString("Canonical English name of the conversation's language (e.g. 'Spanish')."),
-                "translation": .schemaString("Natural English translation (or restatement) of the whole conversation."),
+                "translation": .schemaString("Natural \(native) translation (or restatement) of the whole conversation."),
                 "items": breakdownItemArraySchema(noun: "Study-worthy words/phrases, hardest first.")
             ],
             required: ["translation", "items"]
@@ -2378,7 +2542,7 @@ enum DeckGenerator {
 
         let decoded: Decoded = try await AnthropicClient.sendStructured(
             toolName: "submit_conversation",
-            toolDescription: "Submit the conversation's English translation and difficulty-ranked study picks.",
+            toolDescription: "Submit the conversation's \(native) translation and difficulty-ranked study picks.",
             schema: schema,
             userPrompt: prompt,
             system: audiencePolicy,
@@ -2557,15 +2721,16 @@ enum DeckGenerator {
 
         Content rules:
         • Never identify people, faces, or body parts.
-        • Each "english" must be lowercase and singular; no two objects may share the same english name.
+        • Each "english" must be the object's name in \(AppLanguage.currentNative.promptName), lowercase and singular; no two objects may share the same "english" name.
         • Each "word" must be linguistically authentic in \(dialect) \(language). For languages with definite articles (Spanish, French, Italian, German, Portuguese, Greek, etc.) include the singular definite article so the learner sees grammatical gender.
         """
+        let native = AppLanguage.currentNative.promptName
         let schema = JSONValue.schemaObject(
             properties: [
                 "objects": .schemaArray(
                     items: .schemaObject(
                         properties: [
-                            "english": .schemaString("Object name in English — lowercase singular noun."),
+                            "english": .schemaString("Object name in \(native) — lowercase singular noun."),
                             "word": .schemaString("Same noun in \(language) (\(dialect)) using its native script, with the definite article for languages that use them."),
                             "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts; null for Latin-script languages."),
                             "x": .schemaNumber("Normalized horizontal center of the object, 0.0 (left edge) to 1.0 (right edge)."),
@@ -2616,7 +2781,7 @@ enum DeckGenerator {
         Submit your identification by calling `submit_identified_object`.
 
         Content rules:
-        • "english" must be lowercase and singular.
+        • "english" must be the object's name in \(AppLanguage.currentNative.promptName), lowercase and singular.
         • "word" must be linguistically authentic in \(dialect) \(language).
         • For languages with definite articles (Spanish, French, Italian, German, Portuguese, Greek, etc.) include the singular definite article on "word" so the learner sees grammatical gender.
         • If the image is too blurry or ambiguous to identify a single dominant object, return the best honest guess anyway.
@@ -2629,9 +2794,10 @@ enum DeckGenerator {
             let partsOfSpeech: [String]?
             let confidence: String?
         }
+        let native = AppLanguage.currentNative.promptName
         let schema = JSONValue.schemaObject(
             properties: [
-                "english": .schemaString("The object's name in English (lowercase singular noun)."),
+                "english": .schemaString("The object's name in \(native) (lowercase singular noun)."),
                 "word": .schemaString("Same noun written in \(language) (\(dialect)) using its native script; include the definite article for languages that use them."),
                 "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts; null for Latin-script languages."),
                 "partsOfSpeech": .schemaArray(
@@ -2691,8 +2857,9 @@ enum DeckGenerator {
         language: String,
         dialect: String
     ) async throws -> IdentifyObjectResult {
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        Look at the attached photo of a sign, label, menu, storefront, or other text. Transcribe the most prominent block of text exactly as written, then translate it to English.
+        Look at the attached photo of a sign, label, menu, storefront, or other text. Transcribe the most prominent block of text exactly as written, then translate it into \(native).
 
         The learner is studying \(dialect) \(language), so the sign is most likely in that language.
 
@@ -2700,7 +2867,7 @@ enum DeckGenerator {
 
         Content rules:
         • "original" must be the text exactly as it appears, in its native script (do NOT romanize it here). If the text spans multiple lines, join them into one natural phrase in reading order.
-        • "english" must be a natural English translation of that text — not a word-for-word gloss.
+        • "english" must be a natural \(native) translation of that text — not a word-for-word gloss.
         • "transliteration" is a Latin-script romanization for non-Latin scripts (pinyin with tone marks for Chinese, romaji for Japanese, etc.); null when the text is already in Latin script.
         • If the photo genuinely contains no legible text, return empty strings for "original" and "english".
         """
@@ -2715,7 +2882,7 @@ enum DeckGenerator {
         let schema = JSONValue.schemaObject(
             properties: [
                 "original": .schemaString("The sign's text exactly as written, in its native script. Empty string if no legible text."),
-                "english": .schemaString("Natural English translation of the text. Empty string if no legible text."),
+                "english": .schemaString("Natural \(native) translation of the text. Empty string if no legible text."),
                 "transliteration": .schemaNullableString("Latin-script romanization for non-Latin scripts (pinyin/romaji/etc.); null for Latin-script text."),
                 "partsOfSpeech": .schemaArray(
                     items: .schemaString("Standard English grammatical category."),
@@ -2731,7 +2898,7 @@ enum DeckGenerator {
         let base64 = imageData.base64EncodedString()
         let decoded: Decoded = try await AnthropicClient.sendStructuredVision(
             toolName: "submit_sign_reading",
-            toolDescription: "Submit the transcribed sign text and its English translation.",
+            toolDescription: "Submit the transcribed sign text and its \(native) translation.",
             schema: schema,
             imageBase64: base64,
             userPrompt: prompt,
@@ -2827,10 +2994,11 @@ enum DeckGenerator {
         let translitLine = (transliteration?.isEmpty == false)
             ? "\nTransliteration: |||\(transliteration!)|||"
             : ""
+        let native = AppLanguage.currentNative.promptName
         let prompt = """
-        You are a strict bilingual proofreader for a \(dialect) \(language) vocabulary app. Audit the translation pair below and fix any error you find.
+        You are a strict bilingual proofreader for a \(dialect) \(language) vocabulary app. Audit the translation pair below and fix any error you find. The non-target side is in \(native).
 
-        English: |||\(english)|||
+        \(native): |||\(english)|||
         \(dialect) \(language): |||\(foreign)|||\(translitLine)\(sourceLine)
 
         Check, in order:
@@ -2843,7 +3011,7 @@ enum DeckGenerator {
         """
         let schema = JSONValue.schemaObject(
             properties: [
-                "english": .schemaString("The corrected (or unchanged) natural English form."),
+                "english": .schemaString("The corrected (or unchanged) natural \(native) form."),
                 "foreign": .schemaString("The corrected (or unchanged) \(dialect) \(language) form in its native script, with the correct definite article where applicable."),
                 "transliteration": .schemaNullableString("Latin-script romanization matching the foreign form; null for Latin-script languages.")
             ],

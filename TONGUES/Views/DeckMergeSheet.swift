@@ -24,13 +24,13 @@ struct DeckMergeSheet: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Merge into")
+                            Text(L("Merge into"))
                                 .font(.custom("PlayfairDisplay-Regular", size: 28))
                                 .tracking(-1.5)
                                 .foregroundStyle(.black)
                                 .padding(.top, 40)
 
-                            Text("Add all \(deck.items.count) \(deck.contentType.lowercased()) from \"\(deck.title)\" into another \(deck.language) (\(deck.dialect)) deck. This deck stays as is.")
+                            Text(L("Add all %d %@ from \"%@\" into another %@ (%@) deck. This deck stays as is.", deck.items.count, deck.contentType.lowercased(), deck.title, deck.language, deck.dialect))
                                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -56,8 +56,8 @@ struct DeckMergeSheet: View {
             }
             .toolbar(.hidden, for: .navigationBar)
         }
-        .alert("Couldn't merge", isPresented: errorBinding) {
-            Button("OK") { errorText = nil }
+        .alert(L("Couldn't merge"), isPresented: errorBinding) {
+            Button(L("OK")) { errorText = nil }
         } message: {
             Text(errorText ?? "")
         }
@@ -94,10 +94,10 @@ struct DeckMergeSheet: View {
             Image(systemName: "square.stack.3d.up")
                 .font(.system(size: 32, weight: .light))
                 .foregroundStyle(Color.black.opacity(0.25))
-            Text("No decks to merge into")
+            Text(L("No decks to merge into"))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 17))
                 .foregroundStyle(.black)
-            Text("You don't have another \(deck.language) (\(deck.dialect)) deck yet. Create one in the same language and dialect, then merge into it.")
+            Text(L("You don't have another %@ (%@) deck yet. Create one in the same language and dialect, then merge into it.", deck.language, deck.dialect))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

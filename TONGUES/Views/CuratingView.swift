@@ -38,9 +38,8 @@ struct CuratingView: View {
     var body: some View {
         ZStack {
             Color.black
-            Text("Curating")
-                .font(.custom("PlayfairDisplay-Regular", size: 16))
-                .tracking(-0.5)
+            Text(L("CURATING"))
+                .font(.custom("NeueHaasDisplay-Light", size: 16))
                 .foregroundStyle(.white)
         }
         .liquidGlassWiper()

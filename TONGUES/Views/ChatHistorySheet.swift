@@ -134,7 +134,7 @@ struct ChatHistorySheet: View {
                 .offset(y: 8)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(conversation.title)
+                Text(Self.capitalizingFirstLetter(conversation.title))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 15))
                     .foregroundStyle(.black)
                     .lineLimit(1)
@@ -173,5 +173,13 @@ struct ChatHistorySheet: View {
 
     private static func relativeDate(_ date: Date) -> String {
         relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    // Uppercases only the first character of a chat title, leaving the rest
+    // untouched so mid-title acronyms or proper nouns aren't flattened.
+    // Titles are derived from message text and can arrive lowercase.
+    private static func capitalizingFirstLetter(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + text.dropFirst()
     }
 }

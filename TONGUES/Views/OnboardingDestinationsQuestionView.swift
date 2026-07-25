@@ -21,7 +21,7 @@ struct OnboardingDestinationsQuestionView: View {
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
 
-                Text("\(questionNumber) of \(totalQuestions)")
+                Text(L("%d of %d", questionNumber, totalQuestions))
                     .font(.system(size: 13, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .trailing)
@@ -30,13 +30,12 @@ struct OnboardingDestinationsQuestionView: View {
             }
 
             Text(titleText)
-                .font(.custom("PlayfairDisplay-Regular", size: 32))
-                .tracking(-2.56)
+                .font(.custom("NeueHaasDisplay-Light", size: 32))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 24)
                 .padding(.top, 32)
 
-            Text("Add the cities and countries you'd love to visit. Drag to reorder by priority.")
+            Text(L("Add the cities and countries you'd love to visit. Drag to reorder by priority."))
                 .font(.system(size: 14))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 24)
@@ -62,7 +61,7 @@ struct OnboardingDestinationsQuestionView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "plus")
                             .font(.system(size: 14, weight: .semibold))
-                        Text("Add destination")
+                        Text(L("Add destination"))
                             .font(.system(size: 16))
                     }
                     .foregroundStyle(.black)
@@ -82,7 +81,7 @@ struct OnboardingDestinationsQuestionView: View {
                 Haptics.medium()
                 onNext()
             } label: {
-                Text(ctaTitle ?? "Next")
+                Text(L(ctaTitle ?? "Next"))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -100,7 +99,7 @@ struct OnboardingDestinationsQuestionView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Skip") {
+                Button(L("Skip")) {
                     Haptics.light()
                     onNext()
                 }
@@ -126,8 +125,8 @@ struct OnboardingDestinationsQuestionView: View {
     private var titleText: String {
         let trimmed = state.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty
-            ? "Where are your dream destinations?"
-            : "Where are your dream destinations, \(trimmed)?"
+            ? L("Where are your dream destinations?")
+            : L("Where are your dream destinations, %@?", trimmed)
     }
 }
 
@@ -195,12 +194,12 @@ struct DestinationSearchSheet: View {
                 }
             }
             .listStyle(.plain)
-            .navigationTitle("Add destination")
+            .navigationTitle(L("Add destination"))
             .navigationBarTitleDisplayMode(.inline)
             .searchable(
                 text: $searchText,
                 placement: .navigationBarDrawer(displayMode: .always),
-                prompt: "Search cities or countries"
+                prompt: L("Search cities or countries")
             )
             .autocorrectionDisabled()
             .textInputAutocapitalization(.words)
@@ -209,7 +208,7 @@ struct DestinationSearchSheet: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button(L("Done")) { dismiss() }
                 }
             }
         }

@@ -40,13 +40,13 @@ struct DeckRenameSheet: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 28) {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Rename")
+                            Text(L("Rename"))
                                 .font(.custom("PlayfairDisplay-Regular", size: 28))
                                 .tracking(-1.5)
                                 .foregroundStyle(.black)
                                 .padding(.top, 40)
 
-                            Text("Give this \(deck.language) (\(deck.dialect)) deck a new title, or use the fresh one we suggest from its current \(deck.items.count) \(deck.contentType.lowercased()).")
+                            Text(L("Give this %@ (%@) deck a new title, or use the fresh one we suggest from its current %d %@.", deck.language, deck.dialect, deck.items.count, deck.contentType.lowercased()))
                                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -64,8 +64,8 @@ struct DeckRenameSheet: View {
             }
             .toolbar(.hidden, for: .navigationBar)
         }
-        .alert("Couldn't rename", isPresented: errorBinding) {
-            Button("OK") { errorText = nil }
+        .alert(L("Couldn't rename"), isPresented: errorBinding) {
+            Button(L("OK")) { errorText = nil }
         } message: {
             Text(errorText ?? "")
         }
@@ -76,18 +76,18 @@ struct DeckRenameSheet: View {
 
     private var titleField: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("TITLE")
+            Text(L("TITLE"))
                 .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                 .tracking(0.8)
                 .foregroundStyle(.secondary)
-            TextField("Deck title", text: $title, axis: .vertical)
+            TextField(L("Deck title"), text: $title, axis: .vertical)
                 .font(.custom("NeueHaasDisplay-Mediu", size: 24))
                 .textFieldStyle(.plain)
                 .lineLimit(1...3)
                 .focused($isFieldFocused)
                 .submitLabel(.done)
             Divider()
-            Text("\(deck.level) · \(deck.items.count) \(deck.contentType.lowercased())")
+            Text(L("%@ · %d %@", deck.level, deck.items.count, deck.contentType.lowercased()))
                 .font(.custom("NeueHaasDisplay-Light", size: 13))
                 .foregroundStyle(.secondary)
         }
@@ -103,13 +103,13 @@ struct DeckRenameSheet: View {
         if isSuggesting {
             HStack(spacing: 8) {
                 ProgressView().tint(.black.opacity(0.5)).scaleEffect(0.8)
-                Text("Thinking of a fresh title…")
+                Text(L("Thinking of a fresh title…"))
                     .font(.custom("NeueHaasDisplay-Light", size: 13))
                     .foregroundStyle(.secondary)
             }
         } else if let suggestion, suggestion != trimmedTitle {
             VStack(alignment: .leading, spacing: 8) {
-                Text("SUGGESTED")
+                Text(L("SUGGESTED"))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 11))
                     .tracking(0.8)
                     .foregroundStyle(.secondary)
@@ -130,7 +130,7 @@ struct DeckRenameSheet: View {
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                         Spacer(minLength: 8)
-                        Text("Use")
+                        Text(L("Use"))
                             .font(.custom("NeueHaasDisplay-Mediu", size: 13))
                             .foregroundStyle(.secondary)
                     }
@@ -156,7 +156,7 @@ struct DeckRenameSheet: View {
                 if isSaving {
                     ProgressView().tint(.white)
                 } else {
-                    Text("Save")
+                    Text(L("Save"))
                         .font(.custom("PlayfairDisplay-Regular", size: 20))
                         .tracking(-1.2)
                         .foregroundStyle(.white)

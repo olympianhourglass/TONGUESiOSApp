@@ -30,6 +30,10 @@ struct GenerateContentSheet: View {
     // foreign-block-then-English-block layout). True = "Line by line"
     // (sentence-pair interleave).
     @State private var isInterleaved = false
+    // Eye toggle: reveals the Latin-script pronunciation (pinyin / romaji /
+    // etc.) of the foreign text. Only offered for the non-Latin scripts the
+    // generator produces a transliteration for.
+    @State private var revealPronunciation = false
     // Save-to-Artifacts state. `didSaveArtifact` flips to true after
     // a successful write so the toolbar bookmark fills in and the
     // button disables — no double-saves, and the user gets visible
@@ -40,8 +44,25 @@ struct GenerateContentSheet: View {
     // throws SubscriptionError.capExceeded.
     @State private var capError: SubscriptionError?
 
+    // Reading-comprehension questions generated for the current content
+    // (story / conversation / news article only). They live below the
+    // Read-aloud/Regenerate row and are shared by both the Story and
+    // Line-by-line tabs, since they sit outside the tab switch.
+    @State private var comprehensionPhase: ComprehensionPhase = .idle
+    @State private var comprehensionQuestions: [ComprehensionQuestion] = []
+    @State private var comprehensionError: String?
+    // Questions already credited with XP, so re-tapping (or re-render)
+    // never double-awards. Streak is credited at most once per content
+    // via `didRegisterComprehensionStreak`.
+    @State private var awardedQuestionIDs: Set<UUID> = []
+    @State private var didRegisterComprehensionStreak = false
+
     enum Phase {
         case input, generating, result
+    }
+
+    enum ComprehensionPhase {
+        case idle, loading, loaded, failed
     }
 
     private var nativeHighlightWords: Set<String> {
@@ -63,6 +84,25 @@ struct GenerateContentSheet: View {
         return ""
     }
 
+    // True when the target language uses a script we generate a pronunciation
+    // for AND the current content actually carries transliterations. Gates
+    // whether the eye toggle appears at all.
+    private var pronunciationAvailable: Bool {
+        DeckGenerator.needsPronunciationAid(deck.language)
+            && generatedPairs.contains {
+                ($0.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            }
+    }
+
+    // The whole passage's pronunciation as one block, mirroring how the
+    // "Story" foreign block is joined — used for the Story-mode reveal.
+    private var transliterationBlock: String {
+        generatedPairs
+            .compactMap { $0.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     private var foreignContext: String {
         if let range = generatedContent.range(of: "English:") {
             return generatedContent[..<range.lowerBound]
@@ -74,11 +114,11 @@ struct GenerateContentSheet: View {
     var body: some View {
         NavigationStack {
             phaseView
-                .navigationTitle("Generate \(kind.rawValue)")
+                .navigationTitle(L("Generate %@", L(kind.rawValue)))
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button("Cancel") { dismiss() }
+                        Button(L("Cancel")) { dismiss() }
                             .disabled(phase == .generating)
                     }
                     if phase == .result {
@@ -91,10 +131,10 @@ struct GenerateContentSheet: View {
                                     .foregroundStyle(.black)
                             }
                             .disabled(isSavingArtifact || didSaveArtifact || generatedContent.isEmpty)
-                            .accessibilityLabel(didSaveArtifact ? "Saved to Artifacts" : "Save to Artifacts")
+                            .accessibilityLabel(didSaveArtifact ? L("Saved to Artifacts") : L("Save to Artifacts"))
                         }
                         ToolbarItem(placement: .topBarTrailing) {
-                            Button("Done") { dismiss() }
+                            Button(L("Done")) { dismiss() }
                         }
                     }
                 }
@@ -144,7 +184,7 @@ struct GenerateContentSheet: View {
             }
         } catch {
             await MainActor.run {
-                errorText = "Couldn't save artifact: \(error.localizedDescription)"
+                errorText = L("Couldn't save artifact: %@", error.localizedDescription)
             }
         }
     }
@@ -174,7 +214,7 @@ struct GenerateContentSheet: View {
 
     private var inputView: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Add any additional details (optional)")
+            Text(L("Add any additional details (optional)"))
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(.secondary)
 
@@ -201,7 +241,7 @@ struct GenerateContentSheet: View {
             Button {
                 Task { await generate() }
             } label: {
-                Text("Generate")
+                Text(L("Generate"))
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -218,7 +258,7 @@ struct GenerateContentSheet: View {
         VStack(spacing: 16) {
             ProgressView()
                 .controlSize(.large)
-            Text("Generating \(kind.rawValue.lowercased())…")
+            Text(L("Generating %@…", L(kind.rawValue).lowercased()))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -228,29 +268,57 @@ struct GenerateContentSheet: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Picker("Format", selection: $isInterleaved) {
-                        Text("Story").tag(false)
-                        Text("Line by line").tag(true)
+                    Picker(L("Format"), selection: $isInterleaved) {
+                        Text(L("Story")).tag(false)
+                        Text(L("Line by line")).tag(true)
                     }
                     .pickerStyle(.segmented)
 
-                    Text("Tap any word to look it up or add it to this deck.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(L("Tap any word to look it up or add it to this deck."))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        if pronunciationAvailable {
+                            Button {
+                                Haptics.light()
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    revealPronunciation.toggle()
+                                }
+                            } label: {
+                                Image(systemName: revealPronunciation ? "eye.fill" : "eye")
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundStyle(revealPronunciation ? .black : Color(white: 0.5))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(revealPronunciation ? L("Hide pronunciation") : L("Show pronunciation"))
+                        }
+                    }
 
                     if isInterleaved {
                         interleavedContent
                     } else {
-                        TappableContentText(
-                            text: generatedContent,
-                            highlightedWord: selectedWord,
-                            highlightedNativeWords: nativeHighlightWords,
-                            spokenRange: spokenRangeInDisplayedText,
-                            onWordTapped: { word, kind in
-                                Haptics.light()
-                                handleWordTap(word: word, kind: kind)
+                        VStack(alignment: .leading, spacing: 10) {
+                            TappableContentText(
+                                text: generatedContent,
+                                highlightedWord: selectedWord,
+                                highlightedNativeWords: nativeHighlightWords,
+                                spokenRange: spokenRangeInDisplayedText,
+                                onWordTapped: { word, kind in
+                                    Haptics.light()
+                                    handleWordTap(word: word, kind: kind)
+                                }
+                            )
+
+                            if revealPronunciation, !transliterationBlock.isEmpty {
+                                Text(transliterationBlock)
+                                    .font(.system(size: 14))
+                                    .italic()
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                        )
+                        }
                     }
 
                     HStack(spacing: 8) {
@@ -274,7 +342,7 @@ struct GenerateContentSheet: View {
                             HStack(spacing: 6) {
                                 Image(systemName: speech.isSpeaking ? "stop.fill" : "waveform")
                                     .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: readAloudPlayCount)
-                                Text(speech.isSpeaking ? "Stop" : "Read aloud")
+                                Text(speech.isSpeaking ? L("Stop") : L("Read aloud"))
                             }
                             .font(.system(size: 14, weight: .medium))
                             .padding(.horizontal, 16)
@@ -292,7 +360,7 @@ struct GenerateContentSheet: View {
                         } label: {
                             HStack(spacing: 6) {
                                 Image(systemName: "arrow.2.circlepath")
-                                Text("Regenerate")
+                                Text(L("Regenerate"))
                             }
                             .font(.system(size: 14, weight: .medium))
                             .padding(.horizontal, 16)
@@ -301,6 +369,12 @@ struct GenerateContentSheet: View {
                             .overlay(Capsule().stroke(Color(white: 0.85)))
                         }
                         .buttonStyle(.plain)
+                    }
+
+                    if kind.supportsComprehension {
+                        Divider()
+                            .padding(.top, 4)
+                        comprehensionSection
                     }
                 }
                 .padding(20)
@@ -375,6 +449,14 @@ struct GenerateContentSheet: View {
                             }
                         )
                     }
+                    if revealPronunciation,
+                       let translit = pair.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !translit.isEmpty {
+                        Text(translit)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color(white: 0.45))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     if !pair.english.isEmpty {
                         Text(pair.english)
                             .font(.system(size: 14).italic())
@@ -384,6 +466,123 @@ struct GenerateContentSheet: View {
                 }
             }
         }
+    }
+
+    // MARK: Reading comprehension
+
+    // The comprehension block that sits below the Read-aloud/Regenerate row.
+    // Because it lives outside the Story/Line-by-line `if isInterleaved`
+    // switch, the same questions (and their answer state) show identically
+    // in both tabs — switching tabs never resets or changes them.
+    @ViewBuilder
+    private var comprehensionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist")
+                Text(L("Check your understanding"))
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .foregroundStyle(.black)
+
+            switch comprehensionPhase {
+            case .idle, .loading:
+                ComprehensionLoadingView()
+            case .loaded:
+                ForEach(Array(comprehensionQuestions.enumerated()), id: \.element.id) { index, question in
+                    ComprehensionQuestionCard(index: index, question: question) {
+                        handleCorrectAnswer(question)
+                    }
+                }
+            case .failed:
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(comprehensionError ?? L("Couldn't load questions."))
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                    Button {
+                        Haptics.light()
+                        Task { await loadComprehensionQuestions() }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                            Text(L("Try again"))
+                        }
+                        .font(.system(size: 14, weight: .medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(.black)
+                        .overlay(Capsule().stroke(Color(white: 0.85)))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    // Generates (or regenerates) the comprehension questions from the
+    // current content. Reads the pairs straight off state so the retry
+    // button and the initial post-generate call share one path.
+    @MainActor
+    private func loadComprehensionQuestions() async {
+        guard kind.supportsComprehension, !generatedPairs.isEmpty else { return }
+        comprehensionPhase = .loading
+        comprehensionError = nil
+        let content = GeneratedContent(prose: generatedContent, pairs: generatedPairs)
+        do {
+            let questions = try await DeckGenerator.generateComprehensionQuestions(
+                kind: kind,
+                deck: deck,
+                content: content
+            )
+            comprehensionQuestions = questions
+            comprehensionPhase = questions.isEmpty ? .failed : .loaded
+            if questions.isEmpty {
+                comprehensionError = L("Couldn't load questions.")
+            }
+        } catch {
+            comprehensionError = error.localizedDescription
+            comprehensionPhase = .failed
+        }
+    }
+
+    // Awards XP for a correct answer (once per question) and — the first
+    // time any question is answered correctly for this content — records a
+    // study session for the day so the answer counts toward the daily
+    // streak, matching the intent that comprehension is real practice.
+    private func handleCorrectAnswer(_ question: ComprehensionQuestion) {
+        guard !awardedQuestionIDs.contains(question.id) else { return }
+        awardedQuestionIDs.insert(question.id)
+        Task {
+            if let grants = try? await XPService.awardComprehensionCorrect(),
+               !grants.isEmpty {
+                await MainActor.run { XPToastCenter.shared.enqueue(grants) }
+            }
+            await registerComprehensionStreakIfNeeded()
+        }
+    }
+
+    // Saves a lightweight study session (once per content) so the day is
+    // registered in the streak walk. The streak reads
+    // `practiceCountsByDay`, which is derived from StudySession records —
+    // XP alone doesn't feed it, so we mirror how FlashcardView records a
+    // session, just with a single-review count.
+    @MainActor
+    private func registerComprehensionStreakIfNeeded() async {
+        guard !didRegisterComprehensionStreak, let deckId = deck.id else { return }
+        didRegisterComprehensionStreak = true
+        let now = Date()
+        let session = StudySession(
+            deckId: deckId,
+            deckTitle: deck.title,
+            language: deck.language,
+            startedAt: now,
+            completedAt: now,
+            totalReviewed: 1,
+            correctCount: 1,
+            incorrectCount: 0,
+            reviews: []
+        )
+        _ = try? await FirebaseDeckService.saveStudySession(session)
     }
 
     // Maps the speech engine's spoken-word range (which is relative to
@@ -500,9 +699,9 @@ struct GenerateContentSheet: View {
     }
 
     private var deckContextLine: String {
-        var line = "Will use: \(deck.dialect) \(deck.language) · \(deck.level)"
+        var line = L("Will use: %@ %@ · %@", L(deck.dialect), localizedLanguageName(deck.language), L(deck.level))
         if !deck.interests.isEmpty {
-            line += " · interests: \(deck.interests.joined(separator: ", "))"
+            line += L(" · interests: %@", deck.interests.joined(separator: ", "))
         }
         return line
     }
@@ -511,6 +710,13 @@ struct GenerateContentSheet: View {
     private func generate() async {
         phase = .generating
         errorText = nil
+        // Clear any prior comprehension state so a regenerate starts fresh
+        // (new questions, reset XP/streak guards).
+        comprehensionQuestions = []
+        comprehensionError = nil
+        awardedQuestionIDs = []
+        didRegisterComprehensionStreak = false
+        comprehensionPhase = .idle
         do {
             let result = try await DeckGenerator.generateContent(
                 kind: kind,
@@ -520,6 +726,11 @@ struct GenerateContentSheet: View {
             generatedContent = result.prose
             generatedPairs = result.pairs
             phase = .result
+            // Follow-on call: the content is on screen; questions stream in
+            // below it (skeleton → cards) without blocking the reader.
+            if kind.supportsComprehension {
+                await loadComprehensionQuestions()
+            }
         } catch let error as SubscriptionError {
             capError = error
             phase = .input
@@ -732,7 +943,7 @@ struct ResolvingForeignWordPanel: View {
 
             HStack(spacing: 10) {
                 ProgressView()
-                Text("Finding matching word…")
+                Text(L("Finding matching word…"))
                     .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
@@ -800,7 +1011,7 @@ struct WordAuditPanel: View {
                     if isLoadingInfo {
                         HStack(spacing: 10) {
                             ProgressView()
-                            Text("Looking up…")
+                            Text(L("Looking up…"))
                                 .font(.system(size: 14))
                                 .foregroundStyle(.secondary)
                         }
@@ -840,7 +1051,7 @@ struct WordAuditPanel: View {
             // against the whole Meaning block).
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Meaning")
+                    Text(L("Meaning"))
                         .font(.system(size: 12, weight: .semibold))
                         .tracking(0.5)
                         .foregroundStyle(.secondary)
@@ -864,7 +1075,7 @@ struct WordAuditPanel: View {
 
             if !info.partsOfSpeech.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Parts of Speech")
+                    Text(L("Parts of Speech"))
                         .font(.system(size: 12, weight: .semibold))
                         .tracking(0.5)
                         .foregroundStyle(.secondary)
@@ -884,14 +1095,14 @@ struct WordAuditPanel: View {
 
             VStack(spacing: 6) {
                 labelValueRow(
-                    "Pronunciation",
+                    L("Pronunciation"),
                     value: info.pronunciation,
                     valueFont: .system(size: 13, design: .monospaced)
                 )
-                labelValueRow("Language", value: info.language)
-                labelValueRow("Frequency", value: info.wordFrequency)
+                labelValueRow(L("Language"), value: info.language)
+                labelValueRow(L("Frequency"), value: info.wordFrequency)
                 labelValueRow(
-                    "Difficulty",
+                    L("Difficulty"),
                     value: info.pronunciationDifficulty,
                     valueFont: .system(size: 13, weight: .semibold)
                 )
@@ -929,7 +1140,7 @@ struct WordAuditPanel: View {
                 } else {
                     Image(systemName: "plus")
                 }
-                Text(addedSuccess ? "Added to deck" : (isAdding ? "Adding…" : "Add to Deck"))
+                Text(addedSuccess ? L("Added to deck") : (isAdding ? L("Adding…") : L("Add to Deck")))
             }
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(.white)
@@ -994,7 +1205,7 @@ struct WordAuditPanel: View {
     @MainActor
     private func addToDeck() async {
         guard let info = wordInfo, let deckId = deck.id else {
-            errorText = "Deck identifier unavailable."
+            errorText = L("Deck identifier unavailable.")
             return
         }
         isAdding = true

@@ -1,6 +1,7 @@
 import SwiftUI
 import MediaPlayer
 import AVFoundation
+import UIKit
 
 struct ListenSessionView: View {
     @Environment(\.dismiss) private var dismiss
@@ -176,6 +177,11 @@ struct ListenSessionView: View {
                     }
                 }
         )
+        // Re-classes the status bar to white once the full-screen cover's
+        // hosting controller is actually on screen — reliable where the
+        // onAppear timing passes below can miss the freshly-presented
+        // controller (e.g. when opened from a pushed DeckDetailView).
+        .background(StatusBarRefresher().frame(width: 0, height: 0))
         .onAppear {
             // This view always has a dark radial backdrop, so its status
             // bar must read as white content no matter which surface
@@ -275,7 +281,7 @@ struct ListenSessionView: View {
                     Haptics.light()
                     dismiss()
                 } label: {
-                    Text("SKIP TO END")
+                    Text(L("SKIP TO END"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .tracking(1)
                         .foregroundStyle(.white)
@@ -301,7 +307,7 @@ struct ListenSessionView: View {
                     Haptics.light()
                     withAnimation(.easeInOut(duration: 0.2)) { showOptions = true }
                 } label: {
-                    Text("Options")
+                    Text(L("Options"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
@@ -342,7 +348,7 @@ struct ListenSessionView: View {
             Button {
                 goBack()
             } label: {
-                Text("Back")
+                Text(L("Back"))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                     .foregroundStyle(.white)
                     .frame(width: 60, alignment: .leading)
@@ -369,7 +375,7 @@ struct ListenSessionView: View {
             Button {
                 goNext()
             } label: {
-                Text("Next")
+                Text(L("Next"))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                     .foregroundStyle(.white)
                     .frame(width: 60, alignment: .trailing)
@@ -759,7 +765,7 @@ struct ListenSessionView: View {
                     Haptics.light()
                     withAnimation(.easeInOut(duration: 0.2)) { showOptions = false }
                 } label: {
-                    Text("Close")
+                    Text(L("Close"))
                         .font(.custom("NeueHaasDisplay-Light", size: 16))
                         .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
@@ -774,7 +780,7 @@ struct ListenSessionView: View {
     // Page 1 — the original playback options.
     private var optionsPageOne: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("OPTIONS")
+            Text(L("OPTIONS"))
                 .font(.custom("NeueHaasDisplay-Black", size: 22))
                 .foregroundStyle(.white)
                 .padding(.top, 96)
@@ -783,7 +789,7 @@ struct ListenSessionView: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 optionRow(
-                    label: "Native language read out loud:",
+                    label: L("Native language read out loud:"),
                     isOn: readTranslation,
                     onYes: { readTranslation = true },
                     onNo: { readTranslation = false }
@@ -791,9 +797,9 @@ struct ListenSessionView: View {
 
                 if readTranslation {
                     optionRow(
-                        label: "Before or after translated text?",
-                        firstTitle: "BEFORE",
-                        secondTitle: "AFTER",
+                        label: L("Before or after translated text?"),
+                        firstTitle: L("BEFORE"),
+                        secondTitle: L("AFTER"),
                         firstSelected: translationBefore,
                         onFirst: { translationOrderRaw = "before" },
                         onSecond: { translationOrderRaw = "after" }
@@ -802,7 +808,7 @@ struct ListenSessionView: View {
                 }
 
                 optionChoiceRow(
-                    label: "Seconds between audio:",
+                    label: L("Seconds between audio:"),
                     options: [2, 4, 8],
                     selected: gapSeconds,
                     onSelect: { gapSeconds = $0 }
@@ -810,7 +816,7 @@ struct ListenSessionView: View {
                 .padding(.top, 32)
 
                 optionRow(
-                    label: "Turtle (2× slower):",
+                    label: L("Turtle (2× slower):"),
                     isOn: turtle,
                     onYes: { turtle = true },
                     onNo: { turtle = false }
@@ -829,12 +835,12 @@ struct ListenSessionView: View {
     // user picks None or one track per channel, looped under the session.
     private var ambientPage: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("BACKGROUND")
+            Text(L("BACKGROUND"))
                 .font(.custom("NeueHaasDisplay-Black", size: 22))
                 .foregroundStyle(.white)
                 .padding(.top, 96)
 
-            Text("Layer a looping sound or music track under your session.")
+            Text(L("Layer a looping sound or music track under your session."))
                 .font(.custom("NeueHaasDisplay-Light", size: 14))
                 .foregroundStyle(.white.opacity(0.6))
                 .padding(.top, 8)
@@ -844,7 +850,7 @@ struct ListenSessionView: View {
 
             VStack(alignment: .leading, spacing: 28) {
                 ambientRow(
-                    title: "Ambient Sound",
+                    title: L("Ambient Sound"),
                     tracks: AmbientCatalog.sounds,
                     selectedId: ambientSoundId
                 ) { id in
@@ -852,7 +858,7 @@ struct ListenSessionView: View {
                     ambient.set(id, for: .sound)
                 }
                 ambientRow(
-                    title: "Ambient Music",
+                    title: L("Ambient Music"),
                     tracks: AmbientCatalog.music,
                     selectedId: ambientMusicId
                 ) { id in
@@ -883,7 +889,7 @@ struct ListenSessionView: View {
                 .foregroundStyle(.white.opacity(0.85))
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    ambientChip(label: "None", isSelected: selectedId.isEmpty) {
+                    ambientChip(label: L("None"), isSelected: selectedId.isEmpty) {
                         onSelect("")
                     }
                     ForEach(tracks) { track in
@@ -926,8 +932,8 @@ struct ListenSessionView: View {
     ) -> some View {
         optionRow(
             label: label,
-            firstTitle: "YES",
-            secondTitle: "NO",
+            firstTitle: L("YES"),
+            secondTitle: L("NO"),
             firstSelected: isOn,
             onFirst: onYes,
             onSecond: onNo
@@ -1013,6 +1019,22 @@ private struct SystemVolumeBridge: UIViewRepresentable {
             DispatchQueue.main.async {
                 slider.value = target
             }
+        }
+    }
+}
+
+// A zero-size hosted controller whose viewDidAppear fires only once the
+// enclosing surface (e.g. a full-screen cover) is actually on screen and
+// in the window hierarchy — the reliable moment to re-run the status-bar
+// style swap so the presented controller is re-classed to white.
+private struct StatusBarRefresher: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> UIViewController { RefreshVC() }
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+
+    final class RefreshVC: UIViewController {
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            StatusBarStyleSwap.installAndRefresh()
         }
     }
 }

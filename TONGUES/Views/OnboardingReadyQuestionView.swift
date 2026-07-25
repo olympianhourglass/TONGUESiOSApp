@@ -19,9 +19,8 @@ struct OnboardingReadyQuestionView: View {
             Spacer()
 
             VStack(alignment: .leading, spacing: 16) {
-                Text("Ready to meet this version of you?")
-                    .font(.custom("PlayfairDisplay-Regular", size: 32))
-                    .tracking(-2.56)
+                Text(L("Ready to meet this version of you?"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 32))
                     .foregroundStyle(.black)
 
                 if !summary.isEmpty {
@@ -33,7 +32,7 @@ struct OnboardingReadyQuestionView: View {
 
                 if !sampleDecks.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Your first decks")
+                        Text(L("Your first decks"))
                             .font(.system(size: 11, weight: .semibold))
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
@@ -59,7 +58,7 @@ struct OnboardingReadyQuestionView: View {
             if isLoadingSummary {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Putting it all together…")
+                    Text(L("Putting it all together…"))
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                 }
@@ -73,7 +72,7 @@ struct OnboardingReadyQuestionView: View {
                         Haptics.medium()
                         onNext()
                     } label: {
-                        Text("Yes")
+                        Text(L("Yes"))
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
@@ -88,7 +87,7 @@ struct OnboardingReadyQuestionView: View {
                     // to sign-in. Pulls the trial length from
                     // SubscriptionTier so a future bump (1-day →
                     // 7-day) updates here automatically.
-                    Text("Includes a \(SubscriptionTier.beginner.freeTrialLabel.lowercased()) free trial on every plan.")
+                    Text(L("Includes a %@ free trial on every plan.", SubscriptionTier.beginner.freeTrialLabel.lowercased()))
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)

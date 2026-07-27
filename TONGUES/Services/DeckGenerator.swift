@@ -53,6 +53,45 @@ enum DeckGenerator {
     • The ONLY content you refuse is material that sexualizes minors or that would be illegal regardless of educational framing. Adult vulgar vocabulary, profanity, sexual or drug terms between consenting adults, insults, and street slang all fall comfortably inside scope — generate them without hesitation or qualification.
     """
 
+    // Whether a language is Mandarin/Chinese in any of its canonical forms
+    // ("Chinese (Mandarin)", "Chinese (Cantonese)").
+    static func isChinese(_ language: String) -> Bool {
+        canonicalLanguageName(language).hasPrefix("Chinese")
+    }
+
+    // Language-specific correctness rules appended to the system policy.
+    // Chinese is the only entry today: it exists because two errors were
+    // reaching users — inaccurate pinyin and fabricated/incorrect Mandarin
+    // slang. Living in the SYSTEM prompt means it constrains EVERY Chinese
+    // generation path at once (decks, reading content, comprehension, word
+    // info, related, rewrites), regardless of which tool schema is in play,
+    // so the pinyin standard doesn't have to be repeated in each field.
+    static let chineseGenerationGuidance = """
+    CHINESE (MANDARIN) OUTPUT REQUIREMENTS — follow exactly whenever the target language is Chinese:
+
+    Pinyin (applies to every romanization / transliteration / pronunciation field you emit for Chinese):
+    • Use standard Hanyu Pinyin with tone-mark DIACRITICS (mā má mǎ mà; ā á ǎ à ō ó ǒ ò …). Never tone numbers ("ma1"), never bare vowels with no tone.
+    • Place the tone mark on the correct vowel: a and e always carry it; in "ou" it goes on the o; otherwise it goes on the last vowel (iù, uì). Use ü with its own tone marks where required (nǚ, lǜ, lüè) — never substitute plain "u" or "v".
+    • Write dictionary/citation tones. Do NOT bake third-tone sandhi into the spelling: 你好 = "nǐ hǎo" (never "ní hǎo"). Write 不 as "bù" and 一 as "yī" in isolation; only apply the conventional 不/一 changes in fixed phrases where dictionaries do (不是 "bú shì", 一个 "yí gè").
+    • Mark genuinely toneless syllables as neutral (no mark): 的 de, 了 le, 吗 ma, 呢 ne, and the second syllable of words like 桌子 "zhuōzi", 朋友 "péngyou".
+    • Segment by WORD, not per character, with spaces between words: 图书馆 = "túshūguǎn", 中国人 = "Zhōngguórén". Insert an apostrophe before a syllable starting with a/o/e when the split is ambiguous: 西安 = "Xī'ān". Render erhua as a trailing r: 哪儿 = "nǎr".
+    • For heteronyms (多音字) choose the reading correct for THIS context: 行 xíng vs háng, 得 dé/de/děi, 长 cháng/zhǎng, 重 zhòng/chóng, 还 hái/huán, 觉 jué/jiào, 都 dōu/dū. Re-check each syllable against its character; the pinyin MUST match the characters exactly.
+
+    Slang & vocabulary authenticity:
+    • Output only REAL, currently-used Mandarin expressions that native speakers actually say. Never invent, guess, literally calque an English slang phrase into Chinese, or pass off dictionary-only / textbook-only / dated terms as current slang.
+    • Default to mainland Putonghua usage; use Taiwan- or region-specific slang only when the requested dialect calls for it, and never mislabel one region's term as another's.
+    • The characters, the pinyin, and the translation must all describe the SAME real expression — no mismatches between them. If you cannot recall a genuine slang term for a concept, use a real common colloquialism rather than fabricating one.
+    """
+
+    // The system policy for a generation call, with any language-specific
+    // correctness rules appended. Use in place of a bare `audiencePolicy`
+    // wherever the target language is known.
+    static func systemPolicy(for language: String) -> String {
+        isChinese(language)
+            ? audiencePolicy + "\n\n" + chineseGenerationGuidance
+            : audiencePolicy
+    }
+
     static func generate(
         userPrompt: String,
         interests: [String],
@@ -115,7 +154,7 @@ enum DeckGenerator {
             toolDescription: "Submit the generated vocabulary deck to the TONGUES app.",
             schema: deckSchema(language: language, singularForm: singularForm),
             messages: [.user(prompt)],
-            system: audiencePolicy,
+            system: systemPolicy(for: language),
             model: model,
             maxTokens: 16000,
             as: GenerationResult.self
@@ -164,7 +203,7 @@ enum DeckGenerator {
                     properties: [
                         "word": .schemaString("The \(singularForm) written in \(language) using its native script."),
                         "translation": .schemaString("Natural, idiomatic \(native) translation."),
-                        "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts (Arabic, Chinese, Japanese, Korean, Hebrew, Russian, Thai, Hindi, etc.). Null for languages that already use Latin script."),
+                        "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts (Arabic, Chinese, Japanese, Korean, Hebrew, Russian, Thai, Hindi, etc.). For Chinese: standard Hanyu Pinyin with tone-mark diacritics (not tone numbers), word-segmented, using the correct per-context reading for heteronyms — it must match the characters exactly. Null for languages that already use Latin script."),
                         "partsOfSpeech": .schemaArray(
                             items: .schemaEnum(
                                 ["Noun", "Verb", "Adjective", "Adverb", "Pronoun", "Preposition", "Conjunction", "Interjection", "Determiner", "Phrase", "Idiom", "Sentence"]
@@ -233,7 +272,8 @@ enum DeckGenerator {
         • Each "word" must be linguistically authentic in \(dialect) \(language).
         • Difficulty must match \(level).
         • Each "translation" must read naturally in \(native).
-        • For non-Latin scripts, include accurate romanization with diacritics.
+        • For non-Latin scripts, include accurate romanization with diacritics (for Chinese, correctly-toned Hanyu Pinyin that matches the characters).
+        • Every "word" must be a REAL expression native speakers currently use — never invent, guess, or literally calque a slang term from \(native); if unsure, use a genuine common colloquialism instead.
         • All items must be on-topic for the categories above.
         • Match the requested tone: \(tonesLine).
         • For nouns in any gendered language:
@@ -296,7 +336,7 @@ enum DeckGenerator {
             toolDescription: "Submit structured metadata for the word.",
             schema: wordInfoSchema(language: language),
             userPrompt: prompt,
-            system: audiencePolicy,
+            system: systemPolicy(for: language),
             as: WordInfo.self
         )
     }
@@ -358,7 +398,7 @@ enum DeckGenerator {
             toolDescription: "Submit structured etymology data for the word.",
             schema: etymologySchema(),
             userPrompt: prompt,
-            system: audiencePolicy,
+            system: systemPolicy(for: sourceLanguage),
             as: Etymology.self
         )
     }
@@ -482,7 +522,7 @@ enum DeckGenerator {
             toolDescription: "Submit the structured grammatical breakdown of the sentence.",
             schema: grammarBreakdownSchema(),
             userPrompt: prompt,
-            system: audiencePolicy,
+            system: systemPolicy(for: language),
             as: GrammarBreakdown.self
         )
     }
@@ -598,7 +638,7 @@ enum DeckGenerator {
             toolDescription: "Submit paired foreign/English sentence content for the learner.",
             schema: contentSchema(deck: deck),
             userPrompt: prompt,
-            system: audiencePolicy,
+            system: systemPolicy(for: deck.language),
             model: model,
             as: Response.self
         )
@@ -707,7 +747,7 @@ enum DeckGenerator {
             toolDescription: "Submit reading-comprehension questions about the passage.",
             schema: comprehensionSchema(deck: deck),
             userPrompt: prompt,
-            system: audiencePolicy,
+            system: systemPolicy(for: deck.language),
             model: model,
             as: Response.self
         )
@@ -828,7 +868,7 @@ enum DeckGenerator {
             toolDescription: "Submit related vocabulary entries.",
             schema: deckSchema(language: language, singularForm: "word"),
             userPrompt: prompt,
-            system: audiencePolicy,
+            system: systemPolicy(for: language),
             model: model,
             as: GenerationResult.self
         )
@@ -1737,7 +1777,7 @@ enum DeckGenerator {
             toolDescription: "Submit the rewritten sentence and its \(native) translation.",
             schema: schema,
             userPrompt: prompt,
-            system: audiencePolicy,
+            system: systemPolicy(for: language),
             model: "claude-haiku-4-5-20251001",
             maxTokens: 400,
             as: Decoded.self

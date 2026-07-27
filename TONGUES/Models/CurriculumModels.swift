@@ -126,8 +126,9 @@ struct GeneratedPlanPayload: Codable {
     let targetLevel: String
     let units: [Unit]
 
-    /// Materializes the payload into a full plan doc. The first unit is
-    /// unlocked; everything else starts locked.
+    /// Materializes the payload into a full plan doc. Every unit starts
+    /// unlocked (active) — the curriculum is non-sequential; learners can
+    /// work any unit in any order. Units still auto-complete as mastered.
     func asPlan(
         language: String,
         dialect: String,
@@ -141,9 +142,7 @@ struct GeneratedPlanPayload: Codable {
                 order: index + 1,
                 title: unit.title,
                 canDo: unit.canDo,
-                status: index == 0
-                    ? CurriculumUnit.Status.active.rawValue
-                    : CurriculumUnit.Status.locked.rawValue,
+                status: CurriculumUnit.Status.active.rawValue,
                 deckIds: [],
                 plannedActivities: unit.activities.map {
                     PlannedActivity(

@@ -8,6 +8,7 @@ import Observation
 // conversation/pronunciation/content activities point at their tabs.
 struct PlanView: View {
     @State private var vm = PlanViewModel()
+    @State private var showRefreshConfirm = false
 
     var body: some View {
         Group {
@@ -25,6 +26,37 @@ struct PlanView: View {
         }
         .navigationTitle(L("Your Plan"))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if vm.plan != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        Haptics.light()
+                        showRefreshConfirm = true
+                    } label: {
+                        if vm.isRevising {
+                            ProgressView()
+                        } else {
+                            Image(systemName: "arrow.triangle.2.circlepath")
+                                .foregroundStyle(.black)
+                        }
+                    }
+                    .disabled(vm.isRevising)
+                    .accessibilityLabel(L("Refresh plan"))
+                }
+            }
+        }
+        .confirmationDialog(
+            L("Refresh your plan?"),
+            isPresented: $showRefreshConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(L("Refresh plan")) {
+                Task { await vm.revisePlan() }
+            }
+            Button(L("Cancel"), role: .cancel) { }
+        } message: {
+            Text(L("Completed units stay done. Upcoming units are regenerated from your latest progress."))
+        }
         .task { await vm.load() }
         .overlay(alignment: .top) {
             if let toast = vm.toast {
@@ -252,7 +284,10 @@ struct PlanView: View {
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
                     .foregroundStyle(.black)
                     .fixedSize(horizontal: false, vertical: true)
-                if activity.type != "deck" && activity.completedAt == nil {
+                // Conversation activities now have their own Start button,
+                // so only the still-manual types keep a how-to hint.
+                if activity.type != "deck" && activity.type != "conversation"
+                    && activity.completedAt == nil {
                     Text(L(activityHint(activity.type)))
                         .font(.custom("NeueHaasDisplay-Light", size: 11))
                         .foregroundStyle(.secondary)
@@ -282,11 +317,41 @@ struct PlanView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(vm.generatingActivityID != nil)
+            } else if activity.type == "conversation" {
+                Button {
+                    Haptics.medium()
+                    startConversation(activity)
+                } label: {
+                    Text(L("Start"))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 12))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color.black, in: Capsule())
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(10)
         .background(Color.black.opacity(0.03))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
+    // Hands a conversation activity to the Chat tab: drops the unit's
+    // scenario into the shared launch router and flips to Chat, which
+    // opens a fresh scenario conversation in this plan's language.
+    // Finishing that chat's recap marks the activity done via the
+    // existing markPlanConversationDone() path.
+    private func startConversation(_ activity: PlannedActivity) {
+        guard let language = vm.language else { return }
+        ChatLaunchRouter.shared.request(ChatScenarioLaunch(
+            language: language,
+            dialect: vm.dialect,
+            level: vm.level,
+            title: activity.label,
+            prompt: activity.spec["scenario"] ?? activity.label
+        ))
+        AppTabRouter.shared.current = .chat
     }
 
     private func statusIcon(_ status: CurriculumUnit.Status) -> String {
@@ -355,6 +420,7 @@ final class PlanViewModel {
     var level: String = "A1"
     var isLoading = false
     var isGenerating = false
+    var isRevising = false
     // Which creation stage is live (nil when idle). Steps with a lower
     // rawValue render as completed in the checklist.
     var creationStep: PlanCreationStep?
@@ -444,6 +510,37 @@ final class PlanViewModel {
     private func advance(to step: PlanCreationStep) {
         creationStep = step
         stageSeconds = 0
+    }
+
+    /// On-demand replan. Revises the plan against the learner's latest
+    /// model — completed units carry through verbatim; upcoming units are
+    /// regenerated/reordered. Gives users a manual trigger for what the
+    /// weekly reconciler does only on drift.
+    func revisePlan() async {
+        guard let existing = plan, let language else { return }
+        isRevising = true
+        defer { isRevising = false }
+        do {
+            let model = try await LearnerModelService.loadOrRebuild(
+                language: language,
+                dialect: dialect,
+                fallbackLevel: level
+            )
+            let (revised, changes) = try await CurriculumPlanner.revisePlan(
+                existing: existing,
+                learnerModel: model
+            )
+            try await FirebaseCurriculumService.save(revised)
+            plan = revised
+            decks = (try? await FirebaseDeckService.fetchDecks()) ?? decks
+            schedules = (try? await FirebaseDeckService.fetchAllSchedules()) ?? schedules
+            showToast(changes.first.map { L("Plan refreshed — %@", $0) } ?? L("Plan refreshed"))
+        } catch let error as SubscriptionError {
+            capError = error
+        } catch {
+            errorText = error.localizedDescription
+            showToast(L("Couldn't refresh the plan"))
+        }
     }
 
     /// Executes a "deck" activity: gap-aware generation, save with

@@ -73,6 +73,111 @@ final class SubscriptionService {
         }
     }
 
+    // MARK: - Promo codes
+
+    // Validates a user-typed promo code against the in-app table and, on a
+    // match, records the grant on the user's Firestore subscription doc.
+    // The grant lands in promoTier/promoExpiresAt, which `resolvedTier`
+    // layers over the StoreKit tier — so every gated feature unlocks
+    // immediately and the grant survives the launch entitlement sync.
+    // Returns the granted tier. Throws `.invalidCode` for an unknown code,
+    // or a Firestore/auth error if the write fails.
+    @discardableResult
+    func redeemPromoCode(_ input: String) async throws -> SubscriptionTier {
+        guard let match = PromoCode.match(input) else {
+            throw PromoRedemptionError.invalidCode
+        }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw SubscriptionError.notAuthenticated
+        }
+
+        // Claim a slot against the code's global redemption cap FIRST, so a
+        // capped-out code never grants. This is atomic across all users and
+        // idempotent per account (see claimRedemptionSlot).
+        try await Self.claimRedemptionSlot(
+            code: match.code,
+            uid: uid,
+            maxRedemptions: match.maxRedemptions
+        )
+
+        let now = Date()
+        let expiry = Calendar.current.date(
+            byAdding: .day,
+            value: match.durationDays,
+            to: now
+        ) ?? now
+
+        state.promoTier = match.tier.rawValue
+        state.promoExpiresAt = expiry
+        state.promoCode = match.code
+        state.promoRedeemedAt = now
+        do {
+            try await commit()
+        } catch {
+            // Roll the local optimism back to whatever Firestore actually
+            // holds so the UI never shows an unlock the server rejected.
+            await refresh()
+            throw error
+        }
+        return match.tier
+    }
+
+    // Atomically claims one redemption slot for `code` on behalf of `uid`.
+    // Uses a Firestore transaction over a shared counter doc
+    // (promoCodes/{code}.redeemedCount) plus a per-user ledger doc
+    // (promoCodes/{code}/redemptions/{uid}):
+    //   • If the user already has a ledger doc → idempotent no-op (repeat
+    //     redemptions / reinstalls never consume a second slot).
+    //   • Else if the counter is already at `maxRedemptions` → throws
+    //     `.capReached`.
+    //   • Else writes the ledger doc and bumps the counter by one.
+    // The counter/ledger docs are created lazily on first redemption, so
+    // no App Store Connect or console pre-seeding is required.
+    private static func claimRedemptionSlot(
+        code: String,
+        uid: String,
+        maxRedemptions: Int
+    ) async throws {
+        let codeRef = db.collection("promoCodes").document(code)
+        let redemptionRef = codeRef.collection("redemptions").document(uid)
+
+        _ = try await db.runTransaction { transaction, errorPointer -> Any? in
+            let redemptionSnap: DocumentSnapshot
+            do {
+                redemptionSnap = try transaction.getDocument(redemptionRef)
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+            // Same account re-redeeming — allow, but don't take a new slot.
+            if redemptionSnap.exists { return true }
+
+            let codeSnap: DocumentSnapshot
+            do {
+                codeSnap = try transaction.getDocument(codeRef)
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+            let count = (codeSnap.data()?["redeemedCount"] as? Int) ?? 0
+            if count >= maxRedemptions {
+                errorPointer?.pointee = PromoRedemptionError.capReached as NSError
+                return nil
+            }
+
+            transaction.setData([
+                "uid": uid,
+                "redeemedAt": FieldValue.serverTimestamp()
+            ], forDocument: redemptionRef)
+            transaction.setData([
+                "redeemedCount": count + 1,
+                "maxRedemptions": maxRedemptions,
+                "updatedAt": FieldValue.serverTimestamp()
+            ], forDocument: codeRef, merge: true)
+            return false
+        }
+    }
+
     // MARK: - Firestore plumbing
 
     private static let db = Firestore.firestore()

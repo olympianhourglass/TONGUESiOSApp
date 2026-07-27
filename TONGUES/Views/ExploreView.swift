@@ -289,7 +289,7 @@ struct ExploreView: View {
             parts.append(L("Next: %@", next.label))
         }
         if parts.isEmpty {
-            parts.append(L("Keep reviewing — %d%% mastery unlocks the next unit", Int((unit.masteryGate.matureFraction * 100).rounded())))
+            parts.append(L("Keep reviewing — %d%% mastery marks this unit complete", Int((unit.masteryGate.matureFraction * 100).rounded())))
         }
         return parts.joined(separator: " · ")
     }

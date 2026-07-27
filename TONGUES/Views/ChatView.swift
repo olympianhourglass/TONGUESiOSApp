@@ -4,6 +4,9 @@ struct ChatView: View {
     @State private var vm = ChatViewModel()
     @State private var auth = AuthService.shared
     @State private var speech = SpeechRecognitionService.shared
+    // Curriculum → Chat hand-off. PlanView drops a scenario here and flips
+    // to this tab; we consume it below by opening the scenario conversation.
+    @State private var launchRouter = ChatLaunchRouter.shared
     @FocusState private var inputFocused: Bool
 
     @State private var languagePickerPresented = false
@@ -277,6 +280,9 @@ struct ChatView: View {
             } else {
                 hasMicAuth = status == .authorized
             }
+            // A curriculum "Start" tap may have queued a scenario before
+            // this tab first appeared — consume it once seeding is done.
+            await consumePendingLaunch()
             reconcileMic()
         }
         .onChange(of: inputFocused) { _, _ in reconcileMic() }
@@ -314,6 +320,14 @@ struct ChatView: View {
         .onChange(of: selectedLanguage) { _, _ in
             if speech.isRecording { speech.stop() }
             reconcileMic()
+        }
+        // Fires when PlanView requests a curriculum conversation while the
+        // chat tab is already alive (the common case — the tab is resident
+        // in the TabView even when not front-of-screen).
+        .onChange(of: launchRouter.pending) { _, newValue in
+            if newValue != nil {
+                Task { await consumePendingLaunch() }
+            }
         }
         .onAppear { isChatTabActive = true }
         .onDisappear {
@@ -943,6 +957,35 @@ struct ChatView: View {
                 addedAt: Date()
             )
         }
+    }
+
+    // Opens a curriculum-requested scenario: switch the chat into the
+    // plan's language, start a clean thread, and fire the scenario opener.
+    // Finishing this chat's recap marks the plan's conversation activity
+    // done via ChatViewModel.markPlanConversationDone().
+    private func consumePendingLaunch() async {
+        guard let launch = launchRouter.pending else { return }
+        launchRouter.pending = nil
+
+        selectedLanguage = launch.language
+        selectedDialect = launch.dialect
+        selectedLevel = launch.level
+
+        await vm.switchLanguage(
+            to: launch.language,
+            dialect: launch.dialect,
+            level: launch.level
+        )
+        // Always start the scenario in a fresh thread so it isn't appended
+        // to whatever conversation happened to be open in this language.
+        vm.startNewConversation()
+        inputFocused = false
+        await vm.sendScenario(ConversationScenario(
+            id: "curriculum",
+            title: launch.title,
+            prompt: launch.prompt,
+            systemImage: "bubble.left.and.bubble.right"
+        ))
     }
 
     private func seedFromProfile() async {

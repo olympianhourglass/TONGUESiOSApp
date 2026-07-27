@@ -78,27 +78,19 @@ enum CurriculumReconciler {
         var units = plan.units.sorted { $0.order < $1.order }
         var changed = false
 
-        // Walk forward: complete every consecutive passing unit, then
-        // make the first non-completed unit active and the rest locked.
+        // Non-sequential curriculum: every unit is always unlocked. Complete
+        // any unit whose mastery gate passes; keep every other unit active
+        // (this also heals any legacy plans that still carry locked units).
         for index in units.indices {
-            guard units[index].statusEnum == .active else { continue }
+            guard units[index].statusEnum != .completed else { continue }
             if gatePasses(units[index], decks: decks, schedules: schedules) {
                 units[index].status = CurriculumUnit.Status.completed.rawValue
                 outcome.unitsCompleted.append(units[index])
                 changed = true
-            }
-        }
-        var sawActive = false
-        for index in units.indices {
-            guard units[index].statusEnum != .completed else { continue }
-            let desired = sawActive
-                ? CurriculumUnit.Status.locked.rawValue
-                : CurriculumUnit.Status.active.rawValue
-            if units[index].status != desired {
-                units[index].status = desired
+            } else if units[index].statusEnum != .active {
+                units[index].status = CurriculumUnit.Status.active.rawValue
                 changed = true
             }
-            sawActive = true
         }
 
         outcome.plan.units = units
@@ -111,7 +103,7 @@ enum CurriculumReconciler {
             if !outcome.unitsCompleted.isEmpty {
                 let names = outcome.unitsCompleted.map { "“\($0.title)”" }.joined(separator: ", ")
                 outcome.plan.pendingTutorNotice =
-                    "You've mastered \(names) — the next unit is unlocked. Nice work."
+                    "You've mastered \(names) — nice work. Jump into whichever unit you like next."
             }
             outcome.changed = true
             try? await FirebaseCurriculumService.save(outcome.plan)

@@ -25,11 +25,10 @@ struct PremiumActionSheet: View {
     @State private var selectedCycle: SubscriptionBillingCycle = .monthly
     @State private var isPurchasing: Bool = false
     @State private var purchaseError: String?
-    // Drives the system offer-code redemption sheet. Creators redeem a
-    // free App Store Connect offer code here; the resulting transaction
-    // flows through StoreKitClient's Transaction.updates listener and
-    // unlocks the tier like any other purchase.
-    @State private var showRedeemSheet: Bool = false
+    // Drives the in-app promo-code sheet, where the user types a code
+    // (e.g. TONGUESVIP). The sheet also exposes Apple's App Store
+    // offer-code redemption as a secondary option.
+    @State private var showPromoSheet: Bool = false
     // Tracks how far the user has overscrolled the hero so the body
     // can fire a dismiss once a threshold is crossed.
     @State private var heroPullDistance: CGFloat = 0
@@ -124,20 +123,10 @@ struct PremiumActionSheet: View {
         } message: { error in
             Text(error)
         }
-        // System offer-code redemption sheet. The sheet itself handles
-        // validation and error messaging; on a successful redemption we
-        // re-sync entitlements so the unlocked tier lands immediately and
-        // dismiss the paywall. (Transaction.updates would sync it anyway,
-        // but syncing here makes the unlock feel instant.)
-        .offerCodeRedemption(isPresented: $showRedeemSheet) { result in
-            if case .success = result {
-                Task {
-                    await store.syncEntitlements()
-                    await subscription.refresh()
-                    Haptics.success()
-                    dismiss()
-                }
-            }
+        // In-app promo-code entry. On a successful redemption the sheet
+        // dismisses the paywall via onRedeemed so the unlocked app shows.
+        .sheet(isPresented: $showPromoSheet) {
+            PromoCodeRedeemSheet(onRedeemed: { dismiss() })
         }
     }
 
@@ -631,7 +620,7 @@ struct PremiumActionSheet: View {
                 }
             }
             footerLink(title: L("Redeem Code")) {
-                showRedeemSheet = true
+                showPromoSheet = true
             }
         }
     }

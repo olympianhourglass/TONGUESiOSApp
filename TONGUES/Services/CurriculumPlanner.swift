@@ -189,15 +189,11 @@ enum CurriculumPlanner {
             }
             return unit
         }
-        // Exactly one active unit: first non-completed in order.
-        var sawActive = false
+        // Non-sequential: every non-completed unit stays unlocked (active).
         revised.units = revised.units.map { unit in
             var u = unit
             if u.statusEnum != .completed {
-                u.status = sawActive
-                    ? CurriculumUnit.Status.locked.rawValue
-                    : CurriculumUnit.Status.active.rawValue
-                sawActive = true
+                u.status = CurriculumUnit.Status.active.rawValue
             }
             return u
         }

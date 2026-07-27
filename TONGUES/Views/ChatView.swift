@@ -27,7 +27,7 @@ struct ChatView: View {
 
     // Auto-mic state. The mic stays hot while the user is engaged in
     // a conversation. Silence detection in SpeechRecognitionService
-    // (1.6s of quiet after speech) ends the turn and auto-sends; the
+    // (2.5s of quiet after speech) ends the turn and auto-sends; the
     // reconciler restarts listening once the AI has replied. The mic
     // button in the input bar is a manual fallback — tap to stop and
     // drop the partial transcript into the input field (no forced
@@ -896,7 +896,10 @@ struct ChatView: View {
             Task { await viewModel.send() }
         }
         do {
-            try speech.start(locale: locale)
+            // A more forgiving trailing-silence window than the 1.6s default
+            // so a natural mid-sentence pause / breath doesn't auto-send and
+            // cut the user off. Tune here if it feels too slow/eager.
+            try speech.start(locale: locale, silenceTimeout: 2.5)
         } catch {
             vm.errorText = error.localizedDescription
         }

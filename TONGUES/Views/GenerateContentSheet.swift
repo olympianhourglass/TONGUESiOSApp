@@ -94,15 +94,6 @@ struct GenerateContentSheet: View {
             }
     }
 
-    // The whole passage's pronunciation as one block, mirroring how the
-    // "Story" foreign block is joined — used for the Story-mode reveal.
-    private var transliterationBlock: String {
-        generatedPairs
-            .compactMap { $0.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
-
     private var foreignContext: String {
         if let range = generatedContent.range(of: "English:") {
             return generatedContent[..<range.lowerBound]
@@ -298,27 +289,19 @@ struct GenerateContentSheet: View {
 
                     if isInterleaved {
                         interleavedContent
+                    } else if revealPronunciation, pronunciationAvailable {
+                        storyWithPronunciation
                     } else {
-                        VStack(alignment: .leading, spacing: 10) {
-                            TappableContentText(
-                                text: generatedContent,
-                                highlightedWord: selectedWord,
-                                highlightedNativeWords: nativeHighlightWords,
-                                spokenRange: spokenRangeInDisplayedText,
-                                onWordTapped: { word, kind in
-                                    Haptics.light()
-                                    handleWordTap(word: word, kind: kind)
-                                }
-                            )
-
-                            if revealPronunciation, !transliterationBlock.isEmpty {
-                                Text(transliterationBlock)
-                                    .font(.system(size: 14))
-                                    .italic()
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                        TappableContentText(
+                            text: generatedContent,
+                            highlightedWord: selectedWord,
+                            highlightedNativeWords: nativeHighlightWords,
+                            spokenRange: spokenRangeInDisplayedText,
+                            onWordTapped: { word, kind in
+                                Haptics.light()
+                                handleWordTap(word: word, kind: kind)
                             }
-                        }
+                        )
                     }
 
                     HStack(spacing: 8) {
@@ -421,6 +404,70 @@ struct GenerateContentSheet: View {
         }
     }
 
+    // MARK: Pronunciation rendering
+
+    // Renders one foreign sentence with its pronunciation directly beneath
+    // it. For Chinese (when the pinyin is syllable-separated and lines up
+    // 1:1 with the characters) it stacks each syllable centered under its
+    // character, ruby-style; otherwise it falls back to the tappable
+    // foreign line with the romanization on the line below. Used by both
+    // the Story reveal and the Line-by-line view so they stay consistent.
+    @ViewBuilder
+    private func foreignWithPinyin(_ pair: SentencePair, spokenRange: NSRange? = nil) -> some View {
+        let translit = pair.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if revealPronunciation,
+           DeckGenerator.isChinese(deck.language),
+           let translit, !translit.isEmpty,
+           let tokens = RubyPinyinAligner.align(foreign: pair.foreign, pinyin: translit) {
+            RubyPinyinLine(tokens: tokens) { word in
+                Haptics.light()
+                handleWordTap(word: word, kind: .foreign)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                TappableContentText(
+                    text: pair.foreign,
+                    highlightedWord: selectedWord,
+                    highlightedNativeWords: nativeHighlightWords,
+                    spokenRange: spokenRange,
+                    onWordTapped: { word, kind in
+                        Haptics.light()
+                        handleWordTap(word: word, kind: kind)
+                    }
+                )
+                if revealPronunciation, let translit, !translit.isEmpty {
+                    Text(translit)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color(white: 0.45))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    // Story mode with pinyin revealed: each foreign sentence gets its
+    // pronunciation beneath it (line-by-line, not a trailing paragraph),
+    // then the whole native translation follows as one block.
+    private var storyWithPronunciation: some View {
+        let pairs = interleavedPairs()
+        let native = pairs.map(\.english).filter { !$0.isEmpty }.joined(separator: " ")
+        return VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+                    if !pair.foreign.isEmpty {
+                        foreignWithPinyin(pair)
+                    }
+                }
+            }
+            if !native.isEmpty {
+                Text(native)
+                    .font(.system(size: 15).italic())
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     // MARK: Line-by-line interleave
 
     // Renders sentence pairs as alternating foreign + English rows.
@@ -436,26 +483,12 @@ struct GenerateContentSheet: View {
             ForEach(Array(pairs.enumerated()), id: \.offset) { index, pair in
                 VStack(alignment: .leading, spacing: 2) {
                     if !pair.foreign.isEmpty {
-                        TappableContentText(
-                            text: pair.foreign,
-                            highlightedWord: selectedWord,
-                            highlightedNativeWords: nativeHighlightWords,
-                            // Pipe the spoken-word highlight only to the
-                            // pair the speech engine is currently reading.
-                            spokenRange: highlight?.pairIndex == index ? highlight?.range : nil,
-                            onWordTapped: { word, kind in
-                                Haptics.light()
-                                handleWordTap(word: word, kind: kind)
-                            }
+                        // Pipe the spoken-word highlight only to the pair the
+                        // speech engine is currently reading.
+                        foreignWithPinyin(
+                            pair,
+                            spokenRange: highlight?.pairIndex == index ? highlight?.range : nil
                         )
-                    }
-                    if revealPronunciation,
-                       let translit = pair.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines),
-                       !translit.isEmpty {
-                        Text(translit)
-                            .font(.system(size: 13))
-                            .foregroundStyle(Color(white: 0.45))
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if !pair.english.isEmpty {
                         Text(pair.english)
@@ -907,6 +940,77 @@ extension Character {
                    (0x30A0...0x30FF).contains(value) ||      // Katakana
                    (0xAC00...0xD7AF).contains(value)         // Hangul Syllables
         }
+    }
+}
+
+// MARK: - Ruby pinyin (per-character pronunciation)
+
+// Aligns a Chinese line with its (syllable-separated) pinyin so each
+// syllable can sit under its character. Alignment is intentionally strict:
+// it only succeeds when the number of CJK characters exactly equals the
+// number of whitespace-separated pinyin syllables. When it doesn't (e.g.
+// legacy word-segmented pinyin, erhua contractions, embedded digits), it
+// returns nil and the caller falls back to a plain foreign + pinyin line.
+enum RubyPinyinAligner {
+    struct Token: Hashable {
+        let text: String
+        let pinyin: String?   // nil for punctuation / non-CJK characters
+        let tappable: Bool
+    }
+
+    static func align(foreign: String, pinyin: String) -> [Token]? {
+        let syllables = pinyin.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !syllables.isEmpty else { return nil }
+
+        let chars = Array(foreign)
+        let cjkCount = chars.filter { $0.isCJKIdeograph }.count
+        guard cjkCount == syllables.count else { return nil }
+
+        var tokens: [Token] = []
+        var next = 0
+        for ch in chars {
+            if ch.isCJKIdeograph {
+                tokens.append(Token(text: String(ch), pinyin: syllables[next], tappable: true))
+                next += 1
+            } else if ch.isWhitespace {
+                continue   // Chinese has no word spaces; drop any strays.
+            } else {
+                tokens.append(Token(text: String(ch), pinyin: nil, tappable: ch.isLetter || ch.isNumber))
+            }
+        }
+        return tokens
+    }
+}
+
+// Renders aligned ruby tokens: each character with its pinyin syllable
+// centered directly underneath, wrapping across lines via FlowLayout.
+// Tapping a character fires `onTap` for the same word-lookup flow as the
+// flat tappable text.
+private struct RubyPinyinLine: View {
+    let tokens: [RubyPinyinAligner.Token]
+    var onTap: (String) -> Void = { _ in }
+
+    var body: some View {
+        FlowLayout(spacing: 4) {
+            ForEach(Array(tokens.enumerated()), id: \.offset) { _, token in
+                VStack(spacing: 1) {
+                    Text(token.text)
+                        .font(.system(size: 19))
+                        .foregroundStyle(.black)
+                    // A clear placeholder keeps punctuation baselines aligned
+                    // with the pinyin row of neighboring characters.
+                    Text(token.pinyin ?? " ")
+                        .font(.system(size: 11))
+                        .foregroundStyle(token.pinyin == nil ? .clear : Color(white: 0.45))
+                }
+                .fixedSize()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if token.tappable { onTap(token.text) }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

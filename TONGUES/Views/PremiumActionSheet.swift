@@ -19,6 +19,12 @@ import StoreKit
 struct PremiumActionSheet: View {
     @Environment(\.dismiss) private var dismiss
 
+    // When set, the sheet is being used as the end-of-onboarding paywall
+    // rather than the in-app modal: the top affordance becomes "Skip",
+    // and finishing (skip, swipe-down, or a completed purchase) calls this
+    // instead of `dismiss()` so onboarding can hand off into the app.
+    var onFinish: (() -> Void)? = nil
+
     @State private var store = StoreKitClient.shared
     @State private var subscription = SubscriptionService.shared
     @State private var selectedTier: SubscriptionTier = .beginner
@@ -94,7 +100,7 @@ struct PremiumActionSheet: View {
             if newValue >= pullDismissThreshold, !didFirePullDismiss {
                 didFirePullDismiss = true
                 Haptics.success()
-                dismiss()
+                complete()
             } else if newValue < pullDismissThreshold / 2 {
                 didFirePullDismiss = false
             }
@@ -126,7 +132,7 @@ struct PremiumActionSheet: View {
         // In-app promo-code entry. On a successful redemption the sheet
         // dismisses the paywall via onRedeemed so the unlocked app shows.
         .sheet(isPresented: $showPromoSheet) {
-            PromoCodeRedeemSheet(onRedeemed: { dismiss() })
+            PromoCodeRedeemSheet(onRedeemed: { complete() })
         }
     }
 
@@ -211,19 +217,41 @@ struct PremiumActionSheet: View {
         }
     }
 
+    // Routes a "done with the paywall" action: onboarding hands off to the
+    // app via `onFinish`; the in-app sheet dismisses itself.
+    private func complete() {
+        if let onFinish {
+            onFinish()
+        } else {
+            dismiss()
+        }
+    }
+
     private var heroTopBar: some View {
         HStack(alignment: .top) {
             Spacer()
             Button {
                 Haptics.light()
-                dismiss()
+                complete()
             } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(.white)
-                    .frame(width: 32, height: 32)
-                    .background(Color.white.opacity(0.15))
-                    .clipShape(Circle())
+                if onFinish != nil {
+                    // Onboarding: a text "Skip" reads as "enter the app for
+                    // now" rather than "close this popup".
+                    Text(L("Skip"))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(Color.white.opacity(0.15))
+                        .clipShape(Capsule())
+                } else {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundStyle(.white)
+                        .frame(width: 32, height: 32)
+                        .background(Color.white.opacity(0.15))
+                        .clipShape(Circle())
+                }
             }
         }
     }
@@ -539,7 +567,7 @@ struct PremiumActionSheet: View {
                 let velocity = value.predictedEndTranslation.height - value.translation.height
                 if distance > 180 || (distance > 80 && velocity > 200) {
                     Haptics.light()
-                    dismiss()
+                    complete()
                 }
             }
     }
@@ -655,7 +683,7 @@ struct PremiumActionSheet: View {
             // committed it). Re-reading could clobber that with a stale doc
             // if the write lagged/failed, leaving the plan stuck on the old
             // tier. The @Observable state already reflects the upgrade.
-            dismiss()
+            complete()
         } else if let error = store.lastError {
             // Surface the underlying StoreKit failure so the user
             // isn't left wondering why nothing happened (most often:

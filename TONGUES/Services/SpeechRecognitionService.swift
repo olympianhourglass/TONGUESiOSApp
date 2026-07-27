@@ -50,9 +50,10 @@ final class SpeechRecognitionService {
     private var didFireSilence = false
     private let silenceThresholdDb: Float = -40
     // How long a trailing quiet stretch must last before an utterance is
-    // considered finished. Per-session: the conversation auto-mic wants
-    // this snappy (1.6s); the pronunciation drill sets it higher so a
-    // mid-sentence breath or pause doesn't cut the learner off.
+    // considered finished. Per-session, set by `start(silenceTimeout:)`:
+    // the conversation auto-mic passes ~2.5s so a mid-sentence breath or
+    // pause doesn't cut the speaker off; the pronunciation drill sets it
+    // higher still. This 1.6s is only the fallback default.
     private var silenceTimeout: TimeInterval = 1.6
 
     private init() {}

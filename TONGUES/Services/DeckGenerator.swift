@@ -74,7 +74,7 @@ enum DeckGenerator {
     • Place the tone mark on the correct vowel: a and e always carry it; in "ou" it goes on the o; otherwise it goes on the last vowel (iù, uì). Use ü with its own tone marks where required (nǚ, lǜ, lüè) — never substitute plain "u" or "v".
     • Write dictionary/citation tones. Do NOT bake third-tone sandhi into the spelling: 你好 = "nǐ hǎo" (never "ní hǎo"). Write 不 as "bù" and 一 as "yī" in isolation; only apply the conventional 不/一 changes in fixed phrases where dictionaries do (不是 "bú shì", 一个 "yí gè").
     • Mark genuinely toneless syllables as neutral (no mark): 的 de, 了 le, 吗 ma, 呢 ne, and the second syllable of words like 桌子 "zhuōzi", 朋友 "péngyou".
-    • Segment by WORD, not per character, with spaces between words: 图书馆 = "túshūguǎn", 中国人 = "Zhōngguórén". Insert an apostrophe before a syllable starting with a/o/e when the split is ambiguous: 西安 = "Xī'ān". Render erhua as a trailing r: 哪儿 = "nǎr".
+    • Separate syllables with a single space — exactly ONE syllable per Chinese character — so the pinyin lines up one-to-one with the characters: 你好 = "nǐ hǎo", 图书馆 = "tú shū guǎn", 中国人 = "Zhōng guó rén". Render erhua as its own trailing syllable: 哪儿 = "nǎ r".
     • For heteronyms (多音字) choose the reading correct for THIS context: 行 xíng vs háng, 得 dé/de/děi, 长 cháng/zhǎng, 重 zhòng/chóng, 还 hái/huán, 觉 jué/jiào, 都 dōu/dū. Re-check each syllable against its character; the pinyin MUST match the characters exactly.
 
     Slang & vocabulary authenticity:
@@ -658,7 +658,7 @@ enum DeckGenerator {
         var required = ["foreign", "english"]
 
         if needsPronunciation {
-            pairProperties["transliteration"] = .schemaString("Latin-script pronunciation of THIS foreign sentence/line — pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic.")
+            pairProperties["transliteration"] = .schemaString("Latin-script pronunciation of THIS foreign sentence/line — pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic. For Chinese, put exactly one space between every syllable (one syllable per character) so it aligns under each character.")
             required.append("transliteration")
         }
 
@@ -699,7 +699,7 @@ enum DeckGenerator {
 
         let native = AppLanguage.currentNative.promptName
         let pronunciationRule = needsPronunciationAid(deck.language)
-            ? "\n        • \"transliteration\" must be the Latin-script pronunciation of THAT foreign sentence/line (pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic), aligned 1:1 with the foreign text."
+            ? "\n        • \"transliteration\" must be the Latin-script pronunciation of THAT foreign sentence/line (pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic), aligned 1:1 with the foreign text. For Chinese, separate every syllable with a single space (one syllable per character)."
             : ""
         return """
         Generate paired language-learning reading content.

@@ -74,6 +74,7 @@ struct OnboardingFlow: View {
         case question(Int)
         case login
         case signIn
+        case paywall
     }
 
     var body: some View {
@@ -124,15 +125,27 @@ struct OnboardingFlow: View {
                 case .login:
                     OnboardingLoginView(
                         onboardingAnswers: state.answers,
-                        onComplete: onComplete,
+                        // New users see the paywall once between finishing
+                        // sign-up and entering the app; the paywall itself
+                        // calls the real onComplete.
+                        onComplete: { path.append(.paywall) },
                         sampleDeckTitles: state.sampleDecks
                     )
                 case .signIn:
                     OnboardingLoginView(
                         onboardingAnswers: state.answers,
+                        // Returning users go straight in — no paywall.
                         onComplete: onComplete,
                         isSignIn: true
                     )
+                case .paywall:
+                    PremiumActionSheet(onFinish: onComplete)
+                        .toolbar(.hidden, for: .navigationBar)
+                        .navigationBarBackButtonHidden(true)
+                        // The paywall is dark; force light status-bar content
+                        // over it (overrides the flow-wide dark setting).
+                        .onAppear { AppTabRouter.shared.forceLightStatusBar = true }
+                        .onDisappear { AppTabRouter.shared.forceLightStatusBar = false }
                 }
             }
         }

@@ -57,6 +57,8 @@ struct ProfileView: View {
                     }
                     .buttonStyle(.plain)
 
+                    usageSection
+
                     if let onboarding = profile?.onboarding {
                         nativeLanguageSection
 
@@ -371,6 +373,61 @@ struct ProfileView: View {
             .background(Capsule().fill(Color(white: 0.93)))
             .fixedSize(horizontal: true, vertical: false)
         }
+    }
+
+    // "Usage" — this month's consumption of each metered bucket against the
+    // current tier's cap, mirroring the limits shown on the paywall. Reads
+    // straight off SubscriptionService (refreshed in .task above).
+    private var usageSection: some View {
+        section(L("Usage")) {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(SubscriptionBucket.allCases, id: \.self) { bucket in
+                    usageRow(bucket)
+                }
+                Text(L("This month · resets on the 1st"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    @ViewBuilder
+    private func usageRow(_ bucket: SubscriptionBucket) -> some View {
+        let cap = bucket.cap(for: subscription.currentTier)
+        let used = subscription.state.usage(in: bucket, monthKey: subscription.currentMonthKey)
+        let isFinite = cap > 0 && cap != Int.max
+        let fraction = isFinite ? min(1, Double(used) / Double(cap)) : 0
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(L(bucket.titleLabel))
+                    .font(.system(size: 15))
+                    .foregroundStyle(.black)
+                Spacer()
+                Text(usageValueText(used: used, cap: cap))
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+            if isFinite {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.black.opacity(0.08))
+                        Capsule()
+                            .fill(fraction >= 1 ? Color.red : Color.black)
+                            .frame(width: max(0, geo.size.width * fraction))
+                    }
+                }
+                .frame(height: 4)
+            }
+        }
+    }
+
+    private func usageValueText(used: Int, cap: Int) -> String {
+        if cap == Int.max { return L("%d used · Unlimited", used) }
+        if cap == 0 { return L("%d used", used) }
+        return L("%d / %d", used, cap)
     }
 
     @ViewBuilder

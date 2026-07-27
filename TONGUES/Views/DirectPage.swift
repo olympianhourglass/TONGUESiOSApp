@@ -461,9 +461,26 @@ struct DirectPage: View {
                     Text(item.translation)
                         .font(.custom("NeueHaasDisplay-Roman", size: 20))
                         .foregroundStyle(.black)
-                    Text(item.word)
-                        .font(.custom("NeueHaasDisplay-Roman", size: 26))
-                        .foregroundStyle(.black)
+                    // Foreign line + a speaker to hear it read aloud in the
+                    // target language (same button used on deck cards / word
+                    // lookups). item.word is always the foreign side.
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(item.word)
+                            .font(.custom("NeueHaasDisplay-Roman", size: 26))
+                            .foregroundStyle(.black)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        SpeakWaveformButton(
+                            action: {
+                                SpeechClient.shared.speak(
+                                    item.word,
+                                    language: language,
+                                    allowForvo: true
+                                )
+                            },
+                            font: .system(size: 20)
+                        )
+                    }
                     if let translit = item.transliteration, !translit.isEmpty {
                         Text(translit)
                             .font(.system(size: 14))

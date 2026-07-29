@@ -65,7 +65,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     var monthlySentences: Int {
         switch self {
         case .free:     return 0
-        case .beginner: return 10
+        case .beginner: return 100
         case .pro:      return 600
         case .max:      return 3_000
         }

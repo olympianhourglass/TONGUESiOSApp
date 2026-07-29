@@ -74,7 +74,7 @@ struct ChatView: View {
                         historySheetPresented = true
                     } label: {
                         Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 18, weight: .regular))
+                            .font(.system(size: MacLayout.f(18), weight: .regular))
                             .foregroundStyle(.black)
                     }
                 }
@@ -85,10 +85,10 @@ struct ChatView: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text(selectedLanguage)
-                                .font(.custom("NeueHaasDisplay-Mediu", size: 14))
+                                .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(14)))
                                 .foregroundStyle(.black)
                             Image(systemName: "chevron.down")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(.system(size: MacLayout.f(10), weight: .semibold))
                                 .foregroundStyle(.secondary)
                         }
                     }
@@ -240,7 +240,7 @@ struct ChatView: View {
             .overlay(alignment: .top) {
                 if let toast = savedToast {
                     Text(toast)
-                        .font(.custom("NeueHaasDisplay-Mediu", size: 14))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(14)))
                         .foregroundStyle(.white)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
@@ -341,11 +341,7 @@ struct ChatView: View {
     @ViewBuilder
     private var chatContent: some View {
         if vm.isLoadingConversation {
-            VStack {
-                Spacer()
-                ProgressView()
-                Spacer()
-            }
+            conversationSkeleton
         } else if let conversation = vm.conversation, conversation.messages.isEmpty {
             scenarioStartersStrip(conversation: conversation)
         } else {
@@ -361,11 +357,11 @@ struct ChatView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(L("Start a conversation"))
-                        .font(.custom("PlayfairDisplay-Regular", size: 28))
+                        .font(.custom("PlayfairDisplay-Regular", size: MacLayout.f(28)))
                         .tracking(-1.5)
                         .foregroundStyle(.black)
                     Text(L("Pick a scenario or just say hi."))
-                        .font(.custom("NeueHaasDisplay-Light", size: 15))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 16)
@@ -375,7 +371,7 @@ struct ChatView: View {
                 // tier above the roleplay scenarios.
                 VStack(alignment: .leading, spacing: 10) {
                     Text(L("YOUR TUTOR"))
-                        .font(.custom("NeueHaasDisplay-Mediu", size: 11))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(11)))
                         .tracking(1.2)
                         .foregroundStyle(.secondary)
                     FlowLayout(spacing: 10) {
@@ -415,9 +411,9 @@ struct ChatView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: scenario.systemImage)
-                                    .font(.system(size: 13))
+                                    .font(.system(size: MacLayout.f(13)))
                                 Text(scenario.title)
-                                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                                     .lineLimit(1)
                                     .fixedSize(horizontal: true, vertical: false)
                             }
@@ -454,9 +450,9 @@ struct ChatView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 13))
+                    .font(.system(size: MacLayout.f(13)))
                 Text(title)
-                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                     .lineLimit(1)
                     .fixedSize(horizontal: true, vertical: false)
             }
@@ -505,6 +501,36 @@ struct ChatView: View {
         }
     }
 
+    // Placeholder chat bubbles shown while a conversation loads, mirroring the
+    // alternating assistant/user layout with a looping shimmer so the wait
+    // reads as "messages are arriving" rather than a bare spinner.
+    private var conversationSkeleton: some View {
+        ScrollView {
+            VStack(spacing: 16) {
+                bubbleSkeleton(fromUser: false, width: 240)
+                bubbleSkeleton(fromUser: true, width: 170)
+                bubbleSkeleton(fromUser: false, width: 260)
+                bubbleSkeleton(fromUser: true, width: 140)
+                bubbleSkeleton(fromUser: false, width: 210)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 16)
+        }
+        .modifier(ConversationSkeletonShimmer())
+    }
+
+    @ViewBuilder
+    private func bubbleSkeleton(fromUser: Bool, width: CGFloat) -> some View {
+        HStack {
+            if fromUser { Spacer(minLength: 40) }
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color(white: fromUser ? 0.88 : 0.93))
+                .frame(width: width, height: 44)
+            if !fromUser { Spacer(minLength: 40) }
+        }
+        .frame(maxWidth: .infinity, alignment: fromUser ? .trailing : .leading)
+    }
+
     @ViewBuilder
     private func messageRow(_ message: ConversationMessage) -> some View {
         HStack(alignment: .top) {
@@ -520,12 +546,12 @@ struct ChatView: View {
 
                 if message.role == .assistant, let attachment = message.attachment {
                     attachmentCard(attachment, messageID: message.id)
-                        .frame(maxWidth: 300, alignment: .leading)
+                        .frame(maxWidth: MacLayout.s(300), alignment: .leading)
                 }
 
                 if let corrections = message.corrections, !corrections.isEmpty {
                     CorrectionDecoration(corrections: corrections)
-                        .frame(maxWidth: 320, alignment: .trailing)
+                        .frame(maxWidth: MacLayout.s(320), alignment: .trailing)
                 }
             }
 
@@ -581,7 +607,7 @@ struct ChatView: View {
 
     private func userBubble(_ message: ConversationMessage) -> some View {
         Text(message.text)
-            .font(.custom("NeueHaasDisplay-Light", size: 16))
+            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
             .foregroundStyle(.white)
             // Cap the text's frame width so long messages wrap to
             // multiple lines and the bubble grows vertically instead of
@@ -589,7 +615,7 @@ struct ChatView: View {
             // bubble's 280pt ceiling. Short messages still hug their
             // intrinsic width because `maxWidth` is an upper bound, not
             // a fixed size.
-            .frame(maxWidth: 280, alignment: .leading)
+            .frame(maxWidth: MacLayout.s(280), alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -616,7 +642,7 @@ struct ChatView: View {
             )
             if let translit = message.transliteration, !translit.isEmpty {
                 Text(translit)
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .italic()
                     .foregroundStyle(.secondary)
             }
@@ -630,7 +656,7 @@ struct ChatView: View {
                     )
                 } label: {
                     Image(systemName: "speaker.wave.2")
-                        .font(.system(size: 16))
+                        .font(.system(size: MacLayout.f(16)))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -640,7 +666,7 @@ struct ChatView: View {
                     Task { await vm.translateToken(message.text) }
                 } label: {
                     Image(systemName: "character.bubble")
-                        .font(.system(size: 16))
+                        .font(.system(size: MacLayout.f(16)))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -650,7 +676,7 @@ struct ChatView: View {
                     drillTarget = message
                 } label: {
                     Image(systemName: "waveform.badge.mic")
-                        .font(.system(size: 16))
+                        .font(.system(size: MacLayout.f(16)))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -660,7 +686,7 @@ struct ChatView: View {
                     grammarTarget = message
                 } label: {
                     Image(systemName: "text.book.closed")
-                        .font(.system(size: 16))
+                        .font(.system(size: MacLayout.f(16)))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -670,7 +696,7 @@ struct ChatView: View {
                     Task { await stageSave(message: message) }
                 } label: {
                     Image(systemName: "plus.circle")
-                        .font(.system(size: 16))
+                        .font(.system(size: MacLayout.f(16)))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -678,7 +704,7 @@ struct ChatView: View {
             }
             .padding(.top, 10)
         }
-        .frame(maxWidth: 280, alignment: .leading)
+        .frame(maxWidth: MacLayout.s(280), alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(Color(libraryHex: "F4F4F4"))
@@ -699,7 +725,7 @@ struct ChatView: View {
                     ForEach(0..<3) { i in
                         Circle()
                             .fill(Color.secondary)
-                            .frame(width: 6, height: 6)
+                            .frame(width: MacLayout.s(6), height: MacLayout.s(6))
                             .opacity(0.4)
                             .scaleEffect(1)
                             .animation(
@@ -715,7 +741,7 @@ struct ChatView: View {
                 // extra latency reads as work, not lag.
                 if let status = vm.toolStatus {
                     Text(status)
-                        .font(.custom("NeueHaasDisplay-Light", size: 13))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                         .foregroundStyle(.secondary)
                         .transition(.opacity)
                 }
@@ -739,9 +765,9 @@ struct ChatView: View {
                     Task { await micButtonTapped() }
                 } label: {
                     Image(systemName: micIconName)
-                        .font(.system(size: 18))
+                        .font(.system(size: MacLayout.f(18)))
                         .foregroundStyle(micIconColor)
-                        .frame(width: 40, height: 40)
+                        .frame(width: MacLayout.s(40), height: MacLayout.s(40))
                         .background(
                             Circle().fill(Color(libraryHex: "F4F4F4"))
                         )
@@ -755,7 +781,7 @@ struct ChatView: View {
                     axis: .vertical
                 )
                 .focused($inputFocused)
-                .font(.custom("NeueHaasDisplay-Light", size: 16))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
                 .lineLimit(1...5)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -769,7 +795,7 @@ struct ChatView: View {
                             inputFocused = false
                         } label: {
                             Image(systemName: "keyboard.chevron.compact.down")
-                                .font(.system(size: 18, weight: .regular))
+                                .font(.system(size: MacLayout.f(18), weight: .regular))
                                 .foregroundStyle(.black)
                         }
                     }
@@ -780,9 +806,9 @@ struct ChatView: View {
                     Task { await vm.send() }
                 } label: {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.system(size: MacLayout.f(16), weight: .semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
+                        .frame(width: MacLayout.s(40), height: MacLayout.s(40))
                         .background(
                             Circle().fill(vm.canSend ? Color.black : Color.black.opacity(0.25))
                         )
@@ -804,13 +830,13 @@ struct ChatView: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(callout.original)
-                    .font(.custom("NeueHaasDisplay-Mediu", size: 13))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(13)))
                     .foregroundStyle(.white)
                 Text(callout.translation)
-                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                     .foregroundStyle(.white.opacity(0.8))
             }
-            .frame(maxWidth: 320, alignment: .leading)
+            .frame(maxWidth: MacLayout.s(320), alignment: .leading)
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(Color.black.opacity(0.92))
@@ -1006,6 +1032,33 @@ struct ChatView: View {
     }
 }
 
+// Sweeps a soft highlight left-to-right across its content on a loop — the
+// shimmer that signals the conversation skeleton is loading.
+private struct ConversationSkeletonShimmer: ViewModifier {
+    @State private var phase: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color.white.opacity(0.7), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width)
+                    .offset(x: phase * geo.size.width)
+                }
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                    phase = 1
+                }
+            }
+    }
+}
+
 // MARK: - Tap-tokenized text
 
 // Splits the assistant's foreign-language reply into tappable word
@@ -1024,13 +1077,13 @@ private struct TappableTokenizedText: View {
                         onTap(token.value)
                     } label: {
                         Text(token.surface)
-                            .font(.custom("NeueHaasDisplay-Light", size: 16))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
                             .foregroundStyle(.black)
                     }
                     .buttonStyle(.plain)
                 } else {
                     Text(token.surface)
-                        .font(.custom("NeueHaasDisplay-Light", size: 16))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
                         .foregroundStyle(.black)
                 }
             }
@@ -1075,9 +1128,9 @@ private struct AgentCardChrome<Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: MacLayout.f(11)))
                 Text(label)
-                    .font(.custom("NeueHaasDisplay-Mediu", size: 11))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(11)))
                     .tracking(1.2)
             }
             .foregroundStyle(.secondary)
@@ -1106,10 +1159,10 @@ private struct AgentCardActionButton: View {
             HStack(spacing: 6) {
                 if done {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: MacLayout.f(12), weight: .semibold))
                 }
                 Text(done ? doneTitle : title)
-                    .font(.custom("NeueHaasDisplay-Mediu", size: 14))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(14)))
             }
             .foregroundStyle(done ? .black : .white)
             .frame(maxWidth: .infinity)
@@ -1132,10 +1185,10 @@ private struct DeckProposalCard: View {
         AgentCardChrome(icon: "rectangle.stack", label: L("DECK PROPOSAL")) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(payload.title)
-                    .font(.custom("NeueHaasDisplay-Mediu", size: 17))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(17)))
                     .foregroundStyle(.black)
                 Text("\(localizedLanguageName(payload.language)) · \(L(payload.level)) · \(payload.items.count) \(payload.contentType.lowercased())")
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .foregroundStyle(.secondary)
             }
 
@@ -1143,17 +1196,17 @@ private struct DeckProposalCard: View {
                 ForEach(payload.items.prefix(3)) { item in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text(item.word)
-                            .font(.custom("NeueHaasDisplay-Light", size: 14))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                             .foregroundStyle(.black)
                         Text(item.translation)
-                            .font(.custom("NeueHaasDisplay-Light", size: 12))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
                 if payload.items.count > 3 {
                     Text(L("+ %d more", payload.items.count - 3))
-                        .font(.custom("NeueHaasDisplay-Light", size: 11))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(11)))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1176,11 +1229,11 @@ private struct PlanProposalCard: View {
         AgentCardChrome(icon: "map", label: L("STUDY PLAN")) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(payload.plan.goalStatement)
-                    .font(.custom("NeueHaasDisplay-Mediu", size: 16))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(16)))
                     .foregroundStyle(.black)
                     .fixedSize(horizontal: false, vertical: true)
                 Text(L("%d units · toward %@", payload.plan.units.count, payload.plan.targetLevel))
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .foregroundStyle(.secondary)
             }
 
@@ -1188,17 +1241,17 @@ private struct PlanProposalCard: View {
                 ForEach(Array(payload.plan.units.prefix(4).enumerated()), id: \.element.id) { index, unit in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Text("\(index + 1)")
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.system(size: MacLayout.f(11), design: .monospaced))
                             .foregroundStyle(.secondary)
                         Text(unit.title)
-                            .font(.custom("NeueHaasDisplay-Light", size: 14))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                             .foregroundStyle(.black)
                             .lineLimit(1)
                     }
                 }
                 if payload.plan.units.count > 4 {
                     Text(L("+ %d more units", payload.plan.units.count - 4))
-                        .font(.custom("NeueHaasDisplay-Light", size: 11))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(11)))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1219,13 +1272,13 @@ private struct PlanUpdateCard: View {
     var body: some View {
         AgentCardChrome(icon: "arrow.triangle.2.circlepath", label: L("PLAN UPDATED")) {
             Text(payload.headline)
-                .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(15)))
                 .foregroundStyle(.black)
             if !payload.changes.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(payload.changes, id: \.self) { change in
                         Text(change)
-                            .font(.custom("NeueHaasDisplay-Light", size: 13))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -1247,7 +1300,7 @@ private struct ProgressSnapshotCard: View {
             }
             if !payload.weakWords.isEmpty {
                 Text(L("Needs work: %@", payload.weakWords.prefix(5).joined(separator: ", ")))
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -1257,10 +1310,10 @@ private struct ProgressSnapshotCard: View {
     private func statColumn(value: String, caption: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(value)
-                .font(.custom("NeueHaasDisplay-Mediu", size: 20))
+                .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(20)))
                 .foregroundStyle(.black)
             Text(caption)
-                .font(.custom("NeueHaasDisplay-Light", size: 11))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(11)))
                 .foregroundStyle(.secondary)
         }
     }
@@ -1273,14 +1326,14 @@ private struct PlacementResultCard: View {
         AgentCardChrome(icon: "checkmark.seal", label: L("LEVEL CHECK")) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(payload.level)
-                    .font(.custom("PlayfairDisplay-Bold", size: 30))
+                    .font(.custom("PlayfairDisplay-Bold", size: MacLayout.f(30)))
                     .foregroundStyle(.black)
                 Text(L("%@ · %d%% confidence", payload.language, Int((payload.confidence * 100).rounded())))
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .foregroundStyle(.secondary)
             }
             Text(payload.rationale)
-                .font(.custom("NeueHaasDisplay-Light", size: 13))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -1304,7 +1357,7 @@ private struct CorrectionDecoration: View {
                 } label: {
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "wand.and.stars")
-                            .font(.system(size: 11))
+                            .font(.system(size: MacLayout.f(11)))
                             .foregroundStyle(.orange)
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(spacing: 6) {
@@ -1312,15 +1365,15 @@ private struct CorrectionDecoration: View {
                                     .strikethrough()
                                     .foregroundStyle(.secondary)
                                 Image(systemName: "arrow.right")
-                                    .font(.system(size: 10))
+                                    .font(.system(size: MacLayout.f(10)))
                                     .foregroundStyle(.secondary)
                                 Text(correction.corrected)
                                     .foregroundStyle(.black)
                             }
-                            .font(.custom("NeueHaasDisplay-Light", size: 13))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                             if expanded == correction.id {
                                 Text(correction.explanation)
-                                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                                     .foregroundStyle(.secondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }

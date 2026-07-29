@@ -172,6 +172,24 @@ enum UserService {
         try await saveOnboarding(answers)
     }
 
+    // Reverses `addLanguagePreference`: drops the matching language from the
+    // learner's saved preferences. Used by the Explore recommendation cards
+    // to undo an accidental "Add Language" tap.
+    static func removeLanguagePreference(_ pref: LanguagePreference) async throws {
+        guard var profile = try await fetchProfile(), var answers = profile.onboarding else { return }
+        var prefs = answers.languagePreferences ?? []
+        prefs.removeAll { $0.language.lowercased() == pref.language.lowercased() }
+        answers.languagePreferences = prefs
+        // Keep the legacy single-language mirror consistent if it pointed at
+        // the removed language.
+        if let legacy = answers.languageOfInterest,
+           legacy.lowercased() == pref.language.lowercased() {
+            answers.languageOfInterest = prefs.first?.language
+        }
+        profile.onboarding = answers
+        try await saveOnboarding(answers)
+    }
+
     // Wipes every Firestore document scoped to the given UID — decks,
     // study sessions, card schedules, XP state, and the parent user
     // doc. Called by AuthService.deleteAccount before deleting the auth

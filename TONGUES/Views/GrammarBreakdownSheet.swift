@@ -106,7 +106,7 @@ struct GrammarBreakdownSheet: View {
                     } label: {
                         Image(systemName: isSaved ? "bookmark.fill" : "bookmark")
                             .font(.system(size: 15, weight: .regular))
-                            .foregroundStyle(.white.opacity(isSaved ? 1 : 0.85))
+                            .foregroundStyle(isSaved ? Color.red : .white.opacity(0.85))
                             .frame(width: 36, height: 36)
                             .background(Color.white.opacity(0.12))
                             .clipShape(Circle())

@@ -43,4 +43,10 @@ final class QuickActionRouter {
     private init() {}
 
     var pending: CreateDeckQuickAction?
+
+    // Monotonic tick bumped each time the plain Create New Deck (Generate)
+    // sheet should open — e.g. tapping the Study tab a second time while
+    // already on Study. StudyView watches this and opens the sheet, honoring
+    // the paywall. A counter (not a Bool) so repeat taps always re-fire.
+    var createDeckTick: Int = 0
 }

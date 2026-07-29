@@ -299,6 +299,40 @@ enum XPService {
         return grants
     }
 
+    // Awarded on the learner's FIRST attempt at a comprehension question.
+    // A correct first try earns the full reward; a wrong first guess still
+    // earns a small "you tried" amount. The call site awards exactly one of
+    // these per question (first attempt only) via its `awardedQuestionIDs`
+    // guard, so later taps on the same question earn nothing.
+    @discardableResult
+    static func awardComprehensionFirstTryCorrect() async throws -> [XPGrant] {
+        var state = try await fetchState()
+        let grants = [XPGrant(amount: 10, reason: "Reading comprehension")]
+        try await commit(grants: grants, into: &state)
+        return grants
+    }
+
+    @discardableResult
+    static func awardComprehensionGuess() async throws -> [XPGrant] {
+        var state = try await fetchState()
+        let grants = [XPGrant(amount: 5, reason: "Comprehension attempt")]
+        try await commit(grants: grants, into: &state)
+        return grants
+    }
+
+    // MARK: - Artifact generation
+
+    // Awarded once when the learner closes an artifact they generated from a
+    // deck (story / conversation / news, etc.) — crediting the act of
+    // generating and reading it. The call site guards against re-awarding.
+    @discardableResult
+    static func awardArtifactGenerated() async throws -> [XPGrant] {
+        var state = try await fetchState()
+        let grants = [XPGrant(amount: 5, reason: "Artifact generated")]
+        try await commit(grants: grants, into: &state)
+        return grants
+    }
+
     // MARK: - Daily & streak bonuses
 
     // Awards the daily first-session bonus exactly once per local

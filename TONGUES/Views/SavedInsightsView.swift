@@ -22,6 +22,9 @@ struct SavedInsightsView: View {
     @State private var loadError: String?
     @State private var selectedGrammar: SavedInsight?
     @State private var selectedCultural: SavedInsight?
+    // Set by a row's press-and-hold "Remove"; drives the confirm dialog so
+    // a destructive delete is always deliberate.
+    @State private var pendingDeletion: SavedInsight?
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -54,6 +57,25 @@ struct SavedInsightsView: View {
         }
         .sheet(item: $selectedCultural) { insight in
             CulturalInsightDetailView(insight: insight)
+        }
+        .confirmationDialog(
+            L("Remove this insight?"),
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDeletion
+        ) { insight in
+            Button(L("Remove"), role: .destructive) {
+                Task { await remove(insight) }
+                pendingDeletion = nil
+            }
+            Button(L("Cancel"), role: .cancel) {
+                pendingDeletion = nil
+            }
+        } message: { insight in
+            Text(L("\"%@\" will be deleted from your saved insights.", insight.title))
         }
     }
 
@@ -152,7 +174,8 @@ struct SavedInsightsView: View {
         .buttonStyle(.plain)
         .contextMenu {
             Button(role: .destructive) {
-                Task { await remove(insight) }
+                Haptics.medium()
+                pendingDeletion = insight
             } label: {
                 Label(L("Remove"), systemImage: "trash")
             }

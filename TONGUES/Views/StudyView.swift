@@ -82,6 +82,12 @@ struct StudyView: View {
                         Color.black
                         Color.white
                     }
+                    // The black bleeds to every edge so the header reads as a
+                    // stretchy, top-pinned band (behind the status bar on
+                    // iPhone; up to the very top of the content pane on Mac,
+                    // where the sidebar is now its own separate black column).
+                    // Respecting the top edge left a white gap above the header
+                    // when overscrolling up.
                     .ignoresSafeArea()
                 }
             }
@@ -168,6 +174,11 @@ struct StudyView: View {
             // Warm launch: the app-icon shortcut fires while Study is alive.
             .onChange(of: quickActionRouter.pending) { _, action in
                 if let action { consumeQuickAction(action) }
+            }
+            // Tapping the Study tab again (while already on Study) opens the
+            // Create New Deck sheet, mirroring a tap on the button itself.
+            .onChange(of: quickActionRouter.createDeckTick) { _, _ in
+                handleCreateDeckTap()
             }
             // Catches the login flag flipping while Study is already alive
             // (e.g. ContentView routes here right after sign-in).
@@ -345,7 +356,7 @@ struct StudyView: View {
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .medium))
                 Text(title)
-                    .font(.custom("NeueHaasDisplay-Light", size: 16))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
             }
             .foregroundStyle(isHighlighted ? .white : .black)
             .padding(.horizontal, 16)
@@ -468,7 +479,7 @@ struct StudyView: View {
         // featured slot.
         let recentlyAdded = vm.recentlyModifiedDecks
 
-        VStack(alignment: .leading, spacing: 32) {
+        VStack(alignment: .leading, spacing: MacLayout.s(32)) {
             if !recentlyAdded.isEmpty {
                 DeckHScrollSection(
                     title: L("Recently Added"),
@@ -529,7 +540,7 @@ struct StudyView: View {
                 )
             }
         }
-        .padding(.vertical, 24)
+        .padding(.vertical, MacLayout.s(24))
     }
 }
 
@@ -553,7 +564,7 @@ struct FeaturedDeckHeader: View {
             // still pushes the deck detail.
             HStack(alignment: .center) {
                 Text(L("STUDY"))
-                    .font(.custom("NeueHaasDisplay-Light", size: 20))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(20)))
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: true, vertical: false)
                     // Playfair's Y has serifs that fall outside
@@ -567,7 +578,7 @@ struct FeaturedDeckHeader: View {
                             .renderingMode(.template)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 28, height: 28)
+                            .frame(width: MacLayout.s(28), height: MacLayout.s(28))
                             .foregroundStyle(.white)
                             .contentShape(Rectangle())
                     }
@@ -581,7 +592,7 @@ struct FeaturedDeckHeader: View {
                     FeaturedCardImage(coverStyle: deck.resolvedCoverStyle)
                         .scrollHeaderScale()
                         .frame(maxWidth: .infinity)
-                        .padding(.top, 28)
+                        .padding(.top, MacLayout.s(28))
 
                     HStack {
                         HStack(spacing: 3) {
@@ -598,10 +609,10 @@ struct FeaturedDeckHeader: View {
                         Text(L("%d Items", deck.items.count))
                             .foregroundStyle(.white)
                     }
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .padding(.horizontal, 8)
-                    .padding(.top, 52)
-                    .padding(.bottom, 8)
+                    .padding(.top, MacLayout.s(52))
+                    .padding(.bottom, MacLayout.s(8))
                 }
                 .contentShape(Rectangle())
             }
@@ -614,7 +625,7 @@ struct FeaturedDeckHeader: View {
 
             HStack {
                 Text(L("Active"))
-                    .font(.custom("NeueHaasDisplay-Light", size: 16))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
                     .foregroundStyle(.white)
 
                 Spacer()
@@ -622,7 +633,7 @@ struct FeaturedDeckHeader: View {
                 Button(action: onBeginSession) {
                     HStack(spacing: 8) {
                         Text(L("Begin Session"))
-                            .font(.custom("NeueHaasDisplay-Light", size: 16))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
                         Image(systemName: "arrow.right")
                             .font(.system(size: 14))
                     }
@@ -631,9 +642,9 @@ struct FeaturedDeckHeader: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 8)
-            .padding(.vertical, 20)
+            .padding(.vertical, MacLayout.s(20))
         }
-        .padding(.top, 12)
+        .padding(.top, MacLayout.s(12))
     }
 }
 
@@ -681,13 +692,13 @@ struct FeaturedCardImage: View {
         ZStack(alignment: .topLeading) {
             DeckCoverFill(style: coverStyle, isPlaying: isVideoPlaying)
             Text("TONGUES")
-                .font(.custom("PlayfairDisplay-Regular", size: 12))
+                .font(.custom("PlayfairDisplay-Regular", size: MacLayout.f(12)))
                 .tracking(-0.96)
                 .foregroundStyle(coverStyle.labelColor)
-                .padding(.top, 14)
-                .padding(.leading, 16)
+                .padding(.top, MacLayout.s(14))
+                .padding(.leading, MacLayout.s(16))
         }
-        .frame(width: 220, height: 130)
+        .frame(width: MacLayout.s(220), height: MacLayout.s(130))
         .clipShape(RoundedRectangle(cornerRadius: 4))
         .overlay(
             RoundedRectangle(cornerRadius: 4)
@@ -715,7 +726,7 @@ struct SeedingStudyHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(L("STUDY"))
-                .font(.custom("NeueHaasDisplay-Light", size: 20))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(20)))
                 .foregroundStyle(.white)
                 .fixedSize(horizontal: true, vertical: false)
 
@@ -724,12 +735,12 @@ struct SeedingStudyHeader: View {
                     ProgressView()
                         .tint(.white)
                     Text(L("Setting up your first decks…"))
-                        .font(.custom("NeueHaasDisplay-Light", size: 28))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(28)))
                         .foregroundStyle(.white)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Text(L("We're building a few starter decks from your interests. They'll appear here in a moment."))
-                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                     .foregroundStyle(.white.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -751,7 +762,7 @@ struct EmptyStudyHeader: View {
         VStack(alignment: .leading, spacing: 20) {
             HStack(alignment: .center) {
                 Text(L("STUDY"))
-                    .font(.custom("NeueHaasDisplay-Light", size: 20))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(20)))
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: true, vertical: false)
                     .padding(.trailing, 4)
@@ -762,7 +773,7 @@ struct EmptyStudyHeader: View {
                             .renderingMode(.template)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: 28, height: 28)
+                            .frame(width: MacLayout.s(28), height: MacLayout.s(28))
                             .foregroundStyle(.white)
                             .contentShape(Rectangle())
                     }
@@ -772,10 +783,10 @@ struct EmptyStudyHeader: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(L("No decks yet"))
-                    .font(.custom("NeueHaasDisplay-Light", size: 28))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(28)))
                     .foregroundStyle(.white)
                 Text(L("Tap “Create new deck” below to start."))
-                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                     .foregroundStyle(.white.opacity(0.7))
             }
             .padding(.vertical, 30)
@@ -798,14 +809,14 @@ struct DeckHScrollSection: View {
     var onAudio: (DeckDocument) -> Void = { _ in }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: MacLayout.s(14)) {
             Text(title)
-                .font(.custom("NeueHaasDisplay-Light", size: 22))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(22)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                HStack(spacing: MacLayout.s(12)) {
                     ForEach(decks) { deck in
                         DeckMiniCard(
                             deck: deck,
@@ -814,7 +825,7 @@ struct DeckHScrollSection: View {
                             onPlay: { onPlay(deck) },
                             onAudio: { onAudio(deck) }
                         )
-                        .frame(width: 200)
+                        .frame(width: MacLayout.s(200))
                     }
                 }
                 .padding(.horizontal, 8)
@@ -834,22 +845,26 @@ struct DeckGridSection: View {
     // Row spacing pattern. LazyVGrid only supports a single uniform
     // spacing, so we lay out the grid by hand to give every row gap
     // (including row 0 → row 1) the doubled breathing room.
-    private let columnSpacing: CGFloat = 12
-    private let rowGap: CGFloat = 24               // every row → next row
+    private let columnSpacing: CGFloat = MacLayout.s(12)
+    private let rowGap: CGFloat = MacLayout.s(24)  // every row → next row
 
-    // Chunk into pairs so each HStack renders one row of the two-column
-    // grid. Last row may be a single deck — we pad with a clear cell so
-    // the lone card stays in the leading column instead of stretching.
+    // Two columns on iPhone; the wide Mac window gets three so the grid
+    // fills the extra width instead of leaving the cards oversized.
+    private var columns: Int { MacLayout.isMac ? 3 : 2 }
+
+    // Chunk into rows of `columns`. The last row may be short — we pad it
+    // with clear cells so its cards keep their leading-column alignment
+    // instead of stretching to fill the row.
     private var deckRows: [[DeckDocument]] {
-        stride(from: 0, to: decks.count, by: 2).map { idx in
-            Array(decks[idx..<min(idx + 2, decks.count)])
+        stride(from: 0, to: decks.count, by: columns).map { idx in
+            Array(decks[idx..<min(idx + columns, decks.count)])
         }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: MacLayout.s(14)) {
             Text(title)
-                .font(.custom("NeueHaasDisplay-Light", size: 22))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(22)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
@@ -866,12 +881,14 @@ struct DeckGridSection: View {
                             )
                             .frame(maxWidth: .infinity)
                         }
-                        if row.count == 1 {
-                            // Holds the trailing column open so a lone
-                            // deck in the last row keeps its leading
-                            // column alignment with the rows above.
-                            Color.clear
-                                .frame(maxWidth: .infinity)
+                        if row.count < columns {
+                            // Hold the trailing column(s) open so a short
+                            // last row keeps its leading-column alignment
+                            // with the rows above.
+                            ForEach(0..<(columns - row.count), id: \.self) { _ in
+                                Color.clear
+                                    .frame(maxWidth: .infinity)
+                            }
                         }
                     }
                     .padding(.top, topPadding(forRowIndex: rowIdx))
@@ -905,10 +922,10 @@ struct DeckMiniCard: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(spacing: 3) {
                         Text(deck.language)
-                            .font(.custom("NeueHaasDisplay-Light", size: 12))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                             .foregroundStyle(.black)
                         Text(deck.level)
-                            .font(.custom("NeueHaasDisplay-Light", size: 12))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                             .foregroundStyle(.secondary)
                     }
 
@@ -940,7 +957,7 @@ struct DeckMiniCard: View {
 
                     Spacer(minLength: 0)
                 }
-                .padding(8)
+                .padding(MacLayout.s(8))
                 .frame(maxWidth: .infinity, alignment: .topLeading)
 
                 Spacer(minLength: 0)
@@ -948,11 +965,11 @@ struct DeckMiniCard: View {
                 HStack(alignment: .bottom) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(deck.title)
-                            .font(.custom("NeueHaasDisplay-Light", size: 16))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
                             .foregroundStyle(.black)
                             .lineLimit(1)
                         Text(subtitle)
-                            .font(.custom("NeueHaasDisplay-Light", size: 12))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -961,8 +978,8 @@ struct DeckMiniCard: View {
                             Image("Headphones")
                                 .resizable()
                                 .scaledToFit()
-                                .frame(width: 20, height: 20)
-                                .frame(width: 32, height: 32)
+                                .frame(width: MacLayout.s(20), height: MacLayout.s(20))
+                                .frame(width: MacLayout.s(32), height: MacLayout.s(32))
                                 .background(Color.black.opacity(0.04))
                                 .clipShape(Circle())
                                 .contentShape(Rectangle())
@@ -973,8 +990,8 @@ struct DeckMiniCard: View {
                             Image("Play")
                                 .resizable()
                                 .scaledToFit()
-                                .frame(width: 20, height: 20)
-                                .frame(width: 32, height: 32)
+                                .frame(width: MacLayout.s(20), height: MacLayout.s(20))
+                                .frame(width: MacLayout.s(32), height: MacLayout.s(32))
                                 .background(Color.black)
                                 .clipShape(Circle())
                                 .contentShape(Rectangle())
@@ -982,9 +999,9 @@ struct DeckMiniCard: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.top, 8)
+                .padding(.top, MacLayout.s(8))
                 .padding(.horizontal, 8)
-                .padding(.bottom, 28)
+                .padding(.bottom, MacLayout.s(28))
                 .frame(maxWidth: .infinity)
                 .background(Color.white)
             }

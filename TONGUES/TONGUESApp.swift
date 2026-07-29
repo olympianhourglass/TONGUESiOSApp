@@ -71,6 +71,19 @@ final class QuickActionSceneDelegate: NSObject, UIWindowSceneDelegate {
         willConnectTo session: UISceneSession,
         options connectionOptions: UIScene.ConnectionOptions
     ) {
+        // On Mac (Catalyst), hide the window's title bar entirely so the
+        // content fills the full window height with only the traffic-light
+        // controls floating on top — the smooth, chromeless Messages/Contacts
+        // look. `#if targetEnvironment(macCatalyst)` because `titlebar` is a
+        // Catalyst-only API.
+        #if targetEnvironment(macCatalyst)
+        if let windowScene = scene as? UIWindowScene,
+           let titlebar = windowScene.titlebar {
+            titlebar.titleVisibility = .hidden
+            titlebar.toolbar = nil
+        }
+        #endif
+
         // Cold launch from a shortcut: the item arrives in the connection
         // options.
         if let item = connectionOptions.shortcutItem {

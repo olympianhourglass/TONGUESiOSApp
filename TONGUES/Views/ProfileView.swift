@@ -16,7 +16,6 @@ struct ProfileView: View {
     @State private var deleteAccountError: String?
     @State private var showFeedbackSheet = false
     @State private var activeEditField: ProfileEditField?
-    @State private var showAllInterests = false
     @State private var showAvatarSourceChooser = false
     @State private var activeImagePickerSource: ImagePickerSource?
     @State private var isUploadingAvatar = false
@@ -25,13 +24,10 @@ struct ProfileView: View {
     @State private var localizer = Localizer.shared
     @State private var showNativeLanguagePicker = false
 
-    // How many interest chips to show before the "View more" toggle.
-    private let collapsedInterestsCount = 5
-
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: 16) {
                     accountHeader
                         .padding(.top, 8)
 
@@ -57,60 +53,50 @@ struct ProfileView: View {
                     }
                     .buttonStyle(.plain)
 
-                    usageSection
+                    settingsLinkRow(
+                        icon: "chart.bar",
+                        title: L("Usage"),
+                        summary: nil
+                    ) { usageDetail }
+
+                    settingsLinkRow(
+                        icon: "square.grid.2x2",
+                        title: L("Widgets"),
+                        summary: nil
+                    ) { widgetsDetail }
+
+                    // App language is independent of onboarding, so it shows
+                    // even before the profile loads.
+                    settingsLinkRow(
+                        icon: "globe",
+                        title: L("Native Language"),
+                        summary: localizer.language.endonym
+                    ) { appLanguageDetail }
 
                     if let onboarding = profile?.onboarding {
-                        nativeLanguageSection
+                        settingsLinkRow(
+                            icon: "text.bubble",
+                            title: L("Languages"),
+                            summary: languagesSummary(onboarding)
+                        ) { languagesDetail }
 
-                        section(L("Languages"), editField: .languages) {
-                            let prefs = onboarding.languagePreferences ?? []
-                            if prefs.isEmpty {
-                                emptyValue(L("No languages on file yet."))
-                            } else {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    ForEach(prefs) { pref in
-                                        Text("\(localizedLanguageName(pref.language)) · \(L(pref.dialect)) · \(L(pref.level))")
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(.black)
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(Capsule().fill(Color(white: 0.93)))
-                                            .fixedSize(horizontal: true, vertical: false)
-                                    }
-                                }
-                            }
-                        }
+                        settingsLinkRow(
+                            icon: "airplane",
+                            title: L("Travel destinations"),
+                            summary: destinationsSummary(onboarding)
+                        ) { destinationsDetail }
 
-                        section(L("Travel destinations"), editField: .destinations) {
-                            let destinations = onboarding.destinations ?? []
-                            if destinations.isEmpty {
-                                emptyValue(L("No destinations on file yet."))
-                            } else {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ForEach(destinations) { dest in
-                                        Text("· \(dest.name)")
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(.black)
-                                    }
-                                }
-                            }
-                        }
+                        settingsLinkRow(
+                            icon: "sparkles",
+                            title: L("What you'd love to understand"),
+                            summary: understandSummary(onboarding)
+                        ) { understandDetail }
 
-                        section(L("What you'd love to understand"), editField: .understand) {
-                            if let understand = onboarding.firstUnderstand, !understand.isEmpty {
-                                Text(understand)
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(.black)
-                            } else {
-                                emptyValue(L("Tap Edit to pick one."))
-                            }
-                        }
-
-                        interestsSection(onboarding: onboarding)
-
-                        WordCycleWidgetSection()
-
-                        LockScreenWidgetSection()
+                        settingsLinkRow(
+                            icon: "heart",
+                            title: L("Interests"),
+                            summary: interestsSummary(onboarding)
+                        ) { interestsDetail }
                     } else if isLoading {
                         ProgressView()
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -336,50 +322,223 @@ struct ProfileView: View {
         }
     }
 
-    // Native/app-language control, styled like the other profile sections
-    // but its "Change" affordance opens a language picker instead of the
-    // onboarding edit sheet. Sits just above the Languages section.
-    private var nativeLanguageSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(L("App language"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
-                Spacer()
-                Button {
-                    Haptics.light()
-                    showNativeLanguagePicker = true
-                } label: {
-                    Text(L("Change"))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 4)
-                        .contentShape(Rectangle())
+    // MARK: Settings rows + detail views
+
+    // A tappable settings row that pushes a detail view, replacing the old
+    // always-expanded sections. The optional trailing summary previews the
+    // value so the collapsed list still reads at a glance.
+    @ViewBuilder
+    private func settingsLinkRow<Destination: View>(
+        icon: String,
+        title: String,
+        summary: String?,
+        @ViewBuilder destination: () -> Destination
+    ) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.black)
+                    .frame(width: 22)
+                Text(title)
+                    .font(.system(size: 16))
+                    .foregroundStyle(.black)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if let summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
-                .buttonStyle(.plain)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
             }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // Shared chrome for a settings detail screen: scrollable content with an
+    // optional trailing Edit/Change action in the nav bar. The action reuses
+    // the existing edit sheets presented from the Profile root, so edits still
+    // flow through `activeEditField` / `showNativeLanguagePicker`. Read-only
+    // details (Usage, Widgets) pass no action and get no toolbar button.
+    @ViewBuilder
+    private func settingsDetail<Content: View>(
+        title: String,
+        editLabel: String? = nil,
+        onEdit: (() -> Void)? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if let editLabel, let onEdit {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(editLabel) {
+                        Haptics.light()
+                        onEdit()
+                    }
+                    .tint(.black)
+                }
+            }
+        }
+    }
+
+    private var appLanguageDetail: some View {
+        settingsDetail(
+            title: L("Native Language"),
+            editLabel: L("Change"),
+            onEdit: { showNativeLanguagePicker = true }
+        ) {
             HStack(spacing: 8) {
                 Text(localizer.language.flag)
-                    .font(.system(size: 18))
+                    .font(.system(size: 22))
                 Text(localizer.language.endonym)
-                    .font(.system(size: 14))
+                    .font(.system(size: 16))
                     .foregroundStyle(.black)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 8)
             .background(Capsule().fill(Color(white: 0.93)))
             .fixedSize(horizontal: true, vertical: false)
+
+            Text(L("The language TONGUES' interface is shown in."))
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
         }
+    }
+
+    private var languagesDetail: some View {
+        settingsDetail(
+            title: L("Languages"),
+            editLabel: L("Edit"),
+            onEdit: { activeEditField = .languages }
+        ) {
+            let prefs = profile?.onboarding?.languagePreferences ?? []
+            if prefs.isEmpty {
+                emptyValue(L("No languages on file yet."))
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(prefs) { pref in
+                        Text("\(localizedLanguageName(pref.language)) · \(L(pref.dialect)) · \(L(pref.level))")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color(white: 0.93)))
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+            }
+        }
+    }
+
+    private var destinationsDetail: some View {
+        settingsDetail(
+            title: L("Travel destinations"),
+            editLabel: L("Edit"),
+            onEdit: { activeEditField = .destinations }
+        ) {
+            let destinations = profile?.onboarding?.destinations ?? []
+            if destinations.isEmpty {
+                emptyValue(L("No destinations on file yet."))
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(destinations) { dest in
+                        Text("· \(dest.name)")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.black)
+                    }
+                }
+            }
+        }
+    }
+
+    private var understandDetail: some View {
+        settingsDetail(
+            title: L("What you'd love to understand"),
+            editLabel: L("Edit"),
+            onEdit: { activeEditField = .understand }
+        ) {
+            if let understand = profile?.onboarding?.firstUnderstand, !understand.isEmpty {
+                Text(understand)
+                    .font(.system(size: 15))
+                    .foregroundStyle(.black)
+            } else {
+                emptyValue(L("Tap Edit to pick one."))
+            }
+        }
+    }
+
+    private var interestsDetail: some View {
+        settingsDetail(
+            title: L("Interests"),
+            editLabel: L("Edit"),
+            onEdit: { activeEditField = .interests }
+        ) {
+            let all = profile?.onboarding?.interests ?? []
+            if all.isEmpty {
+                emptyValue(L("Tap Edit to choose what you're into."))
+            } else {
+                FlowLayout(spacing: 6) {
+                    ForEach(all, id: \.self) { chip in
+                        Text(L(chip))
+                            .font(.system(size: 14))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(Color(white: 0.93)))
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Settings row summaries
+
+    private func languagesSummary(_ onboarding: OnboardingAnswers) -> String {
+        let prefs = onboarding.languagePreferences ?? []
+        guard let first = prefs.first else { return "" }
+        let name = localizedLanguageName(first.language)
+        return prefs.count > 1 ? "\(name) +\(prefs.count - 1)" : name
+    }
+
+    private func destinationsSummary(_ onboarding: OnboardingAnswers) -> String {
+        let destinations = onboarding.destinations ?? []
+        guard let first = destinations.first else { return "" }
+        return destinations.count > 1 ? "\(first.name) +\(destinations.count - 1)" : first.name
+    }
+
+    private func understandSummary(_ onboarding: OnboardingAnswers) -> String {
+        onboarding.firstUnderstand ?? ""
+    }
+
+    private func interestsSummary(_ onboarding: OnboardingAnswers) -> String {
+        let count = (onboarding.interests ?? []).count
+        return count == 0 ? "" : L("%d", count)
     }
 
     // "Usage" — this month's consumption of each metered bucket against the
     // current tier's cap, mirroring the limits shown on the paywall. Reads
     // straight off SubscriptionService (refreshed in .task above).
-    private var usageSection: some View {
-        section(L("Usage")) {
+    private var usageDetail: some View {
+        settingsDetail(title: L("Usage")) {
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(SubscriptionBucket.allCases, id: \.self) { bucket in
                     usageRow(bucket)
@@ -391,6 +550,15 @@ struct ProfileView: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // Both home-screen and lock-screen widget configurators, tucked behind a
+    // settings row so they no longer stretch the Profile scroll view.
+    private var widgetsDetail: some View {
+        settingsDetail(title: L("Widgets")) {
+            WordCycleWidgetSection()
+            LockScreenWidgetSection()
         }
     }
 
@@ -424,10 +592,12 @@ struct ProfileView: View {
         }
     }
 
+    // "used of total", where the total is the current tier's cap. Free
+    // (0-cap) buckets read "Not included"; unlimited tiers show ∞.
     private func usageValueText(used: Int, cap: Int) -> String {
-        if cap == Int.max { return L("%d used · Unlimited", used) }
-        if cap == 0 { return L("%d used", used) }
-        return L("%d / %d", used, cap)
+        if cap == 0 { return L("Not included") }
+        if cap == Int.max { return L("%d of ∞", used) }
+        return L("%d of %d", used, cap)
     }
 
     @ViewBuilder
@@ -468,44 +638,6 @@ struct ProfileView: View {
             .font(.system(size: 13))
             .foregroundStyle(.secondary)
             .italic()
-    }
-
-    @ViewBuilder
-    private func interestsSection(onboarding: OnboardingAnswers) -> some View {
-        let all = onboarding.interests ?? []
-        section(L("Interests"), editField: .interests) {
-            if all.isEmpty {
-                emptyValue(L("Tap Edit to choose what you're into."))
-            } else {
-                let visible = showAllInterests ? all : Array(all.prefix(collapsedInterestsCount))
-                VStack(alignment: .leading, spacing: 8) {
-                    FlowLayout(spacing: 6) {
-                        ForEach(visible, id: \.self) { chip in
-                            Text(L(chip))
-                                .font(.system(size: 13))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Capsule().fill(Color(white: 0.93)))
-                                .fixedSize(horizontal: true, vertical: false)
-                        }
-                    }
-                    if all.count > collapsedInterestsCount {
-                        Button {
-                            Haptics.light()
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                showAllInterests.toggle()
-                            }
-                        } label: {
-                            Text(showAllInterests ? L("Show less") : L("View more"))
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundStyle(.black)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-        }
     }
 
     // Neutral primary action above the destructive ones. Outlined-on-

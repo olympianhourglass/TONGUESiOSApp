@@ -238,9 +238,17 @@ struct DeckDetailView: View {
             )
             .presentationDetents([.medium, .large])
         }
+        #if targetEnvironment(macCatalyst)
+        // Mac: open the artifact full-screen as a proper detail view rather
+        // than a small centered sheet in the middle of the window.
+        .fullScreenCover(item: $selectedArtifact) { artifact in
+            ArtifactReaderSheet(artifact: artifact)
+        }
+        #else
         .sheet(item: $selectedArtifact) { artifact in
             ArtifactReaderSheet(artifact: artifact)
         }
+        #endif
         .confirmationDialog(
             L("Delete this artifact?"),
             isPresented: Binding(
@@ -1511,6 +1519,16 @@ struct GenerateRow: View {
         }
         .padding(.top, 3)
         .padding(.bottom, 12)
+        #if targetEnvironment(macCatalyst)
+        // Mac: present full-screen so a generated artifact reads as a proper
+        // full detail view, not a small centered form sheet floating in the
+        // middle of the window.
+        .fullScreenCover(item: $activeKind, onDismiss: { onSheetClosed() }) { kind in
+            GenerateContentSheet(kind: kind, deck: deck) { newItem in
+                onItemAdded(newItem)
+            }
+        }
+        #else
         .sheet(item: $activeKind, onDismiss: { onSheetClosed() }) { kind in
             GenerateContentSheet(kind: kind, deck: deck) { newItem in
                 // Forward to DeckDetailView's @State — only the parent
@@ -1518,6 +1536,7 @@ struct GenerateRow: View {
                 onItemAdded(newItem)
             }
         }
+        #endif
     }
 }
 
@@ -1774,7 +1793,9 @@ struct TargetRetentionInfoSheet: View {
 // Story / Line-by-line dual layout so reopening a saved item feels
 // like the original result screen, minus the regenerate / save
 // controls (which would be meaningless once the keep is committed).
-private struct ArtifactReaderSheet: View {
+// Non-private so the Library's ARTIFACTS section can reuse the same reader
+// it presents from a deck's Artifacts tab.
+struct ArtifactReaderSheet: View {
     @Environment(\.dismiss) private var dismiss
     let artifact: Artifact
     @State private var isInterleaved = false

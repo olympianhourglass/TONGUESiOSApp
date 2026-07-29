@@ -227,8 +227,14 @@ struct CameraPage: View {
 
     @State private var camera = CameraController()
     @State private var arManager = ARSceneManager()
+    #if targetEnvironment(macCatalyst)
+    // AR (ARKit) isn't available on Mac — open on Object scanning so Mac
+    // doesn't land on a dead AR tab.
+    @State private var mode: CaptureMode = .object
+    #else
     // AR is the primary capture mode — the camera opens straight into it.
     @State private var mode: CaptureMode = .ar
+    #endif
     @State private var identifiedItem: GeneratedItem?
     @State private var identifiedEnglish: String?
     @State private var isIdentifying = false

@@ -837,3 +837,63 @@ func dialects(for language: String) -> [String] {
         return ["Standard"]
     }
 }
+
+// MARK: - Canonicalizing recommended dialects / levels
+
+// Maps a possibly free-form or model-generated dialect onto the exact dialect
+// name TONGUES offers for `language` — i.e. one of the entries in the Create
+// New Deck dialect dropdown and the Settings/Profile picker (`dialects(for:)`).
+//
+// Recommendation flows (onboarding suggestions, Explore destination/location
+// rows) run their AI-produced dialects through here so the (language, dialect)
+// they store always matches those pickers, instead of a near-miss like
+// "Latin American" that the dropdowns don't contain. Matching is progressively
+// looser: exact → case-insensitive → base-name (ignoring a parenthetical
+// qualifier, both directions) → substring. Falls back to the language's first
+// listed dialect (its "Standard"), which is always a valid pick.
+func canonicalDialectName(for language: String, dialect: String?) -> String {
+    let options = dialects(for: language)
+    let fallback = options.first ?? "Standard"
+    guard let raw = dialect?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !raw.isEmpty else { return fallback }
+
+    if options.contains(raw) { return raw }
+
+    let lower = raw.lowercased()
+    if let ci = options.first(where: { $0.lowercased() == lower }) { return ci }
+
+    // Base name = the part before any " (qualifier)", lowercased. Lets
+    // "Egyptian Arabic" match "Egyptian" and "Standard" match "Standard (Tokyo)".
+    func base(_ s: String) -> String {
+        (s.split(separator: "(").first.map(String.init) ?? s)
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+    }
+    let rawBase = base(raw)
+    if !rawBase.isEmpty, let m = options.first(where: { opt in
+        let ob = base(opt)
+        return ob == rawBase || ob.contains(rawBase) || rawBase.contains(ob)
+    }) { return m }
+
+    // Last resort: whole-string containment either direction.
+    if let m = options.first(where: {
+        let ol = $0.lowercased()
+        return ol.contains(lower) || lower.contains(ol)
+    }) { return m }
+
+    return fallback
+}
+
+// Snaps a recommended level onto the canonical level scale for `language`
+// (`levels(for:)`), so e.g. an "A1" suggestion for Japanese becomes the first
+// JLPT rung the level picker actually lists. Keeps the level as-is when it is
+// already one of the valid options.
+func canonicalLevelName(for language: String, level: String?) -> String {
+    let options = levels(for: language)
+    let fallback = options.first ?? "A1"
+    guard let raw = level?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !raw.isEmpty else { return fallback }
+    if options.contains(raw) { return raw }
+    let lower = raw.lowercased()
+    return options.first(where: { $0.lowercased() == lower }) ?? fallback
+}

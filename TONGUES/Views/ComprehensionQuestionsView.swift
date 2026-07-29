@@ -10,11 +10,17 @@ import SwiftUI
 struct ComprehensionQuestionCard: View {
     let index: Int
     let question: ComprehensionQuestion
-    // Fired the first (and only) time the correct answer is chosen.
-    let onCorrect: () -> Void
+    // Fired exactly once, on the learner's FIRST answer tap, carrying whether
+    // that first guess was correct. Drives the XP award (10 for a correct
+    // first try, 5 for a wrong first guess).
+    let onFirstAttempt: (_ correct: Bool) -> Void
+    // Fired when the correct answer is chosen (possibly after wrong guesses),
+    // so the parent can register the comprehension study-session for the streak.
+    let onSolved: () -> Void
 
     @State private var wrongIndices: Set<Int> = []
     @State private var solved = false
+    @State private var firstAttemptMade = false
     // Eye toggle: reveals the native-language translation (and, for non-Latin
     // target scripts, the pronunciation) of each answer choice.
     @State private var revealMeanings = false
@@ -66,12 +72,18 @@ struct ComprehensionQuestionCard: View {
 
         Button {
             guard !disabled else { return }
+            // The very first tap on this question drives the XP award,
+            // reporting whether that first guess was right.
+            if !firstAttemptMade {
+                firstAttemptMade = true
+                onFirstAttempt(isCorrect)
+            }
             if isCorrect {
                 Haptics.success()
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                     solved = true
                 }
-                onCorrect()
+                onSolved()
             } else {
                 Haptics.error()
                 withAnimation(.easeOut(duration: 0.18)) {

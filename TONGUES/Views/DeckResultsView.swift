@@ -22,6 +22,11 @@ struct DeckResultsView: View {
     // appearance. Sort changes don't replay it.
     @State private var revealedCount: Int = 0
     @State private var didPlayIntro: Bool = false
+    // Set once the intro cascade has finished. After this, every row is
+    // shown unconditionally — including words inserted later via "add
+    // related" — so growing, reordering, or an interrupted cascade can
+    // never leave rows stranded in the pre-reveal (invisible) state.
+    @State private var introComplete: Bool = false
     // Holds the success chime through the cascade so we can stop it on
     // teardown if the user pops back before it finishes.
     @State private var introChime: AVAudioPlayer?
@@ -88,7 +93,12 @@ struct DeckResultsView: View {
                     Divider()
 
                     ForEach(Array(sortedItems.enumerated()), id: \.element.id) { index, item in
-                        let landed = index < revealedCount
+                        // Rows are hidden only while the one-time intro
+                        // cascade is still stepping through them. Once it's
+                        // done — or for any row added afterward — the row is
+                        // always visible, so the list can grow without
+                        // stranding its tail behind an unadvanced counter.
+                        let landed = introComplete || index < revealedCount
                         VStack(spacing: 0) {
                             ResultRow(
                                 item: item,
@@ -208,7 +218,12 @@ struct DeckResultsView: View {
     //     then a notification-style success pulse on the last row.
     @MainActor
     private func playIntroIfNeeded() async {
-        guard !didPlayIntro else { return }
+        guard !didPlayIntro else {
+            // Already ran once (possibly interrupted before finishing).
+            // Guarantee nothing is left stuck invisible.
+            introComplete = true
+            return
+        }
         didPlayIntro = true
         // Prime the chime before the cascade so `play()` starts
         // instantly rather than spending its first ~20ms on disk +
@@ -246,6 +261,9 @@ struct DeckResultsView: View {
                 Haptics.light()
             }
         }
+        // Cascade done: from here on every row (and any added later) is
+        // shown unconditionally.
+        introComplete = true
     }
 
     // Lazily loads the success chime, re-asserts the playback audio

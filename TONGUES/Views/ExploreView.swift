@@ -29,6 +29,18 @@ struct ExploreView: View {
     // Flips true once the current insight has been saved; reset whenever a
     // new insight is loaded.
     @State private var savedCulturalInsight = false
+    // Recently surfaced insight facts, persisted so the card doesn't
+    // resurface the same one or two on repeat taps (or across launches).
+    // Capped to the most recent dozen and fed back to the generator as an
+    // exclusion list.
+    @State private var recentCulturalFacts: [String] = ExploreView.loadRecentCulturalFacts()
+
+    private static let recentCulturalFactsKey = "recentCulturalInsightFacts"
+    private static let maxRecentCulturalFacts = 12
+
+    private static func loadRecentCulturalFacts() -> [String] {
+        UserDefaults.standard.stringArray(forKey: recentCulturalFactsKey) ?? []
+    }
 
     // Public decks other users have made, restricted to the languages
     // the signed-in user has saved in their profile.
@@ -68,7 +80,7 @@ struct ExploreView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: MacLayout.s(28)) {
                     header
                     languageFilterRow
                     if isGuidedPlanSurfaced {
@@ -113,6 +125,7 @@ struct ExploreView: View {
                 CreateDeckSheet(
                     preset: CreateDeckPreset(
                         language: preset.language,
+                        dialect: preset.dialect,
                         level: preset.level,
                         topic: preset.topic
                     )
@@ -195,16 +208,14 @@ struct ExploreView: View {
                     curriculumSkeleton
                 } else {
                 HStack(spacing: 6) {
-                    Image(systemName: "map")
-                        .font(.system(size: 11))
                     Text(L(activePlan == nil ? "GUIDED PLAN" : "TODAY"))
-                        .font(.custom("NeueHaasDisplay-Mediu", size: 11))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(11)))
                         // "TODAY" reads with normal tracking; the empty-state
                         // "GUIDED PLAN" label keeps its wider letter-spacing.
                         .tracking(activePlan == nil ? 1.2 : 0)
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: MacLayout.f(11), weight: .semibold))
                 }
                 .foregroundStyle(.secondary)
 
@@ -212,35 +223,38 @@ struct ExploreView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         if let unit = plan.activeUnit {
                             Text(unit.title)
-                                .font(.custom("NeueHaasDisplay-Mediu", size: 17))
+                                .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(17)))
                                 .foregroundStyle(.black)
                             Text(todaySubtitle(plan: plan, unit: unit))
-                                .font(.custom("NeueHaasDisplay-Light", size: 13))
+                                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         } else {
                             Text(L("Plan complete 🎉"))
-                                .font(.custom("NeueHaasDisplay-Mediu", size: 17))
+                                .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(17)))
                                 .foregroundStyle(.black)
                             Text(plan.goalStatement)
-                                .font(.custom("NeueHaasDisplay-Light", size: 13))
+                                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                                 .foregroundStyle(.secondary)
                         }
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(L("Get a guided plan"))
-                            .font(.custom("NeueHaasDisplay-Mediu", size: 17))
+                            .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(17)))
                             .foregroundStyle(.black)
                         Text(L("Your tutor builds a unit-by-unit path from your goals and what you keep forgetting."))
-                            .font(.custom("NeueHaasDisplay-Light", size: 13))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 }
             }
-            .padding(16)
+            .padding(.vertical, MacLayout.s(16))
+            // iOS keeps a tight 8pt inner leading/trailing margin; Mac keeps
+            // the larger scaled margin for the wider window.
+            .padding(.horizontal, MacLayout.isMac ? MacLayout.s(16) : 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -299,7 +313,7 @@ struct ExploreView: View {
     private var header: some View {
         HStack(alignment: .center) {
             Text(L("EXPLORE"))
-                .font(.custom("NeueHaasDisplay-Light", size: 20))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(20)))
                 .foregroundStyle(.black)
             Spacer()
             if isCrownPaywallSurfaced {
@@ -311,7 +325,7 @@ struct ExploreView: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 28, height: 28)
+                        .frame(width: MacLayout.s(28), height: MacLayout.s(28))
                         .foregroundStyle(Color(red: 132 / 255, green: 102 / 255, blue: 52 / 255))
                         .contentShape(Rectangle())
                 }
@@ -334,10 +348,10 @@ struct ExploreView: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(L("Language: %@", filterLabel))
-                        .font(.custom("NeueHaasDisplay-Light", size: 15))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                         .foregroundStyle(.secondary)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 12, weight: .regular))
+                        .font(.system(size: MacLayout.f(12), weight: .regular))
                         .foregroundStyle(.secondary)
                 }
                 .contentShape(Rectangle())
@@ -369,7 +383,7 @@ struct ExploreView: View {
     private var culturalInsightCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text(L("CULTURAL INSIGHT"))
-                .font(.custom("NeueHaasDisplay-Mediu", size: 13))
+                .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(13)))
                 .foregroundStyle(.white)
 
             // Country sits between the title and the paragraph. Large
@@ -379,7 +393,7 @@ struct ExploreView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let country = culturalInsightCountry {
                     Text(country)
-                        .font(.custom("NeueHaasDisplay-Mediu", size: 18))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(18)))
                         .foregroundStyle(.white)
                 }
 
@@ -392,7 +406,7 @@ struct ExploreView: View {
                         Text(L("Add a destination to your profile to see a cultural insight here."))
                     }
                 }
-                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                 .foregroundStyle(.white)
                 .lineSpacing(3)
                 .fixedSize(horizontal: false, vertical: true)
@@ -416,10 +430,10 @@ struct ExploreView: View {
                                 .tint(.white)
                         }
                         Text(L("Get new insight"))
-                            .font(.custom("NeueHaasDisplay-Light", size: 14))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                             .foregroundStyle(.white)
                     }
-                    .frame(height: 20)
+                    .frame(height: MacLayout.s(20))
                     .padding(.horizontal, 20)
                     .padding(.vertical, 5)
                 }
@@ -437,10 +451,10 @@ struct ExploreView: View {
                         HStack(spacing: 6) {
                             Image(systemName: savedCulturalInsight ? "bookmark.fill" : "bookmark")
                             Text(L(savedCulturalInsight ? "Saved" : "Save"))
-                                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                         }
                         .foregroundStyle(.white)
-                        .frame(height: 20)
+                        .frame(height: MacLayout.s(20))
                         .padding(.horizontal, 20)
                         .padding(.vertical, 5)
                     }
@@ -452,7 +466,10 @@ struct ExploreView: View {
         }
         .padding(.top, 28)
         .padding(.bottom, 20)
-        .padding(.horizontal, 8)
+        // Match the guided-plan card's inner horizontal padding so the text
+        // and buttons share the same leading/trailing margins: 8pt on iOS,
+        // the larger scaled margin on Mac.
+        .padding(.horizontal, MacLayout.isMac ? MacLayout.s(16) : 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             LinearGradient(
@@ -468,9 +485,9 @@ struct ExploreView: View {
     // MARK: Suggested Topics
 
     private var topicsSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MacLayout.s(16)) {
             Text(L("You might like these topics:"))
-                .font(.custom("NeueHaasDisplay-Light", size: 18))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(18)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
@@ -493,21 +510,21 @@ struct ExploreView: View {
         return topicPresets.filter { languageFilter.contains($0.language) }
     }
 
-    // Each suggestion row hides itself once the user has tapped Add on
-    // every card in it. We track "added" by name in `addedNearbyLanguages`
-    // (shared by all three rows since the underlying action is identical)
-    // and filter each row's source list against it. When the resulting
-    // list is empty, the parent body collapses the section entirely.
+    // Cards stay put after "Add Language" is tapped — they flip to the
+    // "Language Added" state (reversible) rather than vanishing. Added
+    // languages are only dropped on a refresh: the load functions rebuild
+    // these lists filtered against the profile's saved languages, so once a
+    // language is owned it stops being suggested.
     private var visibleNearbyLanguages: [LanguagePreference] {
-        nearbyLanguages.filter { !addedNearbyLanguages.contains($0.language) }
+        nearbyLanguages
     }
 
     private var visibleDestinationLanguages: [LanguagePreference] {
-        destinationLanguages.filter { !addedNearbyLanguages.contains($0.language) }
+        destinationLanguages
     }
 
     private var visibleAdjacentLanguages: [LanguagePreference] {
-        adjacentLanguages.filter { !addedNearbyLanguages.contains($0.language) }
+        adjacentLanguages
     }
 
     private func topicCard(preset: TopicPreset) -> some View {
@@ -517,10 +534,10 @@ struct ExploreView: View {
                 HStack(alignment: .firstTextBaseline) {
                     HStack(spacing: 4) {
                         Text(shortLanguageLabel(preset.language))
-                            .font(.custom("NeueHaasDisplay-Light", size: 15))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                             .foregroundStyle(.black)
                         Text(L(preset.level))
-                            .font(.custom("NeueHaasDisplay-Light", size: 15))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -528,16 +545,16 @@ struct ExploreView: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 18, height: 18)
+                        .frame(width: MacLayout.s(18), height: MacLayout.s(18))
                         .foregroundStyle(.black)
                 }
-                .padding(12)
+                .padding(MacLayout.s(12))
 
                 Spacer(minLength: 0)
 
                 DeckCoverFill(style: preset.coverStyle)
                     .aspectRatio(90.0 / 53.0, contentMode: .fit)
-                    .frame(width: 130)
+                    .frame(width: MacLayout.s(130))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
@@ -547,7 +564,7 @@ struct ExploreView: View {
 
                 Spacer(minLength: 0)
             }
-            .frame(width: 220, height: 230)
+            .frame(width: MacLayout.s(220), height: MacLayout.s(230))
             // Subtle top-to-bottom gradient (darker gray up top → lighter,
             // still off-white, at the bottom) for a more airy card, matching
             // the Study tab's cards.
@@ -564,11 +581,11 @@ struct ExploreView: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(preset.topic)
-                        .font(.custom("NeueHaasDisplay-Light", size: 22))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(22)))
                         .foregroundStyle(.black)
                         .lineLimit(1)
                     Text(L("100 words"))
-                        .font(.custom("NeueHaasDisplay-Light", size: 13))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -580,7 +597,7 @@ struct ExploreView: View {
                 }
                 .buttonStyle(.plain)
             }
-            .frame(width: 220)
+            .frame(width: MacLayout.s(220))
         }
     }
 
@@ -608,6 +625,7 @@ struct ExploreView: View {
                 TopicPreset(
                     topic: interest,
                     language: pref.language,
+                    dialect: pref.dialect,
                     level: pref.level,
                     coverStyle: DeckCoverStyle.allCases.randomElement() ?? .gradient
                 )
@@ -636,9 +654,9 @@ struct ExploreView: View {
     // explore it; future iteration can switch this to a "clone deck"
     // action once we have that flow.
     private var publicDecksSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MacLayout.s(16)) {
             Text(L("Decks Others Have Made"))
-                .font(.custom("NeueHaasDisplay-Light", size: 18))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(18)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
@@ -660,9 +678,9 @@ struct ExploreView: View {
     // other Mexican-Spanish content first instead of mixed dialects.
     // Card style is shared with `publicDecksSection` for consistency.
     private var decksOthersHaveCreatedSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MacLayout.s(16)) {
             Text(L("Decks Others Have Created"))
-                .font(.custom("NeueHaasDisplay-Light", size: 18))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(18)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
@@ -684,10 +702,10 @@ struct ExploreView: View {
                 HStack(alignment: .firstTextBaseline) {
                     HStack(spacing: 4) {
                         Text(shortLanguageLabel(deck.language))
-                            .font(.custom("NeueHaasDisplay-Light", size: 15))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                             .foregroundStyle(.black)
                         Text(L(deck.level))
-                            .font(.custom("NeueHaasDisplay-Light", size: 15))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -695,16 +713,16 @@ struct ExploreView: View {
                         .renderingMode(.template)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 18, height: 18)
+                        .frame(width: MacLayout.s(18), height: MacLayout.s(18))
                         .foregroundStyle(.black)
                 }
-                .padding(12)
+                .padding(MacLayout.s(12))
 
                 Spacer(minLength: 0)
 
                 DeckCoverFill(style: deck.resolvedCoverStyle)
                     .aspectRatio(90.0 / 53.0, contentMode: .fit)
-                    .frame(width: 130)
+                    .frame(width: MacLayout.s(130))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                     .overlay(
                         RoundedRectangle(cornerRadius: 4)
@@ -714,7 +732,7 @@ struct ExploreView: View {
 
                 Spacer(minLength: 0)
             }
-            .frame(width: 220, height: 230)
+            .frame(width: MacLayout.s(220), height: MacLayout.s(230))
             // Subtle top-to-bottom gradient (darker gray up top → lighter,
             // still off-white, at the bottom) for a more airy card, matching
             // the Study tab's cards.
@@ -730,17 +748,17 @@ struct ExploreView: View {
             HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(deck.title)
-                        .font(.custom("NeueHaasDisplay-Light", size: 22))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(22)))
                         .foregroundStyle(.black)
                         .lineLimit(1)
                     Text("\(deck.items.count)")
-                        .font(.custom("NeueHaasDisplay-Light", size: 13))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 addCircleButton(size: 32, plusSize: 14)
             }
-            .frame(width: 220)
+            .frame(width: MacLayout.s(220))
         }
     }
 
@@ -829,15 +847,27 @@ struct ExploreView: View {
         defer { isLoadingCulturalInsight = false }
         do {
             if let insight = try await DeckGenerator.suggestCulturalInsight(
-                forDestinations: destinations
+                forDestinations: destinations,
+                excluding: recentCulturalFacts
             ) {
                 culturalInsightCountry = insight.location
                 culturalInsightFact = insight.fact
                 savedCulturalInsight = false
+                rememberCulturalFact(insight.fact)
             }
         } catch {
             print("loadCulturalInsight failed: \(error)")
         }
+    }
+
+    // Appends a freshly shown fact to the rolling exclusion buffer and
+    // persists it, trimming to the most recent dozen.
+    private func rememberCulturalFact(_ fact: String) {
+        recentCulturalFacts.append(fact)
+        if recentCulturalFacts.count > Self.maxRecentCulturalFacts {
+            recentCulturalFacts.removeFirst(recentCulturalFacts.count - Self.maxRecentCulturalFacts)
+        }
+        UserDefaults.standard.set(recentCulturalFacts, forKey: Self.recentCulturalFactsKey)
     }
 
     @MainActor
@@ -863,9 +893,9 @@ struct ExploreView: View {
     // MARK: Languages Based on Where You Are
 
     private var languagesNearYouSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MacLayout.s(16)) {
             Text(L("Languages Based on Where You Are"))
-                .font(.custom("NeueHaasDisplay-Light", size: 18))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(18)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
@@ -892,7 +922,7 @@ struct ExploreView: View {
         let isAdded = addedNearbyLanguages.contains(pref.language)
         return VStack(alignment: .leading, spacing: 6) {
             Text(localizedLanguageName(pref.language))
-                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                 .foregroundStyle(.black)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -906,30 +936,41 @@ struct ExploreView: View {
                 let s = formatSpeakers(speakers)
                 return s.isEmpty ? "\u{00A0}" : s
             }())
-                .font(.custom("NeueHaasDisplay-Light", size: 11))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(11)))
                 .foregroundStyle(.secondary)
 
             HStack(alignment: .center) {
-                Text(L(isAdded ? "Added" : "Add Language"))
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                Text(L(isAdded ? "Language Added" : "Add Language"))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .foregroundStyle(isAdded ? Color.secondary : Color.black)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                 Spacer()
+                // Tapping toggles: adds the language, or — once added — undoes
+                // it. The filled check reads as a selected/added state you can
+                // tap again to reverse.
                 Button {
                     Haptics.light()
-                    Task { await addNearbyLanguage(pref) }
+                    Task {
+                        if isAdded {
+                            await removeNearbyLanguage(pref)
+                        } else {
+                            await addNearbyLanguage(pref)
+                        }
+                    }
                 } label: {
                     if isAdded {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(.black)
-                            .frame(width: 22, height: 22)
-                            .overlay(Circle().stroke(Color.black, lineWidth: 1))
+                            .font(.system(size: MacLayout.f(10), weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: MacLayout.s(22), height: MacLayout.s(22))
+                            .background(Circle().fill(Color.black))
                     } else {
                         addCircleButton(size: 22, plusSize: 10)
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(isAdded)
+                .accessibilityLabel(isAdded ? L("Remove language") : L("Add language"))
             }
             .padding(.top, 14)
         }
@@ -941,7 +982,7 @@ struct ExploreView: View {
         .padding(.horizontal, 10)
         .padding(.top, 10)
         .padding(.bottom, 8)
-        .frame(width: 138, alignment: .topLeading)
+        .frame(width: MacLayout.s(138), alignment: .topLeading)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.black.opacity(0.18), lineWidth: 1)
@@ -951,9 +992,9 @@ struct ExploreView: View {
     // MARK: Languages Based on Where You Want to Go
 
     private var destinationLanguagesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MacLayout.s(16)) {
             Text(L("Languages Based on Where You Want to Go"))
-                .font(.custom("NeueHaasDisplay-Light", size: 18))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(18)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
@@ -972,9 +1013,9 @@ struct ExploreView: View {
     // MARK: Languages from Adjacent Countries
 
     private var adjacentLanguagesSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: MacLayout.s(16)) {
             Text(L("Languages from Adjacent Countries"))
-                .font(.custom("NeueHaasDisplay-Light", size: 18))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(18)))
                 .foregroundStyle(.black)
                 .padding(.horizontal, 8)
 
@@ -1081,6 +1122,21 @@ struct ExploreView: View {
         }
     }
 
+    // Reverses an "Add Language" tap: removes the language from the profile
+    // and flips the card back to its "Add Language" state.
+    @MainActor
+    private func removeNearbyLanguage(_ pref: LanguagePreference) async {
+        guard addedNearbyLanguages.contains(pref.language) else { return }
+        addedNearbyLanguages.remove(pref.language)
+        do {
+            try await UserService.removeLanguagePreference(pref)
+        } catch {
+            // Roll back the optimistic flip so the card stays "Added".
+            addedNearbyLanguages.insert(pref.language)
+            print("removeNearbyLanguage failed: \(error)")
+        }
+    }
+
     // MARK: Shared bits
 
     private func addCircleButton(size: CGFloat, plusSize: CGFloat) -> some View {
@@ -1158,6 +1214,7 @@ private struct TopicPreset: Identifiable, Equatable {
     let id = UUID()
     let topic: String
     let language: String
+    let dialect: String
     let level: String
     let coverStyle: DeckCoverStyle
 

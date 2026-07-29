@@ -40,6 +40,9 @@ struct GenerateContentSheet: View {
     // confirmation that the keep landed.
     @State private var isSavingArtifact = false
     @State private var didSaveArtifact = false
+    // Guards the one-time "artifact generated" XP award, granted when the
+    // sheet closes after a successful generation.
+    @State private var awardedGenerationXP = false
     // Surfaced by `.subscriptionCapAlert` when generate or save
     // throws SubscriptionError.capExceeded.
     @State private var capError: SubscriptionError?
@@ -113,17 +116,8 @@ struct GenerateContentSheet: View {
                             .disabled(phase == .generating)
                     }
                     if phase == .result {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                Haptics.light()
-                                Task { await saveAsArtifact() }
-                            } label: {
-                                Image(systemName: didSaveArtifact ? "bookmark.fill" : "bookmark")
-                                    .foregroundStyle(.black)
-                            }
-                            .disabled(isSavingArtifact || didSaveArtifact || generatedContent.isEmpty)
-                            .accessibilityLabel(didSaveArtifact ? L("Saved to Artifacts") : L("Save to Artifacts"))
-                        }
+                        // No Save button — generated artifacts are auto-saved
+                        // to the deck's collection the moment they're created.
                         ToolbarItem(placement: .topBarTrailing) {
                             Button(L("Done")) { dismiss() }
                         }
@@ -136,6 +130,17 @@ struct GenerateContentSheet: View {
         // same stop-on-disappear hook ListenSessionView uses.
         .onDisappear {
             SpeechClient.shared.stop()
+            // Reward generating (and reading) the artifact, once, on close —
+            // only if a generation actually happened.
+            if phase == .result, !awardedGenerationXP {
+                awardedGenerationXP = true
+                Task {
+                    if let grants = try? await XPService.awardArtifactGenerated(),
+                       !grants.isEmpty {
+                        await MainActor.run { XPToastCenter.shared.enqueue(grants) }
+                    }
+                }
+            }
         }
         .subscriptionCapAlert($capError)
     }
@@ -245,14 +250,36 @@ struct GenerateContentSheet: View {
         .padding(20)
     }
 
+    // Placeholder paragraphs that mirror the prose about to appear, with a
+    // looping shimmer, so the wait reads as "text is materializing here"
+    // rather than a bare spinner.
     private var generatingView: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .controlSize(.large)
+        VStack(alignment: .leading, spacing: 22) {
             Text(L("Generating %@…", L(kind.rawValue).lowercased()))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            ForEach(0..<3, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 10) {
+                    skeletonBar(width: nil)
+                    skeletonBar(width: nil)
+                    skeletonBar(width: 240)
+                }
+            }
+            Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .modifier(GeneratingShimmer())
+    }
+
+    @ViewBuilder
+    private func skeletonBar(width: CGFloat?) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(Color(white: 0.90))
+            .frame(width: width, height: 13)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
     }
 
     private var resultView: some View {
@@ -522,9 +549,12 @@ struct GenerateContentSheet: View {
                 ComprehensionLoadingView()
             case .loaded:
                 ForEach(Array(comprehensionQuestions.enumerated()), id: \.element.id) { index, question in
-                    ComprehensionQuestionCard(index: index, question: question) {
-                        handleCorrectAnswer(question)
-                    }
+                    ComprehensionQuestionCard(
+                        index: index,
+                        question: question,
+                        onFirstAttempt: { correct in handleFirstAttempt(question, correct: correct) },
+                        onSolved: { Task { await registerComprehensionStreakIfNeeded() } }
+                    )
                 }
             case .failed:
                 VStack(alignment: .leading, spacing: 10) {
@@ -578,19 +608,19 @@ struct GenerateContentSheet: View {
         }
     }
 
-    // Awards XP for a correct answer (once per question) and — the first
-    // time any question is answered correctly for this content — records a
-    // study session for the day so the answer counts toward the daily
-    // streak, matching the intent that comprehension is real practice.
-    private func handleCorrectAnswer(_ question: ComprehensionQuestion) {
+    private func handleFirstAttempt(_ question: ComprehensionQuestion, correct: Bool) {
+        // One award per question, on the first attempt only: 10 XP for a
+        // correct first try, 5 XP for a wrong first guess. Later taps on the
+        // same question earn nothing.
         guard !awardedQuestionIDs.contains(question.id) else { return }
         awardedQuestionIDs.insert(question.id)
         Task {
-            if let grants = try? await XPService.awardComprehensionCorrect(),
-               !grants.isEmpty {
+            let grants = correct
+                ? (try? await XPService.awardComprehensionFirstTryCorrect())
+                : (try? await XPService.awardComprehensionGuess())
+            if let grants, !grants.isEmpty {
                 await MainActor.run { XPToastCenter.shared.enqueue(grants) }
             }
-            await registerComprehensionStreakIfNeeded()
         }
     }
 
@@ -750,6 +780,8 @@ struct GenerateContentSheet: View {
         awardedQuestionIDs = []
         didRegisterComprehensionStreak = false
         comprehensionPhase = .idle
+        // Fresh generation (incl. a regenerate) is a new artifact to keep.
+        didSaveArtifact = false
         do {
             let result = try await DeckGenerator.generateContent(
                 kind: kind,
@@ -759,6 +791,10 @@ struct GenerateContentSheet: View {
             generatedContent = result.prose
             generatedPairs = result.pairs
             phase = .result
+            // Auto-save to the deck's artifacts collection — every generated
+            // artifact is kept (the Save button is gone). Runs concurrently so
+            // it never blocks the reader or the comprehension load below.
+            Task { await saveAsArtifact() }
             // Follow-on call: the content is on screen; questions stream in
             // below it (skeleton → cards) without blocking the reader.
             if kind.supportsComprehension {
@@ -771,6 +807,33 @@ struct GenerateContentSheet: View {
             errorText = error.localizedDescription
             phase = .input
         }
+    }
+}
+
+// Sweeps a soft highlight left-to-right across its content on a loop — the
+// shimmer that signals the generating skeleton is loading.
+private struct GeneratingShimmer: ViewModifier {
+    @State private var phase: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color.white.opacity(0.7), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width)
+                    .offset(x: phase * geo.size.width)
+                }
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                    phase = 1
+                }
+            }
     }
 }
 

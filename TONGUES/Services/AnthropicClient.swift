@@ -169,26 +169,83 @@ enum AnthropicClient {
             description: toolDescription,
             inputSchema: schema
         )
-        let response = try await sendToolMessage(
-            messages,
-            system: system,
-            tools: [tool],
-            toolChoice: .tool(name: toolName),
-            model: model,
-            maxTokens: maxTokens
-        )
-        guard let block = response.toolUses.first,
-              let json = block.input?.jsonString,
-              let data = json.data(using: .utf8) else {
-            throw NSError(
-                domain: "AnthropicClient",
-                code: 100,
-                userInfo: [NSLocalizedDescriptionKey: "Expected a tool_use call to \(toolName) but Claude didn't make one (stop_reason: \(response.stopReason ?? "nil")). Any text content: \(response.joinedText.isEmpty ? "<empty>" : response.joinedText)"]
+        // Forced tool use is schema-GUIDED, not schema-CONSTRAINED: the
+        // Messages API guarantees the model calls the tool, but it does NOT
+        // strictly validate the arguments against `input_schema` (there's no
+        // constrained decoding). Weaker models — Haiku on the free tier
+        // especially — occasionally emit the wrong shape, e.g. `pairs` as a
+        // single object instead of an array, which then fails our
+        // client-side decode. A re-roll almost always fixes it, so retry a
+        // few times, appending the specific failure to the system prompt so
+        // the next attempt corrects the shape rather than repeating it.
+        let maxAttempts = 3
+        var lastError: Error?
+
+        for attempt in 1...maxAttempts {
+            // On retries, steer via `system` (a plain string) rather than an
+            // extra user turn, which sidesteps any role-alternation concern.
+            let attemptSystem: String?
+            if attempt == 1 || lastError == nil {
+                attemptSystem = system
+            } else {
+                let reason = (lastError as NSError?)?
+                    .userInfo["structuredReason"] as? String ?? "the arguments did not match the schema"
+                let correction = """
+                    IMPORTANT: A previous call to `\(toolName)` was rejected because \(reason). \
+                    Call `\(toolName)` again with arguments matching the schema EXACTLY: every array \
+                    field must be a JSON array (e.g. "pairs": [ {…}, {…} ]), never a single object, \
+                    and every required field must be present.
+                    """
+                attemptSystem = system.map { "\($0)\n\n\(correction)" } ?? correction
+            }
+
+            let response = try await sendToolMessage(
+                messages,
+                system: attemptSystem,
+                tools: [tool],
+                toolChoice: .tool(name: toolName),
+                model: model,
+                maxTokens: maxTokens
             )
+
+            guard let block = response.toolUses.first,
+                  let json = block.input?.jsonString,
+                  let data = json.data(using: .utf8) else {
+                lastError = NSError(
+                    domain: "AnthropicClient",
+                    code: 100,
+                    userInfo: [NSLocalizedDescriptionKey: "Expected a tool_use call to \(toolName) but Claude didn't make one (stop_reason: \(response.stopReason ?? "nil")). Any text content: \(response.joinedText.isEmpty ? "<empty>" : response.joinedText)"]
+                )
+                continue
+            }
+
+            do {
+                let decoded = try decodeToolPayload(T.self, toolName: toolName, json: json, data: data)
+                return (decoded, json)
+            } catch {
+                lastError = error
+            }
         }
+
+        throw lastError ?? NSError(
+            domain: "AnthropicClient",
+            code: 102,
+            userInfo: [NSLocalizedDescriptionKey: "Structured output for \(toolName) failed after \(maxAttempts) attempts."]
+        )
+    }
+
+    // Decodes a tool_use payload into `T`, translating Swift's DecodingError
+    // cases into one descriptive error that names the offending field and
+    // shows the raw payload. The concise reason is also stashed under
+    // `structuredReason` for the retry loop to fold back into the prompt.
+    private static func decodeToolPayload<T: Decodable>(
+        _: T.Type,
+        toolName: String,
+        json: String,
+        data: Data
+    ) throws -> T {
         do {
-            let decoded = try JSONDecoder().decode(T.self, from: data)
-            return (decoded, json)
+            return try JSONDecoder().decode(T.self, from: data)
         } catch let DecodingError.keyNotFound(key, ctx) {
             throw structuredDecodingError(
                 toolName: toolName,
@@ -235,12 +292,15 @@ enum AnthropicClient {
         NSError(
             domain: "AnthropicClient",
             code: 101,
-            userInfo: [NSLocalizedDescriptionKey: """
+            userInfo: [
+                "structuredReason": reason,
+                NSLocalizedDescriptionKey: """
                 Claude's tool_use payload for `\(toolName)` didn't match the expected shape: \(reason).
 
                 Raw payload Claude submitted:
                 \(rawJSON)
-                """]
+                """
+            ]
         )
     }
 

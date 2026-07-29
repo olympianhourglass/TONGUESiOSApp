@@ -133,7 +133,7 @@ enum DeckGenerator {
         // Model laddered to tier: Standard + Pro → Sonnet, Max → Opus
         // (free falls back to Haiku). Captured here before the API call so a mid-flight
         // tier change can't swap models inside one generation.
-        let model = await SubscriptionService.shared.currentTier.generationModel
+        let model = SubscriptionService.shared.currentTier.generationModel
 
         let singularForm = singular(for: contentType)
         let prompt = buildPrompt(
@@ -625,7 +625,7 @@ enum DeckGenerator {
         // FirebaseDeckArtifactService.save.
         await SubscriptionService.shared.refresh()
         try await SubscriptionService.shared.ensureCapacity(in: .artifacts, requested: 1)
-        let model = await SubscriptionService.shared.currentTier.generationModel
+        let model = SubscriptionService.shared.currentTier.generationModel
 
         let prompt = buildContentPrompt(
             kind: kind,
@@ -739,7 +739,7 @@ enum DeckGenerator {
         deck: DeckDocument,
         content: GeneratedContent
     ) async throws -> [ComprehensionQuestion] {
-        let model = await SubscriptionService.shared.currentTier.generationModel
+        let model = SubscriptionService.shared.currentTier.generationModel
         let prompt = buildComprehensionPrompt(kind: kind, deck: deck, content: content)
         struct Response: Codable { let questions: [ComprehensionQuestion] }
         let decoded: Response = try await AnthropicClient.sendStructured(
@@ -854,7 +854,7 @@ enum DeckGenerator {
     ) async throws -> [GeneratedItem] {
         // Tier-laddered model. No cap check here — related lookups are
         // a tap-to-explore helper, not a deck generation.
-        let model = await SubscriptionService.shared.currentTier.generationModel
+        let model = SubscriptionService.shared.currentTier.generationModel
         let prompt = buildRelatedPrompt(
             relation: relation,
             source: source,
@@ -1105,8 +1105,16 @@ enum DeckGenerator {
                 maxTokens: 1024,
                 as: Response.self
             )
+            // Snap the model's language/dialect/level onto the exact values
+            // TONGUES offers (the Create New Deck dropdowns + Settings picker),
+            // so a recommendation never stores a near-miss the pickers lack.
             return decoded.suggestions.map {
-                LanguagePreference(language: $0.language, dialect: $0.dialect, level: $0.level)
+                let lang = canonicalLanguageName($0.language)
+                return LanguagePreference(
+                    language: lang,
+                    dialect: canonicalDialectName(for: lang, dialect: $0.dialect),
+                    level: canonicalLevelName(for: lang, level: $0.level)
+                )
             }
         } catch {
             print("suggestLanguages decode error: \(error)")
@@ -1133,46 +1141,75 @@ enum DeckGenerator {
         )
     }
 
+    // A rotating set of angles the cultural-insight prompt draws from. One
+    // is picked at random per call and the fact is pinned to it, which
+    // forces genuine topical breadth — without a lens the model defaults to
+    // the one or two most salient facts it knows for a place and repeats
+    // them. Keep these broad and non-overlapping.
+    private static let culturalInsightLenses = [
+        "a food or drink custom (NOT a famous national dish)",
+        "an everyday etiquette rule or social norm",
+        "a local superstition, belief, or piece of folklore",
+        "a dialect word, slang term, or language quirk",
+        "a daily ritual or routine locals follow",
+        "a regional craft, trade, or traditional skill",
+        "a music, dance, or performance tradition",
+        "a quirk of how people get around (local transport)",
+        "an architectural or urban-design detail",
+        "a lesser-known festival, holiday, or seasonal custom",
+        "a work, business, or shopkeeping custom",
+        "a quiet piece of history most travelers walk right past",
+        "a gesture, greeting, or body-language norm",
+        "a market, café, or street-vendor tradition",
+        "a family, neighborly, or community custom",
+        "a relationship between the local landscape and daily life",
+    ]
+
     // Pulls a niche cultural insight about one of the user's destinations
     // for the Explore tab's CULTURAL INSIGHT card.
     //
-    // Randomness: we pick the destination client-side (Swift's
-    // `randomElement`) instead of asking the model to choose — the model
-    // tends to anchor on whichever destination is first or most famous,
-    // so client-side picking gives genuinely uniform variety across the
-    // list. A short UUID salt is still folded into the prompt so even
-    // when the same destination is picked twice in a row the model will
-    // surface a *different* niche fact each time.
+    // Variety comes from three things, because a bare "give me a niche
+    // fact" prompt on Haiku converges on the same one or two answers:
+    //   1. The destination is picked client-side (Swift's `randomElement`)
+    //      so the model can't anchor on whichever place is most famous.
+    //   2. A random *lens* (see `culturalInsightLenses`) pins each fact to a
+    //      different category, forcing topical breadth.
+    //   3. `recentFacts` — facts already shown to this user — are passed in
+    //      as an explicit exclusion list so repeats and near-variations are
+    //      steered away from, even across taps and app launches.
     //
-    // Granularity: the destination string is whatever the user typed
-    // during onboarding — could be a country ("Japan"), a city
-    // ("Naples"), or "City, Country" ("Lyon, France"). The prompt asks
-    // the model to drill down to the most specific place name it can,
-    // so a city-level entry yields a neighborhood / city-specific
-    // anecdote rather than a country-wide fact.
-    //
-    // The return field is `location` (renamed from `country`) to reflect
-    // that the displayed label may be a city, region, or country.
-    static func suggestCulturalInsight(forDestinations destinations: [String]) async throws -> (location: String, fact: String)? {
+    // Granularity: the destination string is whatever the user typed during
+    // onboarding — a country ("Japan"), a city ("Naples"), or "City,
+    // Country" ("Lyon, France"). The prompt drills down to the most specific
+    // place name so a city entry yields a city-specific anecdote.
+    static func suggestCulturalInsight(
+        forDestinations destinations: [String],
+        excluding recentFacts: [String] = []
+    ) async throws -> (location: String, fact: String)? {
         guard let picked = destinations.randomElement() else { return nil }
-        let salt = UUID().uuidString.prefix(8)
+        let lens = culturalInsightLenses.randomElement() ?? "a local custom"
+        let avoidBlock = recentFacts.isEmpty ? "" : """
+
+
+        You have ALREADY shown this user the facts below. Do NOT repeat any
+        of them or a close variation — choose something clearly different:
+        \(recentFacts.suffix(12).map { "• \($0)" }.joined(separator: "\n"))
+        """
         let prompt = """
         A traveler is daydreaming about this destination:
 
         \(picked)
 
         Share a single niche cultural fact about this place — the most
-        specific place name above. If it's a city or neighborhood, the
-        fact MUST be about that city/neighborhood (a local custom, a
-        quirky shop, a regional tradition, a quiet historical detail).
-        Only fall back to a country-level fact if the destination really
-        is just a country name. Skip clichés (famous landmarks, national
-        dishes everyone knows, generic stereotypes). Pick something a
-        local would know but most travelers wouldn't. Two or three
-        sentences max; conversational tone.
+        specific place name above. If it's a city or neighborhood, the fact
+        MUST be about that city/neighborhood. Only fall back to a
+        country-level fact if the destination really is just a country name.
 
-        Variation salt (use to ensure a different fact than previous
-        calls): \(salt)
+        For THIS fact, focus specifically on: \(lens).
+
+        Skip clichés (famous landmarks, national dishes everyone knows,
+        generic stereotypes). Pick something a local would know but most
+        travelers wouldn't. Two or three sentences max; conversational tone.\(avoidBlock)
 
         Submit your insight by calling `submit_cultural_insight`. `location` should be the exact place the fact is about — city name if city-specific, country name otherwise.
         """
@@ -1240,8 +1277,16 @@ enum DeckGenerator {
                 maxTokens: 1024,
                 as: Response.self
             )
+            // Snap the model's language/dialect/level onto the exact values
+            // TONGUES offers (the Create New Deck dropdowns + Settings picker),
+            // so a recommendation never stores a near-miss the pickers lack.
             return decoded.suggestions.map {
-                LanguagePreference(language: $0.language, dialect: $0.dialect, level: $0.level)
+                let lang = canonicalLanguageName($0.language)
+                return LanguagePreference(
+                    language: lang,
+                    dialect: canonicalDialectName(for: lang, dialect: $0.dialect),
+                    level: canonicalLevelName(for: lang, level: $0.level)
+                )
             }
         } catch {
             print("suggestAdjacentLanguages decode error: \(error)")
@@ -1289,8 +1334,16 @@ enum DeckGenerator {
                 maxTokens: 1024,
                 as: Response.self
             )
+            // Snap the model's language/dialect/level onto the exact values
+            // TONGUES offers (the Create New Deck dropdowns + Settings picker),
+            // so a recommendation never stores a near-miss the pickers lack.
             return decoded.suggestions.map {
-                LanguagePreference(language: $0.language, dialect: $0.dialect, level: $0.level)
+                let lang = canonicalLanguageName($0.language)
+                return LanguagePreference(
+                    language: lang,
+                    dialect: canonicalDialectName(for: lang, dialect: $0.dialect),
+                    level: canonicalLevelName(for: lang, level: $0.level)
+                )
             }
         } catch {
             print("suggestLanguages(forCoordinate:) decode error: \(error)")

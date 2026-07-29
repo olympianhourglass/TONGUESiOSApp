@@ -26,6 +26,14 @@ struct LibraryView: View {
     // page's Content/Artifacts/Stats tabs. Decks lists the user's decks;
     // Words flattens every item across all decks.
     @State private var section: LibrarySection = .decks
+    // ARTIFACTS section. Saved long-form generations live under each deck
+    // (users/{uid}/decks/{deckId}/artifacts), so the library view fetches
+    // them per-deck concurrently the first time the user opens this section
+    // and merges them into one recency-sorted list.
+    @State private var artifacts: [Artifact] = []
+    @State private var isLoadingArtifacts = false
+    @State private var artifactsLoaded = false
+    @State private var selectedArtifact: Artifact?
     // Search is hidden by default and revealed by an overscroll pull at
     // the top, appearing in the dark header. Tapping the revealed pill
     // opens the full-screen LibrarySearchView (Yelp-style) — the bar
@@ -54,11 +62,13 @@ struct LibraryView: View {
     enum LibrarySection: String, CaseIterable, Identifiable {
         case decks
         case words
+        case artifacts
         var id: String { rawValue }
         var title: String {
             switch self {
             case .decks: return L("DECKS")
             case .words: return L("CONTENT")
+            case .artifacts: return L("ARTIFACTS")
             }
         }
     }
@@ -159,7 +169,28 @@ struct LibraryView: View {
                 resolvePendingWidgetDeepLink()
                 recomputeWords()
             }
-            .refreshable { await vm.loadDecks() }
+            .refreshable {
+                await vm.loadDecks()
+                // Force artifacts to refetch on next visit; refresh now if
+                // that's the section currently on screen.
+                artifactsLoaded = false
+                if section == .artifacts { await loadArtifactsIfNeeded() }
+            }
+            .onChange(of: section) { _, newValue in
+                if newValue == .artifacts {
+                    Task { await loadArtifactsIfNeeded() }
+                }
+            }
+            #if targetEnvironment(macCatalyst)
+            // Mac: open the artifact full-screen, not a small centered sheet.
+            .fullScreenCover(item: $selectedArtifact) { artifact in
+                ArtifactReaderSheet(artifact: artifact)
+            }
+            #else
+            .sheet(item: $selectedArtifact) { artifact in
+                ArtifactReaderSheet(artifact: artifact)
+            }
+            #endif
             // Two triggers: the deckID arriving (warm app) and the deck
             // list finishing its initial load (cold launch from widget,
             // where the ID is already pending when this view appears).
@@ -434,11 +465,11 @@ struct LibraryView: View {
     private func metricCard(label: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.custom("NeueHaasDisplay-Light", size: 13))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                 .foregroundStyle(.white.opacity(0.7))
                 .lineLimit(1)
             Text(value)
-                .font(.custom("NeueHaasDisplay-Mediu", size: 22))
+                .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(22)))
                 .foregroundStyle(.white)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
@@ -464,14 +495,14 @@ struct LibraryView: View {
                     .frame(maxWidth: .infinity)
             } else if let error = vm.errorText, vm.decks.isEmpty {
                 Text(error)
-                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 40)
             } else if vm.decks.isEmpty {
                 Text(L("No decks yet — create one from the Study tab."))
-                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
@@ -483,22 +514,26 @@ struct LibraryView: View {
                     switch section {
                     case .decks: decksSection
                     case .words: wordsSection
+                    case .artifacts: artifactsSection
                     }
                 }
-                // Horizontal swipe flips between Decks and Words, mirroring
-                // the Deck Detail page. Vertical scroll is preserved by only
-                // acting when horizontal travel dominates, and only on end.
+                // Horizontal swipe steps between sections (Decks → Content →
+                // Artifacts), mirroring the Deck Detail page. Vertical scroll
+                // is preserved by only acting when horizontal travel
+                // dominates, and only on end.
                 .gesture(
                     DragGesture(minimumDistance: 18)
                         .onEnded { value in
                             let dx = value.translation.width
                             guard abs(dx) > abs(value.translation.height) else { return }
-                            if dx < -28, section == .decks {
+                            let all = LibrarySection.allCases
+                            guard let idx = all.firstIndex(of: section) else { return }
+                            if dx < -28, idx < all.count - 1 {
                                 Haptics.light()
-                                withAnimation(.easeInOut(duration: 0.25)) { section = .words }
-                            } else if dx > 28, section == .words {
+                                withAnimation(.easeInOut(duration: 0.25)) { section = all[idx + 1] }
+                            } else if dx > 28, idx > 0 {
                                 Haptics.light()
-                                withAnimation(.easeInOut(duration: 0.25)) { section = .decks }
+                                withAnimation(.easeInOut(duration: 0.25)) { section = all[idx - 1] }
                             }
                         }
                 )
@@ -553,7 +588,7 @@ struct LibraryView: View {
         let decks = visibleDecks
         if decks.isEmpty {
             Text(L("No decks match this filter."))
-                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
@@ -586,7 +621,7 @@ struct LibraryView: View {
     private var wordsSection: some View {
         if wordsToShow.isEmpty {
             Text(L("No words match this filter."))
-                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 24)
@@ -611,6 +646,103 @@ struct LibraryView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var artifactsSection: some View {
+        if isLoadingArtifacts && artifacts.isEmpty {
+            ProgressView()
+                .padding(.vertical, 40)
+                .frame(maxWidth: .infinity)
+        } else {
+            let items = visibleArtifacts
+            if items.isEmpty {
+                Text(artifacts.isEmpty
+                     ? L("No saved artifacts yet — generate one from a deck's Artifacts tab, then tap the bookmark to keep it.")
+                     : L("No artifacts match this filter."))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 40)
+            } else {
+                let byId = decksById
+                LazyVStack(spacing: 0) {
+                    ForEach(items) { artifact in
+                        LibraryArtifactRow(
+                            artifact: artifact,
+                            deckTitle: byId[artifact.deckId]?.title
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            Haptics.light()
+                            selectedArtifact = artifact
+                        }
+                        if artifact.id != items.last?.id {
+                            Divider()
+                                .padding(.horizontal, 8)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Parent deck lookup for artifact rows/filtering (artifacts carry only
+    // a `deckId`). Dedupes defensively so a stray duplicate id can't crash.
+    private var decksById: [String: DeckDocument] {
+        Dictionary(
+            vm.decks.compactMap { deck in deck.id.map { ($0, deck) } },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
+    // Artifacts honor the Language filter (mapped through the parent deck)
+    // and the sort order. The Content/Level filters are word/sentence
+    // concepts that don't apply to long-form artifacts, so they're ignored
+    // here rather than silently emptying the list.
+    private var visibleArtifacts: [Artifact] {
+        let byId = decksById
+        let filtered = artifacts.filter { artifact in
+            guard let languageFilter else { return true }
+            return byId[artifact.deckId]?.language == languageFilter
+        }
+        switch sortOption {
+        case .alphabetical:
+            return filtered.sorted {
+                $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+            }
+        case .recent, .forgetting:
+            return filtered.sorted { $0.createdAt > $1.createdAt }
+        }
+    }
+
+    // Fetches every deck's artifacts subcollection concurrently and merges
+    // them, once per session (or after a pull-to-refresh resets the flag).
+    // Reuses the per-deck query the Deck Detail page already relies on, so
+    // no collection-group index is required.
+    @MainActor
+    private func loadArtifactsIfNeeded() async {
+        guard !artifactsLoaded, !isLoadingArtifacts else { return }
+        let deckIds = vm.decks.compactMap { $0.id }
+        guard !deckIds.isEmpty else {
+            artifactsLoaded = true
+            return
+        }
+        isLoadingArtifacts = true
+        defer { isLoadingArtifacts = false }
+        let fetched = await withTaskGroup(of: [Artifact].self) { group -> [Artifact] in
+            for id in deckIds {
+                group.addTask {
+                    (try? await FirebaseDeckArtifactService.fetch(forDeck: id)) ?? []
+                }
+            }
+            var all: [Artifact] = []
+            for await chunk in group { all.append(contentsOf: chunk) }
+            return all
+        }
+        artifacts = fetched.sorted { $0.createdAt > $1.createdAt }
+        artifactsLoaded = true
     }
 
     // MARK: Sort + filter bar
@@ -642,7 +774,7 @@ struct LibraryView: View {
                     contentFilter = nil
                 } label: {
                     Text(L("Clear"))
-                        .font(.custom("NeueHaasDisplay-Light", size: 13))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -723,7 +855,7 @@ struct LibraryView: View {
                     .font(.system(size: 11))
             }
             Text(L(text))
-                .font(.custom("NeueHaasDisplay-Light", size: 13))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                 .lineLimit(1)
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
@@ -834,9 +966,9 @@ private struct LibraryDeckRow: View {
     let deck: DeckDocument
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: MacLayout.s(16)) {
             DeckCoverFill(style: deck.resolvedCoverStyle)
-                .frame(width: 60, height: 36)
+                .frame(width: MacLayout.s(60), height: MacLayout.s(36))
                 .clipShape(RoundedRectangle(cornerRadius: 2))
                 .overlay(
                     RoundedRectangle(cornerRadius: 2)
@@ -845,18 +977,18 @@ private struct LibraryDeckRow: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(deck.title)
-                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
                     .foregroundStyle(.black)
                     .lineLimit(1)
                 Text("\(localizedLanguageName(deck.language)) | \(L(deck.level))")
-                    .font(.custom("NeueHaasDisplay-Light", size: 13))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                     .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 12)
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 14)
+        .padding(.vertical, MacLayout.s(14))
         .contentShape(Rectangle())
     }
 }
@@ -868,29 +1000,83 @@ private struct LibraryWordRow: View {
     let entry: LibraryWordEntry
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
+        HStack(alignment: .center, spacing: MacLayout.s(16)) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(entry.item.word)
-                    .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(15)))
                     .foregroundStyle(.black)
                     .lineLimit(1)
                 Text(entry.item.translation)
-                    .font(.custom("NeueHaasDisplay-Light", size: 13))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Text("in \(entry.deck.title)")
-                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
                     .foregroundStyle(Color(white: 0.55))
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
             Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: MacLayout.f(12), weight: .semibold))
                 .foregroundStyle(Color(white: 0.7))
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 14)
+        .padding(.vertical, MacLayout.s(14))
         .contentShape(Rectangle())
+    }
+}
+
+// Row for the Library's Artifacts section — a kind chip, the artifact's
+// title, and the deck it was generated from. Tapping opens the same
+// ArtifactReaderSheet used inside a deck's Artifacts tab.
+private struct LibraryArtifactRow: View {
+    let artifact: Artifact
+    let deckTitle: String?
+
+    var body: some View {
+        HStack(alignment: .center, spacing: MacLayout.s(16)) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .center, spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: MacLayout.f(7), weight: .semibold))
+                        .foregroundStyle(.black)
+                    Text(L(artifact.resolvedKind.rawValue).uppercased())
+                        .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(7)))
+                        .tracking(0.6)
+                        .foregroundStyle(.black)
+                }
+                Text(artifact.title.isEmpty ? L(artifact.resolvedKind.rawValue) : artifact.title)
+                    .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(15)))
+                    .foregroundStyle(.black)
+                    .lineLimit(1)
+                if let deckTitle {
+                    Text(L("in %@", deckTitle))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(12)))
+                        .foregroundStyle(Color(white: 0.55))
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 12)
+            Image(systemName: "chevron.right")
+                .font(.system(size: MacLayout.f(12), weight: .semibold))
+                .foregroundStyle(Color(white: 0.7))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, MacLayout.s(14))
+        .contentShape(Rectangle())
+    }
+
+    // Mirrors the icon mapping the Deck Detail page uses for its artifact
+    // cards so a kind reads the same in both places.
+    private var icon: String {
+        switch artifact.resolvedKind {
+        case .story:        return "book"
+        case .conversation: return "bubble.left.and.bubble.right"
+        case .newsArticle:  return "newspaper"
+        case .songs:        return "music.note"
+        case .poems:        return "text.alignleft"
+        case .jokes:        return "face.smiling"
+        }
     }
 }
 

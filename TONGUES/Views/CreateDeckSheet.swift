@@ -7,6 +7,10 @@ import SwiftUI
 // the generator with everything already filled in.
 struct CreateDeckPreset: Equatable {
     var language: String
+    // Optional: when a preset carries the recommended dialect (e.g. Explore's
+    // topic cards, seeded from the user's saved preference), the sheet opens on
+    // that dialect instead of defaulting to the language's first one.
+    var dialect: String? = nil
     var level: String
     var topic: String
 }
@@ -791,8 +795,13 @@ struct CreateDeckSheet: View {
     private func applyPreset(_ preset: CreateDeckPreset, interests: [String]?) {
         let canonical = canonicalLanguageName(preset.language)
         vm.language = canonical
-        let validDialects = dialects(for: canonical)
-        vm.dialect = validDialects.first ?? vm.dialect
+        // Honor the preset's dialect (snapped to a canonical option) when it
+        // carries one; otherwise fall back to the language's first dialect.
+        if let presetDialect = preset.dialect {
+            vm.dialect = canonicalDialectName(for: canonical, dialect: presetDialect)
+        } else {
+            vm.dialect = dialects(for: canonical).first ?? vm.dialect
+        }
         let validLevels = levels(for: canonical)
         vm.level = validLevels.contains(preset.level) ? preset.level : (validLevels.first ?? vm.level)
 

@@ -1,9 +1,14 @@
 import SwiftUI
-import ARKit
-import SceneKit
 import CoreImage
 import UIKit
 import simd
+// ARKit is unavailable on Mac Catalyst; the AR capture mode is compiled out
+// there (see the stubs below) and the camera falls back to its "AR isn't
+// available" panel.
+#if !targetEnvironment(macCatalyst)
+import ARKit
+import SceneKit
+#endif
 
 // AR scanning components for CameraPage's "AR" capture mode. (This file
 // previously hosted a standalone AR page; the surface now lives inside
@@ -37,6 +42,8 @@ struct ARWordLabel: Identifiable {
     var screenPoint: CGPoint?
     var isCollected: Bool = true
 }
+
+#if !targetEnvironment(macCatalyst)
 
 // MARK: - AR session manager
 
@@ -618,6 +625,46 @@ struct ARViewContainer: UIViewRepresentable {
         }
     }
 }
+
+#else
+
+// MARK: - Mac Catalyst stubs
+//
+// ARKit doesn't exist on Mac Catalyst, so the AR capture mode can't run
+// there. These stubs give CameraPage the exact API surface it references
+// while reporting `.unsupported`, which routes the UI to its existing
+// "AR isn't available" panel. No AR session, no rendering.
+
+@Observable
+@MainActor
+final class ARSceneManager {
+    enum SupportState { case checking, supported, unsupported, denied }
+
+    var supportState: SupportState = .unsupported
+    var labels: [ARWordLabel] = []
+    var isScanning = false
+    var errorText: String?
+    var hintText: String?
+
+    var collectedItems: [GeneratedItem] { [] }
+
+    func updateLocale(language: String, dialect: String) {}
+    func start(language: String, dialect: String) async { supportState = .unsupported }
+    func pause() {}
+    func clearLabels() {}
+    func toggleCollected(_ id: UUID) {}
+    func scan(language: String, dialect: String, isAuto: Bool = false) async {}
+}
+
+struct ARViewContainer: View {
+    let manager: ARSceneManager
+    // Never actually shown — CameraPage only renders this in the `.supported`
+    // branch, which the Catalyst manager never enters. Present so call sites
+    // compile.
+    var body: some View { Color.black }
+}
+
+#endif
 
 // MARK: - Floating label bubble
 

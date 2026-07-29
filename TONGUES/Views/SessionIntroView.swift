@@ -144,8 +144,11 @@ struct SessionIntroView: View {
     private var cardbackTile: some View {
         HStack {
             Spacer()
+            // 2× larger on Mac. The card's corner radius is defined as a
+            // ratio of its width (normalized card units), so it scales in
+            // proportion automatically — no separate corner tuning needed.
             DeckCard3DTile(style: deck.resolvedCoverStyle)
-                .frame(maxWidth: 280)
+                .frame(maxWidth: MacLayout.isMac ? 560 : 280)
             Spacer()
         }
     }

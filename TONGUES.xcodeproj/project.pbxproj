@@ -7,7 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		F66613B92FCE96C100E884CB /* FirebaseAILogic in Frameworks */ = {isa = PBXBuildFile; productRef = F66613B82FCE96C100E884CB /* FirebaseAILogic */; };
 		F66613BB2FCE96C100E884CB /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = F66613BA2FCE96C100E884CB /* FirebaseAnalytics */; };
 		F66613BD2FCE96C100E884CB /* FirebaseAnalyticsCore in Frameworks */ = {isa = PBXBuildFile; productRef = F66613BC2FCE96C100E884CB /* FirebaseAnalyticsCore */; };
 		F66613BF2FCE96C100E884CB /* FirebaseAnalyticsIdentitySupport in Frameworks */ = {isa = PBXBuildFile; productRef = F66613BE2FCE96C100E884CB /* FirebaseAnalyticsIdentitySupport */; };
@@ -130,7 +129,6 @@
 				F66613BB2FCE96C100E884CB /* FirebaseAnalytics in Frameworks */,
 				F66613BD2FCE96C100E884CB /* FirebaseAnalyticsCore in Frameworks */,
 				F66613C12FCE96C100E884CB /* FirebaseAppCheck in Frameworks */,
-				F66613B92FCE96C100E884CB /* FirebaseAILogic in Frameworks */,
 				F66613CF2FCE96C100E884CB /* FirebaseFirestore in Frameworks */,
 				F66613D92FCE96C100E884CB /* FirebaseInstallations in Frameworks */,
 				F66613DD2FCE96C100E884CB /* FirebaseRemoteConfig in Frameworks */,
@@ -213,7 +211,6 @@
 			);
 			name = TONGUES;
 			packageProductDependencies = (
-				F66613B82FCE96C100E884CB /* FirebaseAILogic */,
 				F66613BA2FCE96C100E884CB /* FirebaseAnalytics */,
 				F66613BC2FCE96C100E884CB /* FirebaseAnalyticsCore */,
 				F66613BE2FCE96C100E884CB /* FirebaseAnalyticsIdentitySupport */,
@@ -490,10 +487,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.19;
+				MARKETING_VERSION = 1.21;
 				PRODUCT_BUNDLE_IDENTIFIER = OlympianHourglass.TONGUES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -522,10 +520,11 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.19;
+				MARKETING_VERSION = 1.21;
 				PRODUCT_BUNDLE_IDENTIFIER = OlympianHourglass.TONGUES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -558,6 +557,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -589,6 +589,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTS_MACCATALYST = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -649,11 +650,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		F66613B82FCE96C100E884CB /* FirebaseAILogic */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = F66613B72FCE96C100E884CB /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAILogic;
-		};
 		F66613BA2FCE96C100E884CB /* FirebaseAnalytics */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = F66613B72FCE96C100E884CB /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;

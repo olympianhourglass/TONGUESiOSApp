@@ -246,6 +246,21 @@ struct CameraPage: View {
     // scales relative to where the previous one left off.
     @State private var gestureBaseZoom: CGFloat = 1.0
 
+    // Suggested-words web. Each detected result can be expanded into related
+    // vocabulary the learner can add. AR expands each collected word once (up
+    // to 3, non-recursive); Sign/Object expand the recognized item into 3
+    // words that can themselves be expanded, growing a tree.
+    // Roots keyed by AR label id (one per collected word).
+    @State private var arSuggestionRoots: [UUID: WordSuggestionNode] = [:]
+    // The Sign/Object recognized item's suggestion tree root.
+    @State private var recognizedSuggestionRoot: WordSuggestionNode?
+    // Words the learner tapped to add from the suggestion web; merged into the
+    // save batch alongside the detected results.
+    @State private var suggestedAdditions: [GeneratedItem] = []
+    // Sign/Object suggestions grow recursively; cap the depth so the tree can't
+    // run away. AR uses a depth of 1 (one level of leaves).
+    private let signObjectSuggestionDepth = 5
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
@@ -331,12 +346,191 @@ struct CameraPage: View {
     }
 
     // What the save flows operate on: the single identified item in
-    // Object/Sign mode, or everything collected in AR mode.
+    // Object/Sign mode, or everything collected in AR mode — plus any words the
+    // learner added from the suggestion web, deduped by word.
     private var itemsForSave: [GeneratedItem] {
-        if mode == .ar {
-            return arManager.collectedItems
+        var base: [GeneratedItem] = mode == .ar
+            ? arManager.collectedItems
+            : (identifiedItem.map { [$0] } ?? [])
+        var seen = Set(base.map { $0.word.lowercased() })
+        for suggestion in suggestedAdditions where !seen.contains(suggestion.word.lowercased()) {
+            base.append(suggestion)
+            seen.insert(suggestion.word.lowercased())
         }
-        return identifiedItem.map { [$0] } ?? []
+        // Every word gathered here — object, sign, AR label, or a suggestion —
+        // is sourced from the camera.
+        return base.map { $0.withSource(.camera) }
+    }
+
+    // MARK: Suggested words
+
+    // Adds a suggested word to the save batch (idempotent by word). The node's
+    // check state flips so the chip reflects that it's in.
+    private func addSuggestion(_ node: WordSuggestionNode) {
+        Haptics.light()
+        node.isAdded = true
+        if !suggestedAdditions.contains(where: { $0.word.lowercased() == node.item.word.lowercased() }) {
+            suggestedAdditions.append(node.item)
+        }
+    }
+
+    // Loads a node's related words (once). AR passes maxDepth 1; Sign/Object
+    // pass the recursive cap. The avoid-list is every word currently on screen
+    // so re-expanding never repeats one.
+    private func expandSuggestion(_ node: WordSuggestionNode, maxDepth: Int) {
+        guard node.depth < maxDepth, !node.isLoading, node.children.isEmpty else { return }
+        node.isLoading = true
+        node.errorText = nil
+        let avoid = Array(wordsOnScreen())
+        Task { @MainActor in
+            do {
+                let related = try await DeckGenerator.suggestRelatedWords(
+                    to: node.item,
+                    language: language,
+                    dialect: dialect,
+                    level: level,
+                    count: 3,
+                    avoid: avoid
+                )
+                node.children = related.map { WordSuggestionNode(item: $0, depth: node.depth + 1) }
+                node.isLoading = false
+            } catch {
+                node.errorText = L("Couldn't load suggestions.")
+                node.isLoading = false
+            }
+        }
+    }
+
+    // Union of every word already visible — detected results, collected AR
+    // labels, all suggestion subtrees, and already-added suggestions — so the
+    // model doesn't re-suggest duplicates.
+    private func wordsOnScreen() -> Set<String> {
+        var set = Set<String>()
+        for label in arManager.labels { set.insert(label.item.word.lowercased()) }
+        if let item = identifiedItem { set.insert(item.word.lowercased()) }
+        for root in arSuggestionRoots.values { set.formUnion(root.wordsInSubtree()) }
+        if let root = recognizedSuggestionRoot { set.formUnion(root.wordsInSubtree()) }
+        for added in suggestedAdditions { set.insert(added.word.lowercased()) }
+        return set
+    }
+
+    // Clears the suggestion web — called when a new item is recognized or the
+    // batch is saved, so stale suggestions never carry over.
+    private func resetSuggestions() {
+        arSuggestionRoots = [:]
+        recognizedSuggestionRoot = nil
+        suggestedAdditions = []
+    }
+
+    // A pill that kicks off a suggestion expansion. Dark-themed to match the
+    // camera surface.
+    private func suggestTriggerButton(title: String, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 12))
+            }
+            .foregroundStyle(.white.opacity(0.85))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(Capsule().fill(Color.white.opacity(0.08)))
+            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var suggestionLoadingRow: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(.white)
+            Text(L("Finding related words…"))
+                .font(.custom("NeueHaasDisplay-Light", size: 12))
+                .foregroundStyle(.white.opacity(0.6))
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func suggestionErrorRow(_ message: String, retry: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            Text(message)
+                .font(.custom("NeueHaasDisplay-Light", size: 12))
+                .foregroundStyle(Color(red: 1.0, green: 0.6, blue: 0.6))
+            Button {
+                Haptics.light()
+                retry()
+            } label: {
+                Text(L("Retry"))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 12))
+                    .foregroundStyle(.white.opacity(0.85))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 4)
+    }
+
+    // AR: one collected word's suggestion strip — a manual expand into up to 3
+    // related words (leaves; not recursive). Aligned under the word text.
+    @ViewBuilder
+    private func arLabelSuggestions(for label: ARWordLabel) -> some View {
+        let root = arSuggestionRoots[label.id]
+        VStack(alignment: .leading, spacing: 8) {
+            if let root, !root.children.isEmpty {
+                SuggestionChildrenView(
+                    nodes: root.children,
+                    maxDepth: 1,
+                    onAdd: addSuggestion,
+                    onExpand: { _ in }
+                )
+            } else if let root, root.isLoading {
+                suggestionLoadingRow
+            } else if let root, let err = root.errorText {
+                suggestionErrorRow(err) { expandSuggestion(root, maxDepth: 1) }
+            } else {
+                suggestTriggerButton(title: L("Suggested words")) {
+                    let node = arSuggestionRoots[label.id] ?? WordSuggestionNode(item: label.item, depth: 0)
+                    arSuggestionRoots[label.id] = node
+                    expandSuggestion(node, maxDepth: 1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.leading, 30)
+        .padding(.bottom, 8)
+    }
+
+    // Sign/Object: the recognized item's recursive suggestion web — expand into
+    // 3 words, each of which can be expanded again.
+    @ViewBuilder
+    private func recognizedSuggestions(for item: GeneratedItem) -> some View {
+        if let root = recognizedSuggestionRoot {
+            VStack(alignment: .leading, spacing: 10) {
+                if !root.children.isEmpty {
+                    SuggestionChildrenView(
+                        nodes: root.children,
+                        maxDepth: signObjectSuggestionDepth,
+                        onAdd: addSuggestion,
+                        onExpand: { expandSuggestion($0, maxDepth: signObjectSuggestionDepth) }
+                    )
+                } else if root.isLoading {
+                    suggestionLoadingRow
+                } else if let err = root.errorText {
+                    suggestionErrorRow(err) { expandSuggestion(root, maxDepth: signObjectSuggestionDepth) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            suggestTriggerButton(title: L("Suggest related words")) {
+                let node = WordSuggestionNode(item: item, depth: 0)
+                recognizedSuggestionRoot = node
+                expandSuggestion(node, maxDepth: signObjectSuggestionDepth)
+            }
+        }
     }
 
     // Hands the camera between the AVCapture session (Object/Sign) and
@@ -777,6 +971,7 @@ struct CameraPage: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
+                        arLabelSuggestions(for: label)
                         if label.id != arManager.labels.last?.id {
                             Divider().overlay(Color.white.opacity(0.12))
                         }
@@ -821,6 +1016,8 @@ struct CameraPage: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.white.opacity(0.2), lineWidth: 1)
                 )
+
+                recognizedSuggestions(for: item)
             } else {
                 Text(L(placeholderText))
                     .font(.custom("NeueHaasDisplay-Light", size: 14))
@@ -916,6 +1113,8 @@ struct CameraPage: View {
                 dialect: dialect
             )
             Haptics.success()
+            // Fresh reading — drop any suggestion web from a prior sign.
+            resetSuggestions()
             identifiedItem = result.item
             identifiedEnglish = result.englishLabel
         } catch {
@@ -934,6 +1133,8 @@ struct CameraPage: View {
                 dialect: dialect
             )
             Haptics.success()
+            // Fresh identification — drop any suggestion web from a prior object.
+            resetSuggestions()
             identifiedItem = result.item
             identifiedEnglish = result.englishLabel
         } catch {
@@ -945,6 +1146,7 @@ struct CameraPage: View {
     private func clearIdentification() {
         identifiedItem = nil
         identifiedEnglish = nil
+        resetSuggestions()
     }
 
     // Deterministic default title for the brand-new deck path — covers

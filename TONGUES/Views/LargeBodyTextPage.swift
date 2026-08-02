@@ -401,7 +401,9 @@ struct LargeBodyTextPage: View {
 
     private var selectedItems: [GeneratedItem] {
         guard let extracted else { return [] }
-        return extracted.items.filter { selectedItemIDs.contains($0.id) }
+        return extracted.items
+            .filter { selectedItemIDs.contains($0.id) }
+            .map { $0.withSource(.largeBodyText) }
     }
 
     // Source-aware resolved language/dialect (see ExtractedBody for

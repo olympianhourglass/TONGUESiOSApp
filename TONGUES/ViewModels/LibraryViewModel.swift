@@ -4,6 +4,12 @@ import Observation
 @Observable
 @MainActor
 final class LibraryViewModel {
+    // Timestamp of the last `loadDecks()` start, so `refreshIfNeeded()` can
+    // re-aggregate on tab re-entry (keeping the Preferred Language / favorite
+    // topic stats current after studying) without hammering Firestore on
+    // rapid tab-switching.
+    private var lastLoadStartedAt: Date?
+
     var decks: [DeckDocument] = []
     var urgencies: [String: DeckUrgency] = [:]
     // Total flashcard reviews per language, summed across every study session
@@ -46,10 +52,13 @@ final class LibraryViewModel {
     // Total XP across every award source. Read from the XPService doc on
     // every loadDecks so the Library card reflects the latest awards.
     var totalXP: Int = 0
-    // Lifetime session counters from XPService, snapshot at load time.
-    // Drive the Statistics tab's "Preferred Learning Method" card.
+    // Lifetime per-method session counters from XPService, snapshot at load
+    // time. Drive the Statistics tab's "Preferred Learning Method" distribution.
     var flashcardSessionCount: Int = 0
     var audioSessionCount: Int = 0
+    var conversationSessionCount: Int = 0
+    var artifactSessionCount: Int = 0
+    var comprehensionSessionCount: Int = 0
     // XP earned per calendar day, decoded from UserXPState.xpByDayKey
     // into start-of-day Date keys so the weekly trend chart can index
     // directly by date without re-parsing per lookup.
@@ -57,14 +66,50 @@ final class LibraryViewModel {
     var isLoading = false
     var errorText: String?
 
-    // Label for the "Preferred Learning Method" stat. Flashcards lean
-    // active (the learner is producing recalls), audio leans passive
-    // (the learner is absorbing). Tied or empty → "—".
+    // Distribution of practice across the real learning methods (flashcards,
+    // listening, conversation, artifacts), heaviest first, each with its share
+    // of total sessions. Empty when the user hasn't practiced anything yet.
+    var learningMethodShares: [LearningMethodShare] {
+        let counts: [(LearningMethod, Int)] = [
+            (.flashcards, flashcardSessionCount),
+            (.listening, audioSessionCount),
+            (.conversation, conversationSessionCount),
+            (.artifacts, artifactSessionCount),
+            (.comprehension, comprehensionSessionCount)
+        ]
+        let total = counts.reduce(0) { $0 + $1.1 }
+        guard total > 0 else { return [] }
+        return counts
+            .filter { $0.1 > 0 }
+            .sorted { $0.1 > $1.1 }
+            .map { LearningMethodShare(method: $0.0, percent: Double($0.1) / Double(total)) }
+    }
+
+    // Headline for the "Preferred Learning Method" stat: the method the learner
+    // gravitates toward most (Flashcards / Listening / Conversation / Artifacts),
+    // or "—" before any practice.
     var preferredLearningMethodLabel: String {
-        if flashcardSessionCount == 0 && audioSessionCount == 0 { return "—" }
-        if flashcardSessionCount > audioSessionCount { return "Active" }
-        if audioSessionCount > flashcardSessionCount { return "Passive" }
-        return "Balanced"
+        learningMethodShares.first?.method.displayName ?? "—"
+    }
+
+    // Distribution of the library's WORDS by how they were gathered — Generate,
+    // Camera, Direct, Song/Video, Large Text, Artifact, Conversation. Words with
+    // no stored source (legacy, pre-feature) fall back to Generate, the default
+    // acquisition path. Heaviest first; empty when the library is empty.
+    var sourcingMethodShares: [SourcingMethodShare] {
+        var counts: [SourcingMethod: Int] = [:]
+        for deck in decks {
+            for item in deck.items {
+                let method = item.source.flatMap { SourcingMethod(rawValue: $0) } ?? .generate
+                counts[method, default: 0] += 1
+            }
+        }
+        let total = counts.values.reduce(0, +)
+        guard total > 0 else { return [] }
+        return counts
+            .map { (method: $0.key, count: $0.value) }
+            .sorted { $0.count > $1.count }
+            .map { SourcingMethodShare(method: $0.method, percent: Double($0.count) / Double(total)) }
     }
 
     // How long a gap is tolerated between two activity events before the
@@ -73,8 +118,21 @@ final class LibraryViewModel {
     // session, but tight enough that a real walk-away clearly does.
     private static let sessionGapThreshold: TimeInterval = 5 * 60
 
+    // Reloads only if the last load started more than `minInterval` seconds
+    // ago (and one isn't already in flight). Called on every Library
+    // appearance so returning from the Study tab re-aggregates the latest
+    // sessions — the fix for stats that "don't update frequently enough."
+    func refreshIfNeeded(minInterval: TimeInterval = 3) async {
+        if isLoading { return }
+        if let last = lastLoadStartedAt, Date().timeIntervalSince(last) < minInterval {
+            return
+        }
+        await loadDecks()
+    }
+
     func loadDecks() async {
         isLoading = true
+        lastLoadStartedAt = Date()
         defer { isLoading = false }
         do {
             async let schedulesTask: [String: CardSchedule]? =
@@ -163,6 +221,13 @@ final class LibraryViewModel {
     // around — it reuses the urgency snapshot the Study/Library tabs already
     // compute. A stricter definition (e.g. stability ≥ 7 days) is a future
     // refinement once we surface schedules to the VM.
+    // Total flashcards seen across every study session — every review counts,
+    // right or wrong. Distinct from `itemsTouched` (unique cards graded): this
+    // is the raw "how many cards have I encountered" volume, so it's ≥ learned.
+    var totalCardsReviewed: Int {
+        reviewsByLanguage.values.reduce(0, +)
+    }
+
     var itemsTouched: Int {
         decks.reduce(0) { sum, deck in
             guard let id = deck.id, let urgency = urgencies[id] else { return sum }
@@ -174,26 +239,55 @@ final class LibraryViewModel {
     // payload for the Statistics tab's "favorite topic" LLM summary.
     // Returns a stable signature (sorted deck IDs joined) so the caller
     // can cache the summary and only re-fetch when the top set changes.
-    func topPracticedDeckSummaries(limit: Int = 5) -> (signature: String, summaries: [DeckTopicSummary]) {
-        let topIds = reviewsByDeck
-            .sorted { $0.value > $1.value }
-            .prefix(limit)
-            .map { $0.key }
-        guard !topIds.isEmpty else { return ("", []) }
-        let summaries: [DeckTopicSummary] = topIds.compactMap { id in
-            guard let deck = decks.first(where: { $0.id == id }) else { return nil }
-            return DeckTopicSummary(
-                id: id,
-                title: deck.title,
-                interests: deck.interests,
-                contentType: deck.contentType
-            )
+    // Inputs for the "favorite topic" label. Rather than the top-5 most-
+    // practiced decks, this is the center of gravity across the learner's
+    // ENTIRE deck collection: every deck contributes, weighted so that
+    //   • simply creating a deck on a theme tilts the balance (a base weight),
+    //   • and practicing a deck tilts it more (a log-scaled review bonus).
+    // So a burst of new aerospace decks leans the label toward aerospace even
+    // before they're practiced, while grinding one deck also pulls its way.
+    //
+    // Returns the decks heaviest-first (capped for prompt size) plus a
+    // signature that changes whenever a deck is added/removed/renamed or its
+    // practice crosses into a new weight bucket — the refresh trigger the
+    // cached label keys off.
+    func favoriteTopicDeckSummaries(limit: Int = 60) -> (signature: String, summaries: [DeckTopicSummary]) {
+        guard !decks.isEmpty else { return ("", []) }
+        let weighted: [(deck: DeckDocument, weight: Double)] = decks.map { deck in
+            let reviews = deck.id.map { reviewsByDeck[$0] ?? 0 } ?? 0
+            // Base 1 for existing + a bounded, log-scaled practice bonus so one
+            // heavily-drilled deck can't completely drown out a cluster of
+            // freshly-created decks on another theme.
+            let weight = 1.0 + log2(Double(1 + reviews))
+            return (deck, weight)
         }
-        // Signature is the sorted-ID list so reorderings among the top set
-        // (e.g. # 1 ↔ # 2 swap) don't invalidate the cache. Adding/dropping
-        // a deck from the top N does change it, which is the correct trigger.
-        let signature = summaries.map(\.id).sorted().joined(separator: ",")
-        return (signature, summaries)
+        let summaries = weighted
+            .sorted { $0.weight > $1.weight }
+            .prefix(limit)
+            .map { entry in
+                DeckTopicSummary(
+                    id: entry.deck.id ?? "",
+                    title: entry.deck.title,
+                    interests: entry.deck.interests,
+                    contentType: entry.deck.contentType,
+                    weight: entry.weight
+                )
+            }
+        // Signature spans the FULL collection (not just the capped prompt set)
+        // so a deck added beyond the cap still refreshes the theme. Sorted by
+        // id for determinism; title + coarse weight bucket so renames and real
+        // practice jumps refresh, but day-to-day review increments don't.
+        let signature = weighted
+            .sorted { ($0.deck.id ?? "") < ($1.deck.id ?? "") }
+            .map { "\($0.deck.id ?? ""):\($0.deck.title):\(Self.weightBucket($0.weight))" }
+            .joined(separator: "|")
+        return (signature, Array(summaries))
+    }
+
+    // Half-step buckets so a deck has to gain meaningful practice (or be
+    // renamed/added) before the cache invalidates.
+    private static func weightBucket(_ weight: Double) -> Int {
+        Int((weight * 2).rounded())
     }
 
     // Count of items in every deck whose `contentType` matches the given
@@ -205,16 +299,17 @@ final class LibraryViewModel {
             .reduce(0) { $0 + $1.items.count }
     }
 
-    // Cards added since the start of the current calendar week / month. Uses
-    // the deck's `createdAt` as the proxy timestamp — per-item creation
-    // dates aren't tracked, so items appended later via "generate more"
-    // inherit their parent deck's creation window.
+    // Cards added in the last 7 / 30 days. Deliberately a ROLLING window, not
+    // the calendar week/month: the calendar week resets at the locale's first
+    // weekday (Sunday in the US), so cards added a few days ago would drop to
+    // "0 this week" the moment the week rolled over — which reads as a bug.
+    // A rolling window matches the intuitive "recently added."
     var cardsAddedThisWeek: Int {
-        cardsAdded(since: .weekOfYear)
+        cardsAdded(inLastDays: 7)
     }
 
     var cardsAddedThisMonth: Int {
-        cardsAdded(since: .month)
+        cardsAdded(inLastDays: 30)
     }
 
     // Up to 10 decks ordered by recency of last modification — left side
@@ -315,6 +410,9 @@ final class LibraryViewModel {
         totalXP = state.total
         flashcardSessionCount = state.flashcardSessionCount
         audioSessionCount = state.audioSessionCount
+        conversationSessionCount = state.conversationSessionCount
+        artifactSessionCount = state.artifactSessionCount
+        comprehensionSessionCount = state.comprehensionSessionCount
         let calendar = Calendar.current
         var decoded: [Date: Int] = [:]
         for (key, value) in state.xpByDayKey {
@@ -447,16 +545,16 @@ final class LibraryViewModel {
         }
     }
 
-    private func cardsAdded(since component: Calendar.Component) -> Int {
+    private func cardsAdded(inLastDays days: Int) -> Int {
         let calendar = Calendar.current
-        guard let start = calendar.dateInterval(of: component, for: Date())?.start else {
+        guard let start = calendar.date(byAdding: .day, value: -days, to: Date()) else {
             return 0
         }
         return decks.reduce(0) { sum, deck in
             // Per-item `addedAt` is the source of truth — falls back to the
             // deck's `createdAt` only for legacy items written before the
             // field existed, so freshly appended cards count toward the
-            // current week/month even on old decks.
+            // window even on old decks.
             sum + deck.items.reduce(0) { itemSum, item in
                 let stamp = item.addedAt ?? deck.createdAt
                 return itemSum + (stamp >= start ? 1 : 0)
@@ -486,4 +584,8 @@ struct DeckTopicSummary: Hashable, Sendable {
     let title: String
     let interests: [String]
     let contentType: String
+    // Relative pull this deck exerts on the "favorite topic": a base for
+    // simply existing (so creating decks on a theme tilts it) plus a
+    // log-scaled bonus for how much it's been practiced.
+    let weight: Double
 }

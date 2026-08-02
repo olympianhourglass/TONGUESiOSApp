@@ -238,17 +238,10 @@ struct DeckDetailView: View {
             )
             .presentationDetents([.medium, .large])
         }
-        #if targetEnvironment(macCatalyst)
-        // Mac: open the artifact full-screen as a proper detail view rather
-        // than a small centered sheet in the middle of the window.
-        .fullScreenCover(item: $selectedArtifact) { artifact in
+        // Full-screen on Mac + iPad (a proper detail view), a sheet on iPhone.
+        .adaptiveFullScreenOrSheet(item: $selectedArtifact) { artifact in
             ArtifactReaderSheet(artifact: artifact)
         }
-        #else
-        .sheet(item: $selectedArtifact) { artifact in
-            ArtifactReaderSheet(artifact: artifact)
-        }
-        #endif
         .confirmationDialog(
             L("Delete this artifact?"),
             isPresented: Binding(
@@ -754,7 +747,6 @@ struct DeckDetailView: View {
                         .foregroundStyle(.black)
                     Text(artifact.resolvedKind.rawValue.uppercased())
                         .font(.system(size: 11, weight: .semibold))
-                        .tracking(0.8)
                         .foregroundStyle(.black)
                     Text("·")
                         .font(.system(size: 11))
@@ -1428,7 +1420,12 @@ struct DeckDetailView: View {
                 level: deck.level,
                 count: 2
             )
-            let tagged = newItems.map { $0.withKind(kind.rawValue) }
+            // Stamp `addedAt` so these count toward "cards added this week /
+            // month" — `replaceItems` writes the array as-is and won't stamp
+            // for us (unlike `addItems`), so an unstamped item would fall back
+            // to the deck's old createdAt and never register as recent.
+            let now = Date()
+            let tagged = newItems.map { $0.withKind(kind.rawValue).withAddedAt(now) }
             var updatedItems = deck.items
             if let idx = updatedItems.firstIndex(where: { $0.id == item.id }) {
                 updatedItems.insert(contentsOf: tagged, at: idx + 1)
@@ -1519,24 +1516,93 @@ struct GenerateRow: View {
         }
         .padding(.top, 3)
         .padding(.bottom, 12)
+        // Full-screen on the roomy platforms (Mac Catalyst + iPad) so a
+        // generated artifact reads as a proper full detail view with the
+        // side-by-side columns, rather than a small centered form sheet.
+        // iPhone keeps the standard sheet.
+        .modifier(ArtifactPresentation(
+            activeKind: $activeKind,
+            deck: deck,
+            onItemAdded: onItemAdded,
+            onSheetClosed: onSheetClosed
+        ))
+    }
+}
+
+// Presents an item full-screen where there's room (Mac Catalyst + iPad) and as
+// a sheet on iPhone. Full-screen is what gives the presented content a
+// regular-width environment (enabling column layouts) and reads as a proper
+// detail view rather than a small centered form sheet.
+struct AdaptiveItemPresentation<Item: Identifiable, PresentedContent: View>: ViewModifier {
+    @Binding var item: Item?
+    var onDismiss: (() -> Void)?
+    @ViewBuilder var presented: (Item) -> PresentedContent
+
+    private var wantsFullScreen: Bool {
         #if targetEnvironment(macCatalyst)
-        // Mac: present full-screen so a generated artifact reads as a proper
-        // full detail view, not a small centered form sheet floating in the
-        // middle of the window.
-        .fullScreenCover(item: $activeKind, onDismiss: { onSheetClosed() }) { kind in
-            GenerateContentSheet(kind: kind, deck: deck) { newItem in
-                onItemAdded(newItem)
-            }
-        }
+        return true
         #else
-        .sheet(item: $activeKind, onDismiss: { onSheetClosed() }) { kind in
-            GenerateContentSheet(kind: kind, deck: deck) { newItem in
+        return UIDevice.current.userInterfaceIdiom == .pad
+        #endif
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if wantsFullScreen {
+            content.fullScreenCover(item: $item, onDismiss: onDismiss, content: presented)
+        } else {
+            content.sheet(item: $item, onDismiss: onDismiss, content: presented)
+        }
+    }
+}
+
+extension View {
+    // Full-screen on Mac Catalyst + iPad, a sheet on iPhone.
+    func adaptiveFullScreenOrSheet<Item: Identifiable, PresentedContent: View>(
+        item: Binding<Item?>,
+        onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping (Item) -> PresentedContent
+    ) -> some View {
+        modifier(AdaptiveItemPresentation(item: item, onDismiss: onDismiss, presented: content))
+    }
+}
+
+// Presents the artifact generator full-screen where there's room (Mac
+// Catalyst + iPad) and as a sheet on iPhone. Full-screen is what gives the
+// presented `GenerateContentSheet` a regular-width environment, which in turn
+// enables its side-by-side column layout — a plain iPad sheet reports compact
+// width and would fall back to the stacked iPhone layout.
+private struct ArtifactPresentation: ViewModifier {
+    @Binding var activeKind: ContentGenerationKind?
+    let deck: DeckDocument
+    let onItemAdded: (GeneratedItem) -> Void
+    let onSheetClosed: () -> Void
+
+    private var wantsFullScreen: Bool {
+        #if targetEnvironment(macCatalyst)
+        return true
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad
+        #endif
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if wantsFullScreen {
+            content.fullScreenCover(item: $activeKind, onDismiss: onSheetClosed) { kind in
+                GenerateContentSheet(kind: kind, deck: deck) { newItem in
+                    onItemAdded(newItem)
+                }
+            }
+        } else {
+            content.sheet(item: $activeKind, onDismiss: onSheetClosed) { kind in
                 // Forward to DeckDetailView's @State — only the parent
                 // can mutate the deck snapshot.
-                onItemAdded(newItem)
+                GenerateContentSheet(kind: kind, deck: deck) { newItem in
+                    onItemAdded(newItem)
+                }
             }
         }
-        #endif
     }
 }
 
@@ -1799,6 +1865,9 @@ struct ArtifactReaderSheet: View {
     @Environment(\.dismiss) private var dismiss
     let artifact: Artifact
     @State private var isInterleaved = false
+    // Counts one "comprehension" learning-method session the first time the
+    // learner answers a question in this saved artifact.
+    @State private var didCountComprehension = false
 
     var body: some View {
         NavigationStack {
@@ -1830,6 +1899,36 @@ struct ArtifactReaderSheet: View {
                         .background(Color(white: 0.96))
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                         .padding(.horizontal)
+                    }
+
+                    // The comprehension questions saved with the artifact.
+                    // Interactive (the learner can re-test) but no XP is
+                    // awarded for revisiting a kept artifact.
+                    if !artifact.resolvedQuestions.isEmpty {
+                        VStack(alignment: .leading, spacing: 16) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "checklist")
+                                Text(L("Check your understanding"))
+                                    .font(.system(size: 16, weight: .semibold))
+                            }
+                            .foregroundStyle(.black)
+
+                            ForEach(Array(artifact.resolvedQuestions.enumerated()), id: \.element.id) { index, question in
+                                ComprehensionQuestionCard(
+                                    index: index,
+                                    question: question,
+                                    onFirstAttempt: { _ in
+                                        if !didCountComprehension {
+                                            didCountComprehension = true
+                                            Task { try? await XPService.recordComprehensionSession() }
+                                        }
+                                    },
+                                    onSolved: {}
+                                )
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.top, 4)
                     }
                 }
                 .padding(.vertical, 16)

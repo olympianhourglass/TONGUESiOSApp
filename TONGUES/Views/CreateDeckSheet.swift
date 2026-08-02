@@ -80,6 +80,32 @@ struct CreateDeckSheet: View {
     // FocusState drives the keyboard toolbar's Done button + the
     // background-tap dismiss. The TextField below binds to it.
     @FocusState private var isInterestFieldFocused: Bool
+    // Hardware-keyboard page navigation (iPad/Mac): ← / → step through the
+    // create pages. A focusable container receives the key presses; because a
+    // focused text field consumes arrow keys first, typing in a field still
+    // moves the cursor rather than flipping pages.
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @FocusState private var pageNavigationFocused: Bool
+
+    // Only offer arrow-key paging where a hardware keyboard is expected —
+    // Mac Catalyst or an iPad in a regular-width layout. iPhone is untouched.
+    private var supportsArrowTabNav: Bool {
+        MacLayout.isMac || horizontalSizeClass == .regular
+    }
+
+    // Steps the paged TabView by `delta`, clamped to the available pages.
+    // Returns `.handled` when it moves (consuming the key), or `.ignored` at
+    // the ends or while a results screen is pushed, so nothing is swallowed.
+    private func handleArrowTabNav(_ delta: Int) -> KeyPress.Result {
+        guard supportsArrowTabNav, navPath.isEmpty else { return .ignored }
+        let maxIndex = pageTitles.count - 1
+        let target = min(maxIndex, max(0, currentPage + delta))
+        guard target != currentPage else { return .ignored }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            currentPage = target
+        }
+        return .handled
+    }
     // Drives the bottom page toggle + the TabView's horizontal
     // animation. Page 0 is the existing Generate form; pages 1-3 are
     // intentionally blank for now.
@@ -238,6 +264,22 @@ struct CreateDeckSheet: View {
             .navigationDestination(for: GenerationRoute.self) { route in
                 destinationView(for: route)
             }
+            // Hardware-keyboard paging (iPad/Mac): ← / → step between the
+            // create pages. The focusable container receives the key presses;
+            // a focused text field consumes arrows first, so typing still moves
+            // the cursor. Focus effects are hidden so no ring appears.
+            .focusable(supportsArrowTabNav)
+            .focusEffectDisabled()
+            .focused($pageNavigationFocused)
+            .onKeyPress(.leftArrow) { handleArrowTabNav(-1) }
+            .onKeyPress(.rightArrow) { handleArrowTabNav(1) }
+            .onChange(of: isInterestFieldFocused) { _, focused in
+                // When the interests field gives up the keyboard, hand focus
+                // back to the pager so arrows resume flipping pages.
+                if !focused, supportsArrowTabNav {
+                    pageNavigationFocused = true
+                }
+            }
             // Single source for "we just landed on a page" — fires for
             // both tap-from-toggle and swipe-from-TabView so the haptic
             // feels identical on both gestures.
@@ -251,6 +293,10 @@ struct CreateDeckSheet: View {
                     }
                 }
                 applyCreateStatusBar()
+                // Keep arrow-key paging alive after a page change.
+                if supportsArrowTabNav {
+                    pageNavigationFocused = true
+                }
             }
             .onChange(of: togglePosition) { _, newValue in
                 // Toggle-driven change (swiping/tapping the chip
@@ -263,7 +309,13 @@ struct CreateDeckSheet: View {
             }
             .onChange(of: navPath) { _, _ in applyCreateStatusBar() }
         }
-        .onAppear { applyCreateStatusBar() }
+        .onAppear {
+            applyCreateStatusBar()
+            // Take focus so the ← / → keys page immediately on iPad/Mac.
+            if supportsArrowTabNav {
+                pageNavigationFocused = true
+            }
+        }
         .onDisappear {
             AppTabRouter.shared.forceLightStatusBar = false
             AppTabRouter.shared.forceDarkStatusBar = false

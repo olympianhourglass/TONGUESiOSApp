@@ -198,10 +198,19 @@ enum ContentGenerationKind: String, CaseIterable, Identifiable {
         case .songs, .poems, .jokes:              return false
         }
     }
+
+    // Prose narrative kinds accept the last-second "flavor" dials (vibe, voice,
+    // register, setting, etc.) on the generate screen. Songs/poems/jokes don't.
+    var supportsFlavor: Bool {
+        switch self {
+        case .story, .conversation, .newsArticle: return true
+        case .songs, .poems, .jokes:              return false
+        }
+    }
 }
 
 enum RelationKind: String, CaseIterable, Identifiable {
-    case synonyms, antonyms, phrases, plurals, conjugations, similarSounding
+    case synonyms, antonyms, phrases, plurals, conjugations, similarSounding, similarLooking
 
     var id: String { rawValue }
 
@@ -213,6 +222,7 @@ enum RelationKind: String, CaseIterable, Identifiable {
         case .plurals:         return "Add Plurals"
         case .conjugations:    return "Add Conjugations"
         case .similarSounding: return "Add Similar Sounding Words"
+        case .similarLooking:  return "Add Similar-Looking Words"
         }
     }
 
@@ -223,6 +233,7 @@ enum RelationKind: String, CaseIterable, Identifiable {
         case .phrases:      return "natural phrases or short sentences that use the source word in context"
         case .plurals:      return "plural and other number inflections (e.g. singular ↔ plural; dual where the language has it)"
         case .similarSounding: return "real, distinct words that sound similar to the source word (near-homophones whose pronunciation closely resembles it when spoken aloud), regardless of meaning — must be genuine words in the language and not the source word itself"
+        case .similarLooking: return "real, distinct words that look visually similar to the source word in written Chinese (形近字/形近词) — words whose characters closely resemble the source's characters in written shape, differing only by a component, radical, or a stroke or two, so that a learner could easily confuse them at a glance — regardless of meaning or pronunciation; must be genuine words in the language and not the source word itself"
         case .conjugations: return "the most pedagogically useful conjugated forms of the source verb — pick the main tenses (present, past, future and any other commonly taught at this level) and the most representative person/number for each (often 1st-person singular). Where the language has aspect (Slavic), include the aspectual pair. Where the language has separable prefixes or auxiliary-based constructions (German, French passé composé, etc.), include them. Each item should be a single conjugated form, not a paragraph."
         }
     }
@@ -248,9 +259,15 @@ struct GeneratedItem: Codable, Identifiable, Hashable {
     // stamps it at save time. Nil for legacy items written before this
     // field existed — readers fall back to the parent deck's `createdAt`.
     var addedAt: Date?
+    // How this word was gathered (a `SourcingMethod` raw value). Stamped at the
+    // point of entry — Generate/Camera/Direct/Song-or-Video/Large-Text, or when
+    // added from an artifact or a conversation. Nil for legacy items written
+    // before this field existed; the Statistics distribution treats those as
+    // "Generate" since generation is the default acquisition path.
+    var source: String?
 
     enum CodingKeys: String, CodingKey {
-        case word, translation, transliteration, language, kind, partsOfSpeech, addedAt
+        case word, translation, transliteration, language, kind, partsOfSpeech, addedAt, source
     }
 
     init(
@@ -260,7 +277,8 @@ struct GeneratedItem: Codable, Identifiable, Hashable {
         language: String? = nil,
         kind: String? = nil,
         partsOfSpeech: [String]? = nil,
-        addedAt: Date? = nil
+        addedAt: Date? = nil,
+        source: String? = nil
     ) {
         self.word = word
         self.translation = translation
@@ -269,6 +287,7 @@ struct GeneratedItem: Codable, Identifiable, Hashable {
         self.kind = kind
         self.partsOfSpeech = partsOfSpeech
         self.addedAt = addedAt
+        self.source = source
     }
 
     func withLanguage(_ language: String) -> GeneratedItem {
@@ -286,6 +305,16 @@ struct GeneratedItem: Codable, Identifiable, Hashable {
     func withAddedAt(_ date: Date) -> GeneratedItem {
         var copy = self
         copy.addedAt = date
+        return copy
+    }
+
+    // Stamps the sourcing method — but never overwrites an existing one, so an
+    // item that already knows how it was gathered (e.g. an artifact word later
+    // funneled through a shared save flow) keeps its true source.
+    func withSource(_ source: SourcingMethod) -> GeneratedItem {
+        guard self.source == nil else { return self }
+        var copy = self
+        copy.source = source.rawValue
         return copy
     }
 }

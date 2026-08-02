@@ -47,6 +47,24 @@ final class ChatViewModel {
     // word in an assistant bubble. Cleared on dismiss.
     var translationCallout: TranslationCallout?
 
+    // "I'm stuck" helper. `suggestions` holds a few candidate learner
+    // replies the user can tap to drop into the input; `isSuggesting`
+    // gates the loading state. Both clear when the user sends, taps a
+    // suggestion, or switches threads.
+    var suggestions: [ConversationClient.SuggestedReply] = []
+    var isSuggesting = false
+
+    // Message IDs whose corrections are still being graded in the
+    // background (the reply is already on screen). Lets the bubble show
+    // a subtle "checking" state so the deferred feedback doesn't feel
+    // like it appeared from nowhere.
+    var analyzingMessageIDs: Set<UUID> = []
+
+    // Conversation ids already counted toward the learning-method distribution
+    // this app session, so we don't re-hit XPService on every turn. The server
+    // dedupes across launches by id.
+    private var countedConversationIds: Set<String> = []
+
     // Decks the user has across all languages — used to populate the
     // save-to-deck picker without a per-tap fetch.
     var decksForCurrentLanguage: [DeckDocument] = []
@@ -79,22 +97,38 @@ final class ChatViewModel {
     func send() async {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, var current = conversation else { return }
+        // Re-entrancy guard: a turn already in flight (e.g. an auto-mic
+        // silence-send firing at the same moment the user taps a
+        // suggestion or the send button) must not start a second,
+        // overlapping send — that duplicated turns and made the model
+        // reply to a stale state.
+        guard !isSending else { return }
 
         input = ""
         errorText = nil
+        suggestions = []  // A fresh turn supersedes any stale hints.
 
         let userMessage = ConversationMessage(role: .user, text: text)
+        // History as it stood BEFORE this turn — used by both the fast
+        // reply and the background correction pass so neither sees the
+        // turn we're about to append.
+        let priorHistory = current.messages
+        // Count this conversation toward the Statistics learning-method
+        // distribution. Deduped server-side by conversation id (so each
+        // conversation counts once, new or resumed); the in-memory set just
+        // avoids a redundant call on every turn within this app session.
+        if !countedConversationIds.contains(current.id) {
+            countedConversationIds.insert(current.id)
+            let convId = current.id
+            Task { try? await XPService.recordConversationSession(conversationId: convId) }
+        }
         current.messages.append(userMessage)
         conversation = current
 
         isSending = true
-        defer {
-            isSending = false
-            toolStatus = nil
-        }
 
         // Route: meta/planning requests go through the tool-using tutor
-        // agent; everything else stays on the existing conversation path.
+        // agent; everything else stays on the conversation path.
         // Placement threads never route to the agent — the whole thread
         // is an assessment conversation.
         let intent: TutorAgent.Intent
@@ -105,6 +139,10 @@ final class ChatViewModel {
         }
 
         if intent == .meta {
+            defer {
+                isSending = false
+                toolStatus = nil
+            }
             await sendViaAgent(userText: text, userMessageID: userMessage.id)
             return
         }
@@ -121,47 +159,145 @@ final class ChatViewModel {
         )
 
         do {
-            let reply = try await ConversationClient.sendTurn(
-                history: Array(current.messages.dropLast()),
+            // Fast path: fetch ONLY the assistant's next turn so the
+            // reply bubble lands quickly. Corrections follow separately.
+            let reply = try await ConversationClient.sendReply(
+                history: priorHistory,
                 userText: text,
                 context: context
             )
-            // Stamp the corrections back onto the user's turn.
-            if !reply.corrections.isEmpty,
-               let userIndex = current.messages.firstIndex(where: { $0.id == userMessage.id }) {
-                var stamped = current.messages[userIndex]
-                stamped.corrections = reply.corrections
-                current.messages[userIndex] = stamped
+            // The user may have switched threads while we waited — only
+            // commit the reply if we're still on the same conversation.
+            guard var refreshed = conversation, refreshed.id == current.id else {
+                isSending = false
+                return
             }
             let assistantMessage = ConversationMessage(
                 role: .assistant,
                 text: reply.text,
                 transliteration: reply.transliteration
             )
-            current.messages.append(assistantMessage)
-            current.updatedAt = Date()
-            conversation = current
+            refreshed.messages.append(assistantMessage)
+            refreshed.updatedAt = Date()
+            conversation = refreshed
             pendingScenarioPrompt = nil  // First reply consumed.
+            isSending = false            // Reply is on screen; stop the dots.
             // Persist in the background — failures are non-fatal.
             await persistCurrent()
 
-            // Continuous level calibration: every graded turn feeds the
-            // learner model's rolling accuracy signal. Fire-and-forget.
-            let language = current.language
-            let correctionCount = reply.corrections.count
-            Task.detached {
-                await LearnerModelService.recordConversationSignal(
-                    language: language,
-                    correctionCount: correctionCount
-                )
-            }
+            // Off the critical path: grade the learner's turn for
+            // mistakes and stamp them onto their bubble when ready.
+            analyzeTurnInBackground(
+                priorHistory: priorHistory,
+                userText: text,
+                userMessageID: userMessage.id,
+                conversationID: current.id,
+                context: context,
+                language: current.language
+            )
 
             // Placement threads: once enough turns are graded, score the
             // transcript and surface the result card.
             await gradePlacementIfReady()
         } catch {
+            isSending = false
             errorText = error.localizedDescription
         }
+    }
+
+    // MARK: - Background correction pass
+
+    // Grades the learner's most recent message after the reply is
+    // already visible, then stamps any corrections onto their bubble.
+    // The rolling accuracy signal is recorded regardless of the result
+    // (a clean turn is data too). Best-effort — a failure just means no
+    // decorations on that bubble.
+    private func analyzeTurnInBackground(
+        priorHistory: [ConversationMessage],
+        userText: String,
+        userMessageID: UUID,
+        conversationID: String,
+        context: ConversationClient.Context,
+        language: String
+    ) {
+        analyzingMessageIDs.insert(userMessageID)
+        Task {
+            defer { analyzingMessageIDs.remove(userMessageID) }
+            do {
+                let analysis = try await ConversationClient.analyzeUserTurn(
+                    history: priorHistory,
+                    userText: userText,
+                    context: context
+                )
+                let corrections = analysis.corrections
+                // Continuous level calibration — fire-and-forget, and
+                // independent of whether this thread is still open.
+                let correctionCount = corrections.count
+                Task.detached {
+                    await LearnerModelService.recordConversationSignal(
+                        language: language,
+                        correctionCount: correctionCount
+                    )
+                }
+                // Stamp corrections and/or the learner's pinyin onto
+                // their bubble. Bail only if there's nothing to add.
+                guard corrections.isEmpty == false || analysis.transliteration != nil,
+                      var current = conversation,
+                      current.id == conversationID,
+                      let userIndex = current.messages.firstIndex(where: { $0.id == userMessageID })
+                else { return }
+                var stamped = current.messages[userIndex]
+                if !corrections.isEmpty {
+                    stamped.corrections = corrections
+                }
+                if let translit = analysis.transliteration {
+                    stamped.transliteration = translit
+                }
+                current.messages[userIndex] = stamped
+                conversation = current
+                await persistCurrent()
+            } catch {
+                print("[Chat] Correction analysis failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: - Suggested replies ("I'm stuck")
+
+    // Fetches a few candidate replies for the current conversation.
+    // Non-destructive: it only populates `suggestions`, which the input
+    // bar renders as tappable chips.
+    func requestSuggestions() async {
+        guard let current = conversation, !isSuggesting else { return }
+        isSuggesting = true
+        defer { isSuggesting = false }
+        let context = ConversationClient.Context(
+            language: current.language,
+            dialect: current.dialect,
+            level: current.level,
+            scenarioPrompt: pendingScenarioPrompt,
+            dueWords: dueWordsCache,
+            goalsSummary: learnerModel?.goalsLine
+        )
+        do {
+            let result = try await ConversationClient.suggestReplies(
+                history: current.messages,
+                context: context
+            )
+            // Guard against a thread switch mid-flight.
+            guard conversation?.id == current.id else { return }
+            suggestions = result
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    // Drops a chosen suggestion into the input so the learner can read,
+    // tweak, and send it themselves — better for learning than
+    // auto-sending — and clears the strip.
+    func useSuggestion(_ suggestion: ConversationClient.SuggestedReply) {
+        input = suggestion.foreign
+        suggestions = []
     }
 
     // MARK: - Agent path
@@ -339,6 +475,7 @@ final class ChatViewModel {
         fresh.purpose = "placement"
         conversation = fresh
         translationCallout = nil
+        suggestions = []
         input = ""
         errorText = nil
 
@@ -474,8 +611,10 @@ final class ChatViewModel {
             // One-shot nudge to coax the AI's opener. We do NOT persist
             // this user turn — only the assistant reply lands in the
             // visible thread, so a scenario start reads as "AI just
-            // begins" rather than an awkward English kickoff line.
-            let reply = try await ConversationClient.sendTurn(
+            // begins" rather than an awkward English kickoff line. The
+            // opener carries no learner turn to correct, so the fast
+            // reply-only call is exactly what we want here.
+            let reply = try await ConversationClient.sendReply(
                 history: [],
                 userText: "Open this scenario now with your first turn.",
                 context: context
@@ -511,7 +650,8 @@ final class ChatViewModel {
             transliteration: transliteration,
             language: current.language,
             partsOfSpeech: ["Phrase"],
-            addedAt: Date()
+            addedAt: Date(),
+            source: SourcingMethod.conversation.rawValue
         )
     }
 

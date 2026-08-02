@@ -159,7 +159,7 @@ struct LibraryView: View {
                     try? await Task.sleep(for: .milliseconds(450))
                     searchArmed = true
                 }
-                async let decks: Void = vm.loadDecks()
+                async let decks: Void = vm.refreshIfNeeded()
                 async let fetched = try? await UserService.fetchProfile()
                 _ = await decks
                 let profile = await fetched
@@ -168,6 +168,13 @@ struct LibraryView: View {
                 avatarImageData = profile?.avatarImage
                 resolvePendingWidgetDeepLink()
                 recomputeWords()
+            }
+            .onAppear {
+                // Returning to the Library tab (e.g. after a Study session)
+                // re-aggregates the latest sessions so Preferred Language and
+                // the favorite-topic inputs are current. Throttled so rapid
+                // tab-switching doesn't refetch repeatedly.
+                Task { await vm.refreshIfNeeded() }
             }
             .refreshable {
                 await vm.loadDecks()
@@ -181,16 +188,10 @@ struct LibraryView: View {
                     Task { await loadArtifactsIfNeeded() }
                 }
             }
-            #if targetEnvironment(macCatalyst)
-            // Mac: open the artifact full-screen, not a small centered sheet.
-            .fullScreenCover(item: $selectedArtifact) { artifact in
+            // Full-screen on Mac + iPad (a proper detail view), a sheet on iPhone.
+            .adaptiveFullScreenOrSheet(item: $selectedArtifact) { artifact in
                 ArtifactReaderSheet(artifact: artifact)
             }
-            #else
-            .sheet(item: $selectedArtifact) { artifact in
-                ArtifactReaderSheet(artifact: artifact)
-            }
-            #endif
             // Two triggers: the deckID arriving (warm app) and the deck
             // list finishing its initial load (cold launch from widget,
             // where the ID is already pending when this view appears).
@@ -358,10 +359,11 @@ struct LibraryView: View {
             HStack {
                 Spacer()
                 NavigationLink {
-                    let topPracticed = vm.topPracticedDeckSummaries()
+                    let topPracticed = vm.favoriteTopicDeckSummaries()
                     StatisticsView(
                         reviewsByLanguage: vm.reviewsByLanguage,
                         itemsLearned: vm.itemsTouched,
+                        cardsEncountered: vm.totalCardsReviewed,
                         wordsInLibrary: vm.libraryItemCount(forContentType: "Words"),
                         sentencesInLibrary: vm.libraryItemCount(forContentType: "Sentences"),
                         cardsAddedThisWeek: vm.cardsAddedThisWeek,
@@ -371,6 +373,8 @@ struct LibraryView: View {
                         topPracticedDecksSignature: topPracticed.signature,
                         totalXP: vm.totalXP,
                         preferredLearningMethod: vm.preferredLearningMethodLabel,
+                        learningMethodShares: vm.learningMethodShares,
+                        sourcingMethodShares: vm.sourcingMethodShares,
                         xpByDay: vm.xpByDay,
                         averageSessionSeconds: vm.averageSessionSeconds,
                         longestSessionSeconds: vm.longestSessionSeconds,

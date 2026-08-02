@@ -24,13 +24,21 @@ struct UserXPState: Codable, Hashable {
     var awardedMultimodalDeckIds: [String] = []
     var studiedDeckIds: [String] = []
     var listenedDeckIds: [String] = []
-    // Lifetime session counters. Feed the Statistics tab's "Preferred
-    // Learning Method" card (flashcards = active, audio = passive). We
-    // bump on every meaningful session — repeat-studying the same deck
-    // counts each time, since the question is "what behavior do you
-    // gravitate toward?", not "how much breadth have you covered?"
+    // Lifetime per-method session counters. Feed the Statistics tab's
+    // "Preferred Learning Method" distribution. We bump on every meaningful
+    // session — repeat-studying the same deck counts each time, since the
+    // question is "what behavior do you gravitate toward?", not "how much
+    // breadth have you covered?"
     var flashcardSessionCount: Int = 0
     var audioSessionCount: Int = 0
+    var conversationSessionCount: Int = 0
+    var artifactSessionCount: Int = 0
+    // Answering an artifact's comprehension questions — its own learning
+    // method, counted once per artifact's question set.
+    var comprehensionSessionCount: Int = 0
+    // Conversations the learner has actually messaged in, so each counts toward
+    // the method distribution exactly once (new or resumed).
+    var conversedConversationIds: [String] = []
     // XP earned per calendar day, keyed by "yyyy-MM-dd" (user-local).
     // String keys instead of Date so the dict serializes cleanly through
     // Firestore. Source for the Statistics tab's weekly trend chart.
@@ -47,6 +55,10 @@ struct UserXPState: Codable, Hashable {
         case listenedDeckIds
         case flashcardSessionCount
         case audioSessionCount
+        case conversationSessionCount
+        case artifactSessionCount
+        case comprehensionSessionCount
+        case conversedConversationIds
         case xpByDayKey
     }
 
@@ -71,6 +83,10 @@ struct UserXPState: Codable, Hashable {
         self.listenedDeckIds             = (try? c.decodeIfPresent([String].self, forKey: .listenedDeckIds)) ?? []
         self.flashcardSessionCount       = (try? c.decodeIfPresent(Int.self, forKey: .flashcardSessionCount)) ?? 0
         self.audioSessionCount           = (try? c.decodeIfPresent(Int.self, forKey: .audioSessionCount)) ?? 0
+        self.conversationSessionCount    = (try? c.decodeIfPresent(Int.self, forKey: .conversationSessionCount)) ?? 0
+        self.artifactSessionCount        = (try? c.decodeIfPresent(Int.self, forKey: .artifactSessionCount)) ?? 0
+        self.comprehensionSessionCount   = (try? c.decodeIfPresent(Int.self, forKey: .comprehensionSessionCount)) ?? 0
+        self.conversedConversationIds    = (try? c.decodeIfPresent([String].self, forKey: .conversedConversationIds)) ?? []
         self.xpByDayKey                  = (try? c.decodeIfPresent([String: Int].self, forKey: .xpByDayKey)) ?? [:]
     }
 }
@@ -329,8 +345,34 @@ enum XPService {
     static func awardArtifactGenerated() async throws -> [XPGrant] {
         var state = try await fetchState()
         let grants = [XPGrant(amount: 5, reason: "Artifact generated")]
+        state.artifactSessionCount += 1
         try await commit(grants: grants, into: &state)
         return grants
+    }
+
+    // MARK: - Conversation session
+
+    // Counter-only (no XP) — records that the learner messaged in a
+    // conversation so the Statistics learning-method distribution reflects it.
+    // Deduped by conversation id, so each conversation counts once whether it's
+    // brand new or resumed; repeat turns don't inflate it.
+    static func recordConversationSession(conversationId: String) async throws {
+        var state = try await fetchState()
+        guard !state.conversedConversationIds.contains(conversationId) else { return }
+        state.conversedConversationIds.append(conversationId)
+        state.conversationSessionCount += 1
+        try await commit(grants: [], into: &state)
+    }
+
+    // MARK: - Comprehension session
+
+    // Counter-only (no XP) — records that the learner answered an artifact's
+    // comprehension questions. The call site guards to fire once per artifact's
+    // question set, so this is comparable to one artifact / one conversation.
+    static func recordComprehensionSession() async throws {
+        var state = try await fetchState()
+        state.comprehensionSessionCount += 1
+        try await commit(grants: [], into: &state)
     }
 
     // MARK: - Daily & streak bonuses

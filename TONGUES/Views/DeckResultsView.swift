@@ -300,7 +300,10 @@ struct DeckResultsView: View {
         GeneratedDeck(
             id: deck.id,
             title: deck.title,
-            items: items,
+            // Words from the Generate results screen are sourced from Generate
+            // (related-word additions here inherit the same, which is correct —
+            // they were generated too). Won't overwrite an already-set source.
+            items: items.map { $0.withSource(.generate) },
             language: deck.language,
             dialect: deck.dialect,
             level: deck.level,
@@ -427,11 +430,16 @@ struct ResultRow: View {
         // The part-of-speech-specific pill — Conjugations for verbs,
         // Plurals for nouns/adjectives/determiners — sits prominently
         // right after Add Phrases and before Add Synonyms.
-        // "Add Similar Sounding Words" always sits last in the strip.
-        if let fourth = fourthRelationKind {
-            return [.phrases, fourth, .synonyms, .antonyms, .similarSounding]
+        // "Add Similar Sounding Words" always sits last in the strip, followed
+        // — for Chinese only — by "Add Similar-Looking Words" (形近字), which
+        // only makes sense for the shared Han-character writing system.
+        var relations: [RelationKind] = fourthRelationKind
+            .map { [.phrases, $0, .synonyms, .antonyms, .similarSounding] }
+            ?? [.phrases, .synonyms, .antonyms, .similarSounding]
+        if isChineseLanguage(item.language ?? deckLanguage) {
+            relations.append(.similarLooking)
         }
-        return [.phrases, .synonyms, .antonyms, .similarSounding]
+        return relations
     }
 
     private var fourthRelationKind: RelationKind? {

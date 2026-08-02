@@ -11,20 +11,35 @@ enum ConversationClient {
 
     // MARK: - Public types
 
-    struct Reply {
-        // Assistant's turn, in the target language using its native
-        // script.
+    // A single assistant turn — just the words the learner reads and
+    // hears. Deliberately minimal: this is the ONLY thing the learner
+    // waits on, so it comes back from a fast model with a tight schema.
+    // Inline corrections and the tap-to-translate gloss are computed
+    // separately, off the critical path, so they never delay the
+    // conversational back-and-forth (see `analyzeUserTurn`).
+    struct AssistantReply {
         let text: String
-        // Latin-script transliteration of `text` when the target
-        // language uses a non-Latin script — nil otherwise.
         let transliteration: String?
-        // English translation. Tap-to-translate on the assistant
-        // bubble opens this; we ask Claude to ship it with every turn
-        // so the round-trip latency is hidden inside the same call.
-        let englishTranslation: String?
-        // Inline corrections targeted at the user's most recent turn.
-        // Empty array when the user's message was clean.
+    }
+
+    // Candidate things the LEARNER could say next, offered when they
+    // tap the "stuck" helper. Each is a ready-to-send turn in the
+    // target language plus a gloss so they understand what they'd be
+    // sending before they commit to it.
+    struct SuggestedReply: Identifiable, Hashable {
+        var id = UUID()
+        let foreign: String
+        let transliteration: String?
+        let translation: String
+    }
+
+    // Result of the background pass over a learner's turn: any inline
+    // corrections plus, for Chinese, a pinyin romanization of what they
+    // wrote so their own bubble can show it (mirroring the assistant
+    // side). `transliteration` is nil for Latin-script languages.
+    struct UserTurnAnalysis {
         let corrections: [ConversationCorrection]
+        let transliteration: String?
     }
 
     // Context the chat view model assembles per send. `dueWords` is the
@@ -43,21 +58,16 @@ enum ConversationClient {
         var goalsSummary: String? = nil
     }
 
-    // MARK: - Conversation turn
+    // MARK: - Wire message building
 
-    static func sendTurn(
-        history: [ConversationMessage],
-        userText: String,
-        context: Context
-    ) async throws -> Reply {
-        let system = buildSystemPrompt(context: context)
-
-        // Build the message list Claude sees. We map our domain
-        // ConversationMessage into AnthropicToolMessage and append the
-        // new user turn at the end. Attachment-only carrier messages
-        // (empty text) are skipped and consecutive same-role turns are
-        // merged — the API rejects empty text blocks, and tutor notices
-        // / placement cards can produce back-to-back assistant turns.
+    // Maps our domain ConversationMessage history into the Anthropic
+    // tool-message format shared by every turn-level call below.
+    // Attachment-only carrier messages (empty text) are dropped — the
+    // API rejects empty text blocks — and consecutive same-role turns
+    // are merged, since tutor notices / placement cards can produce
+    // back-to-back assistant turns that would otherwise break the
+    // required user/assistant alternation.
+    private static func buildMessages(from history: [ConversationMessage]) -> [AnthropicToolMessage] {
         var messages: [AnthropicToolMessage] = []
         for m in history {
             let text = m.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -74,22 +84,102 @@ enum ConversationClient {
                 messages.append(AnthropicToolMessage(role: role, content: [.text(text)]))
             }
         }
-        // Append the new user turn with a small reminder of the
-        // corrections rules. The tool's input_schema enforces the shape;
-        // this prompt only carries content/judgement guidance.
+        return messages
+    }
+
+    // MARK: - Conversation turn (fast path)
+
+    // The latency-critical call: returns ONLY the assistant's next turn
+    // (plus a transliteration). It runs on a fast model with a tight
+    // token budget so the reply bubble lands quickly and the
+    // conversation keeps its rhythm. Correction feedback and the
+    // tap-to-translate gloss are produced by separate calls that never
+    // block this one — see `analyzeUserTurn` and `quickTranslate`.
+    static func sendReply(
+        history: [ConversationMessage],
+        userText: String,
+        context: Context
+    ) async throws -> AssistantReply {
+        let system = buildSystemPrompt(context: context)
+        var messages = buildMessages(from: history)
+        messages.append(.user(userText))
+
+        struct DecodedReply: Codable {
+            let reply: String
+            let transliteration: String?
+        }
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "reply": .schemaString("Your next conversational turn in \(context.dialect) \(context.language), using its native script."),
+                "transliteration": .schemaNullableString("Latin-script romanization of `reply` for non-Latin scripts; null for languages that already use Latin script.")
+            ],
+            required: ["reply"]
+        )
+        let decoded: DecodedReply = try await AnthropicClient.sendStructured(
+            toolName: "submit_reply",
+            toolDescription: "Submit the assistant's next conversational turn.",
+            schema: schema,
+            messages: messages,
+            system: system,
+            model: "claude-sonnet-4-6",
+            maxTokens: 700,
+            as: DecodedReply.self
+        )
+        let trimmed = decoded.reply.trimmingCharacters(in: .whitespacesAndNewlines)
+        let translit = decoded.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AssistantReply(
+            text: trimmed,
+            transliteration: (translit?.isEmpty == false) ? translit : nil
+        )
+    }
+
+    // MARK: - Correction analysis (off critical path)
+
+    // Judges the learner's most recent message for mistakes. Called in
+    // the background AFTER the reply is already on screen, so its
+    // latency is invisible — corrections quietly attach to the
+    // learner's bubble when they arrive. Runs on the stronger model
+    // because accuracy matters more than speed once we're off the
+    // critical path.
+    static func analyzeUserTurn(
+        history: [ConversationMessage],
+        userText: String,
+        context: Context
+    ) async throws -> UserTurnAnalysis {
+        let native = AppLanguage.currentNative.promptName
+        // For Chinese we also romanize the learner's own message so
+        // their bubble can show pinyin, matching the assistant side.
+        let wantsTransliteration = DeckGenerator.isChinese(context.language)
+
+        var system = """
+        You are a meticulous \(context.dialect) \(context.language) tutor reviewing a learner's message for mistakes. The learner's native language is \(native); write every explanation in \(native).
+        """
+        if wantsTransliteration {
+            // Reuse the app's authoritative pinyin rules so the learner's
+            // romanization matches the standard used everywhere else.
+            system += "\n\n" + DeckGenerator.chineseGenerationGuidance
+        }
+
+        var messages = buildMessages(from: history)
+        // Prominent, standalone task so the model doesn't skip it — the
+        // correction-focused framing otherwise tends to drop an optional
+        // pinyin field.
+        let transliterationSection = wantsTransliteration
+            ? "\n\nPinyin — set `transliteration` (REQUIRED): the standard Hanyu Pinyin, with tone-mark diacritics, for the learner's ENTIRE message, one space between syllables. Always provide it, even when `corrections` is empty."
+            : ""
         let wrappedUser = """
         \(userText)
 
         ---
 
-        Reply by calling the `submit_conversation_turn` tool.
+        Analyze the learner's message above (using the earlier turns for context) and submit your analysis by calling `submit_analysis`.
 
-        Content rules for `corrections`:
-        • Only include genuine errors in the user's MOST RECENT message — grammar, agreement, vocabulary, register, idiomatic word choice.
-        • If their message was clean, return an empty array.
-        • Each `original` MUST be a verbatim substring of their last message. Do not paraphrase it.
-        • Cap at 3 corrections per turn even if there are more — pick the most useful ones.
-        • COMPLETELY IGNORE punctuation and capitalization. The user is typing on a phone and the on-screen keyboard makes those mechanical to enter — never flag a missing period, comma, question mark, accent on a capital, or initial-letter case as an error. Judge the words themselves only.
+        Corrections — set `corrections`:
+        • Only include genuine errors — grammar, agreement, vocabulary, register, idiomatic word choice.
+        • If the message was clean, return an empty array.
+        • Each `original` MUST be a verbatim substring of the message. Do not paraphrase it.
+        • Cap at 3 corrections even if there are more — pick the most useful ones.
+        • COMPLETELY IGNORE punctuation and capitalization. The learner is typing on a phone and the on-screen keyboard makes those mechanical to enter — never flag a missing period, comma, question mark, accent on a capital, or initial-letter case as an error. Judge the words themselves only.\(transliterationSection)
         """
         messages.append(.user(wrappedUser))
 
@@ -98,42 +188,41 @@ enum ConversationClient {
             let corrected: String
             let explanation: String
         }
-        struct DecodedTurn: Codable {
-            let reply: String
-            let transliteration: String?
-            let english_translation: String?
+        struct Decoded: Codable {
             let corrections: [DecodedCorrection]?
+            let transliteration: String?
         }
-        let native = AppLanguage.currentNative.promptName
+        var properties: [String: JSONValue] = [
+            "corrections": .schemaArray(items: .schemaObject(
+                properties: [
+                    "original": .schemaString("Exact substring from the learner's message containing the mistake."),
+                    "corrected": .schemaString("What they should have written."),
+                    "explanation": .schemaString("Short \(native) explanation (under 25 words) of why.")
+                ],
+                required: ["original", "corrected", "explanation"]
+            ))
+        ]
+        var required = ["corrections"]
+        if wantsTransliteration {
+            // Required + non-null so the model can't silently omit it —
+            // the correction-focused prompt otherwise tends to skip it.
+            properties["transliteration"] = .schemaString("Standard Hanyu Pinyin (with tone-mark diacritics) for the learner's entire message, one space between syllables.")
+            required.append("transliteration")
+        }
         let schema = JSONValue.schemaObject(
-            properties: [
-                "reply": .schemaString("Your next conversational turn in \(context.dialect) \(context.language), using its native script."),
-                "transliteration": .schemaNullableString("Latin-script romanization of `reply` for non-Latin scripts; null for languages that already use Latin script."),
-                // Field name kept for Codable stability; holds the native translation.
-                "english_translation": .schemaString("Natural \(native) translation of `reply`."),
-                "corrections": .schemaArray(items: .schemaObject(
-                    properties: [
-                        "original": .schemaString("Exact substring from the user's last message containing the mistake."),
-                        "corrected": .schemaString("What they should have written."),
-                        "explanation": .schemaString("Short \(native) explanation (under 25 words) of why.")
-                    ],
-                    required: ["original", "corrected", "explanation"]
-                ))
-            ],
-            required: ["reply", "english_translation", "corrections"]
+            properties: properties,
+            required: required
         )
-
-        let decoded: DecodedTurn = try await AnthropicClient.sendStructured(
-            toolName: "submit_conversation_turn",
-            toolDescription: "Submit the assistant's next conversational turn plus any inline corrections.",
+        let decoded: Decoded = try await AnthropicClient.sendStructured(
+            toolName: "submit_analysis",
+            toolDescription: "Submit corrections (and, for Chinese, a pinyin romanization) for the learner's most recent message.",
             schema: schema,
             messages: messages,
             system: system,
             model: "claude-opus-4-7",
-            maxTokens: 2048,
-            as: DecodedTurn.self
+            maxTokens: 700,
+            as: Decoded.self
         )
-
         let corrections = (decoded.corrections ?? []).map {
             ConversationCorrection(
                 original: $0.original,
@@ -141,15 +230,73 @@ enum ConversationClient {
                 explanation: $0.explanation
             )
         }
-        let trimmed = decoded.reply.trimmingCharacters(in: .whitespacesAndNewlines)
         let translit = decoded.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let english = decoded.english_translation?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return Reply(
-            text: trimmed,
-            transliteration: (translit?.isEmpty == false) ? translit : nil,
-            englishTranslation: (english?.isEmpty == false) ? english : nil,
-            corrections: corrections
+        return UserTurnAnalysis(
+            corrections: corrections,
+            transliteration: (translit?.isEmpty == false) ? translit : nil
         )
+    }
+
+    // MARK: - Suggested replies ("I'm stuck")
+
+    // Given the conversation so far, proposes a few things the LEARNER
+    // could say next — level-appropriate, natural, and varied so a
+    // learner who freezes up has a real way forward. The foreign side
+    // is ready to send; the gloss and transliteration let them
+    // understand what they're choosing before they do.
+    static func suggestReplies(
+        history: [ConversationMessage],
+        context: Context
+    ) async throws -> [SuggestedReply] {
+        let native = AppLanguage.currentNative.promptName
+        let system = """
+        You help a \(context.dialect) \(context.language) learner keep a conversation going when they don't know what to say. Their proficiency level is \(context.level); their native language is \(native).
+        """
+        var messages = buildMessages(from: history)
+        let ask = """
+        Suggest 3 short, natural things the LEARNER could say next in this conversation, calibrated to their level. Make them genuinely different from each other (for example a question, a direct answer, and a reaction) so they have real choices. Keep each to one short sentence. Submit them by calling `submit_suggestions`.
+        """
+        messages.append(.user(ask))
+
+        struct DecodedSuggestion: Codable {
+            let foreign: String
+            let transliteration: String?
+            let translation: String
+        }
+        struct Decoded: Codable {
+            let suggestions: [DecodedSuggestion]
+        }
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "suggestions": .schemaArray(items: .schemaObject(
+                    properties: [
+                        "foreign": .schemaString("A natural thing the learner could say next, in \(context.dialect) \(context.language) native script, at their level."),
+                        "transliteration": .schemaNullableString("Latin-script romanization of `foreign` for non-Latin scripts; null for languages that already use Latin script."),
+                        "translation": .schemaString("Natural \(native) translation of `foreign`.")
+                    ],
+                    required: ["foreign", "translation"]
+                ))
+            ],
+            required: ["suggestions"]
+        )
+        let decoded: Decoded = try await AnthropicClient.sendStructured(
+            toolName: "submit_suggestions",
+            toolDescription: "Submit a few candidate replies the learner could send next.",
+            schema: schema,
+            messages: messages,
+            system: system,
+            model: "claude-sonnet-4-6",
+            maxTokens: 600,
+            as: Decoded.self
+        )
+        return decoded.suggestions.prefix(3).map { s in
+            let translit = s.transliteration?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return SuggestedReply(
+                foreign: s.foreign.trimmingCharacters(in: .whitespacesAndNewlines),
+                transliteration: (translit?.isEmpty == false) ? translit : nil,
+                translation: s.translation.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
     }
 
     // MARK: - Recap

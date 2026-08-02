@@ -18,6 +18,10 @@ struct StatisticsView: View {
     // already use.
     let itemsLearned: Int
 
+    // Total flashcards seen across all sessions (every review, right or wrong).
+    // Shown above "learned" as the broader "encountered" volume.
+    let cardsEncountered: Int
+
     // Library inventory split by content type so the Words Learned card can
     // surface counts independently. Sentences are shown only when > 0 so
     // the card stays tight for users who only have words + phrases.
@@ -45,6 +49,12 @@ struct StatisticsView: View {
     // flashcard session split.
     let totalXP: Int
     let preferredLearningMethod: String
+    // Practice split across the real learning methods, heaviest first. Drives
+    // the Learning Experience card's distribution bar + rows.
+    let learningMethodShares: [LearningMethodShare]
+    // Library words split by how they were gathered. Drives the Sourcing
+    // Method card's distribution bar + rows.
+    let sourcingMethodShares: [SourcingMethodShare]
 
     // Per-day XP map (start-of-day → XP earned that day) used to draw
     // this week and last week as overlaid line series.
@@ -138,6 +148,7 @@ struct StatisticsView: View {
                 dayStatisticsCard
                 topicsCard
                 learningExperienceCard
+                sourcingMethodCard
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 12)
@@ -397,30 +408,27 @@ struct StatisticsView: View {
     private var wordsLearnedCard: some View {
         statCard {
             VStack(alignment: .leading, spacing: 6) {
+                // "Encountered" is every flashcard the user has seen (each
+                // review counts, right or wrong) — the broad exposure number
+                // that sits above the narrower "learned" count. Only shown once
+                // they've actually reviewed something.
+                if cardsEncountered > 0 {
+                    emphasizedLine(
+                        prefix: L("You've encountered "),
+                        emphasis: pluralized(cardsEncountered, unit: "card"),
+                        suffix: "."
+                    )
+                }
                 emphasizedLine(
                     prefix: L("You've learned "),
                     emphasis: pluralized(itemsLearned, unit: learnedUnit),
                     suffix: "."
                 )
-                emphasizedLine(
-                    prefix: L("Your library contains "),
-                    emphasis: pluralized(wordsInLibrary, unit: "word"),
-                    suffix: "."
-                )
-                // Sentences only show if the user actually has any, so the
-                // card doesn't grow a phantom "0 sentences" line.
-                if sentencesInLibrary > 0 {
-                    emphasizedLine(
-                        prefix: L("Your library contains "),
-                        emphasis: pluralized(sentencesInLibrary, unit: "sentence"),
-                        suffix: "."
-                    )
-                }
 
-                // Reveal "added this week / month" behind the chevron so the
-                // resting card stays compact. Both lines stay visible when
-                // expanded — including 0 counts — so the user always knows
-                // whether the metric was reported or just empty.
+                // Reveal "added this week / month" and the library composition
+                // behind the chevron so the resting card stays compact. Lines
+                // stay visible when expanded — including 0 counts — so the user
+                // always knows whether the metric was reported or just empty.
                 if isWordsLearnedExpanded {
                     Rectangle()
                         .fill(Color.white.opacity(0.08))
@@ -436,6 +444,20 @@ struct StatisticsView: View {
                         emphasis: pluralized(cardsAddedThisMonth, unit: "card"),
                         suffix: L(" this month.")
                     )
+                    emphasizedLine(
+                        prefix: L("Your library contains "),
+                        emphasis: pluralized(wordsInLibrary, unit: "word"),
+                        suffix: "."
+                    )
+                    // Sentences only show if the user actually has any, so the
+                    // card doesn't grow a phantom "0 sentences" line.
+                    if sentencesInLibrary > 0 {
+                        emphasizedLine(
+                            prefix: L("Your library contains "),
+                            emphasis: pluralized(sentencesInLibrary, unit: "sentence"),
+                            suffix: "."
+                        )
+                    }
                 }
 
                 Button {
@@ -953,14 +975,33 @@ struct StatisticsView: View {
                 Text(L("Learning Experience:"))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white)
-                VStack(alignment: .leading, spacing: 6) {
+
+                VStack(alignment: .leading, spacing: 14) {
                     Text(L("Preferred Learning Method:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.7))
-                    Text(preferredLearningMethod)
-                        .font(.custom("NeueHaasDisplay-Light", size: 36))
-                        .foregroundStyle(.white)
+
+                    if learningMethodShares.isEmpty {
+                        Text("—")
+                            .font(.custom("NeueHaasDisplay-Light", size: 36))
+                            .foregroundStyle(.white)
+                    } else {
+                        emphasizedLine(
+                            prefix: L("You mostly learn through "),
+                            emphasis: L(learningMethodShares[0].method.displayName)
+                        )
+                        stackedBar(segments: learningMethodSegments)
+                        VStack(spacing: 8) {
+                            ForEach(learningMethodShares) { share in
+                                languageRow(
+                                    L(share.method.displayName),
+                                    percentLabel(share.percent)
+                                )
+                            }
+                        }
+                    }
                 }
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L("Total Experience:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
@@ -970,6 +1011,67 @@ struct StatisticsView: View {
                         .foregroundStyle(.white)
                 }
             }
+        }
+    }
+
+    // Grayscale ramp (heaviest → lightest) matching the Preferred Language
+    // bar's monochrome treatment, one segment per practiced method.
+    private var learningMethodSegments: [(Double, Color)] {
+        let ramp: [Color] = [
+            .white, Color(white: 0.62), Color(white: 0.46),
+            Color(white: 0.34), Color(white: 0.24)
+        ]
+        return learningMethodShares.enumerated().map { index, share in
+            (share.percent, ramp[min(index, ramp.count - 1)])
+        }
+    }
+
+    // MARK: - Card: Sourcing method
+
+    // Where the learner's words came from — same distribution treatment as the
+    // Preferred Language / Learning Method cards, but over the library's words
+    // grouped by how each was gathered.
+    private var sourcingMethodCard: some View {
+        statCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(L("Sourcing Method:"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 15))
+                    .foregroundStyle(.white)
+
+                if sourcingMethodShares.isEmpty {
+                    Text("—")
+                        .font(.custom("NeueHaasDisplay-Light", size: 36))
+                        .foregroundStyle(.white)
+                } else {
+                    emphasizedLine(
+                        prefix: L("You mostly gather words through "),
+                        emphasis: L(sourcingMethodShares[0].method.displayName)
+                    )
+                    stackedBar(segments: sourcingMethodSegments)
+                    VStack(spacing: 8) {
+                        ForEach(sourcingMethodShares) { share in
+                            languageRow(
+                                L(share.method.displayName),
+                                percentLabel(share.percent)
+                            )
+                        }
+                    }
+                    Text(L("How the words in your library were added"))
+                        .font(.custom("NeueHaasDisplay-Light", size: 11))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            }
+        }
+    }
+
+    // Grayscale ramp with enough tones for all seven sourcing methods.
+    private var sourcingMethodSegments: [(Double, Color)] {
+        let ramp: [Color] = [
+            .white, Color(white: 0.68), Color(white: 0.56), Color(white: 0.45),
+            Color(white: 0.36), Color(white: 0.28), Color(white: 0.20)
+        ]
+        return sourcingMethodShares.enumerated().map { index, share in
+            (share.percent, ramp[min(index, ramp.count - 1)])
         }
     }
 

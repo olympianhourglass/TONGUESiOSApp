@@ -190,11 +190,17 @@ struct OnboardingLoginView: View {
                 return
             }
             // Auto-generate the suggested starter decks (free, no paywall)
-            // in the background so the Study tab has content immediately.
-            OnboardingDeckSeeder.shared.seed(
-                answers: onboardingAnswers,
-                titles: sampleDeckTitles
-            )
+            // in the background so the Study tab has content immediately —
+            // but ONLY for a genuinely new account. A returning user who
+            // walked the new-user onboarding path and then authenticated into
+            // an account they already have must not get duplicate starter
+            // decks stacked on top of the ones they made before.
+            if auth.lastSignInWasNewUser {
+                OnboardingDeckSeeder.shared.seed(
+                    answers: onboardingAnswers,
+                    titles: sampleDeckTitles
+                )
+            }
         }
         Haptics.success()
         onComplete()

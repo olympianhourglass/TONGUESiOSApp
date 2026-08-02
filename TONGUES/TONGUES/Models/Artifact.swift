@@ -27,9 +27,21 @@ struct Artifact: Codable, Identifiable, Hashable {
     // so the artifact reader can show "you asked for: …" context.
     let userPrompt: String?
     let createdAt: Date
+    // Reading-comprehension questions generated alongside the artifact, saved
+    // so reopening it later shows the same set. Optional (rather than a
+    // defaulted array) so artifacts written before this field decode without
+    // error — Firestore Codable treats a missing key as nil for optionals,
+    // but would throw for a non-optional even when it has a default value.
+    let questions: [ComprehensionQuestion]?
 
     var resolvedKind: ContentGenerationKind {
         ContentGenerationKind(rawValue: kind) ?? .story
+    }
+
+    // The saved questions, or an empty array for artifacts predating the field
+    // (or content kinds that don't produce comprehension questions).
+    var resolvedQuestions: [ComprehensionQuestion] {
+        questions ?? []
     }
 
     // Pulls a clean headline out of the generated prose. Prefers the

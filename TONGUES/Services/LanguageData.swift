@@ -188,6 +188,14 @@ func canonicalLanguageName(_ language: String) -> String {
     return languageAliases[language] ?? language
 }
 
+// True when the language is any Chinese variety — Mandarin, Cantonese, and
+// their shorthand aliases ("Mandarin", "Chinese", "Cantonese"). Used to gate
+// features that only make sense for the shared Han-character writing system,
+// such as the "Add Similar-Looking Words" (形近字) relation.
+func isChineseLanguage(_ language: String) -> Bool {
+    canonicalLanguageName(language).hasPrefix("Chinese")
+}
+
 func languageISOCode(for language: String) -> String? {
     languageEncodings[canonicalLanguageName(language)]?.iso
 }

@@ -148,7 +148,7 @@ struct WordInfoSheet: View {
                                 .buttonStyle(.plain)
                                 .simultaneousGesture(TapGesture().onEnded { Haptics.light() })
                             } else {
-                                relationChip(L("Add Phrase"), kind: .phrases)
+                                relationChip(L("Create new sentence"), kind: .phrases)
                                 ForEach(inflectionPills, id: \.self) { label in
                                     if let kind = relationKind(for: label) {
                                         relationChip(L(label), kind: kind)
@@ -157,6 +157,11 @@ struct WordInfoSheet: View {
                                 relationChip(L("Add Synonyms"), kind: .synonyms)
                                 relationChip(L("Add Antonyms"), kind: .antonyms)
                                 relationChip(L("Add Similar Sounding Words"), kind: .similarSounding)
+                                // Similar-looking words (形近字) only make sense
+                                // for Chinese's Han-character writing system.
+                                if isChineseLanguage(item.language ?? deckLanguage) {
+                                    relationChip(L("Add Similar-Looking Words"), kind: .similarLooking)
+                                }
                             }
                         }
                     }
@@ -348,8 +353,16 @@ struct WordInfoSheet: View {
         return []
     }
 
+    // Sentence-cases a Generate-row label: first character uppercased, the
+    // rest lowercased (e.g. "Add Similar-Looking Words" → "Add similar-looking
+    // words"). No-op for scripts without case (CJK) and for empty strings.
+    private func sentenceCased(_ text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + text.dropFirst().lowercased()
+    }
+
     private func generatePill(_ title: String) -> some View {
-        Text(title)
+        Text(sentenceCased(title))
             .font(.custom("NeueHaasDisplay-Light", size: 15))
             .foregroundStyle(.white)
             .lineLimit(1)

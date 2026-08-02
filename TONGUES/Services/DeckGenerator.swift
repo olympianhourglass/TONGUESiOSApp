@@ -616,7 +616,8 @@ enum DeckGenerator {
     static func generateContent(
         kind: ContentGenerationKind,
         deck: DeckDocument,
-        additionalDetails: String
+        additionalDetails: String,
+        styleDirectives: String = ""
     ) async throws -> GeneratedContent {
         // Artifact pre-check: even though we don't increment the
         // counter until save, gating generation on remaining quota
@@ -630,7 +631,8 @@ enum DeckGenerator {
         let prompt = buildContentPrompt(
             kind: kind,
             deck: deck,
-            additionalDetails: additionalDetails
+            additionalDetails: additionalDetails,
+            styleDirectives: styleDirectives
         )
         struct Response: Codable { let pairs: [SentencePair] }
         let decoded: Response = try await AnthropicClient.sendStructured(
@@ -679,7 +681,8 @@ enum DeckGenerator {
     private static func buildContentPrompt(
         kind: ContentGenerationKind,
         deck: DeckDocument,
-        additionalDetails: String
+        additionalDetails: String,
+        styleDirectives: String = ""
     ) -> String {
         let trimmedDetails = additionalDetails.trimmingCharacters(in: .whitespacesAndNewlines)
         let topicLine: String
@@ -701,13 +704,21 @@ enum DeckGenerator {
         let pronunciationRule = needsPronunciationAid(deck.language)
             ? "\n        • \"transliteration\" must be the Latin-script pronunciation of THAT foreign sentence/line (pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic), aligned 1:1 with the foreign text. For Chinese, separate every syllable with a single space (one syllable per character)."
             : ""
+        let trimmedStyle = styleDirectives.trimmingCharacters(in: .whitespacesAndNewlines)
+        let styleBlock = trimmedStyle.isEmpty
+            ? ""
+            : """
+
+            Style directions (follow these while keeping the language natural, coherent, and calibrated to the learner's level; never sacrifice comprehensibility for flavor):
+            \(trimmedStyle)
+            """
         return """
         Generate paired language-learning reading content.
 
         Deck context:
         • Target language: \(deck.dialect) \(deck.language)
         • Learner level: \(deck.level)
-        • \(topicLine)
+        • \(topicLine)\(styleBlock)
 
         The learner is studying these vocabulary entries from the deck:
         \(vocabLines)
@@ -863,6 +874,57 @@ enum DeckGenerator {
             level: level,
             count: count
         )
+        let decoded: GenerationResult = try await AnthropicClient.sendStructured(
+            toolName: "submit_related_items",
+            toolDescription: "Submit related vocabulary entries.",
+            schema: deckSchema(language: language, singularForm: "word"),
+            userPrompt: prompt,
+            system: systemPolicy(for: language),
+            model: model,
+            as: GenerationResult.self
+        )
+        return decoded.items.map { $0.withLanguage(language) }
+    }
+
+    // Topically/associatively related vocabulary for the "suggested words" web
+    // in the camera flows. Unlike `generateRelated` (a specific RelationKind
+    // like synonyms), these are words a learner would naturally meet in the
+    // same scene, situation, or category as the source — the cluster that turns
+    // one detected object or sign into a small themed mini-deck. `avoid` lists
+    // words already on screen so re-expanding never repeats one.
+    static func suggestRelatedWords(
+        to source: GeneratedItem,
+        language: String,
+        dialect: String,
+        level: String,
+        count: Int = 3,
+        avoid: [String] = []
+    ) async throws -> [GeneratedItem] {
+        // Tier-laddered model. No cap check — this is a tap-to-explore helper.
+        let model = SubscriptionService.shared.currentTier.generationModel
+        let native = AppLanguage.currentNative.promptName
+        let scriptHint = source.transliteration.map { " (transliteration: \($0))" } ?? ""
+        let avoidClause = avoid.isEmpty
+            ? ""
+            : "\n• Do NOT repeat any of these words already shown on screen: \(avoid.joined(separator: ", "))."
+        let prompt = """
+        Generate \(count) vocabulary words naturally RELATED to the source word — words a learner would meet in the same scene, situation, or category (nearby things, parts, common actions, or closely associated concepts). Write each "translation" in \(native).
+
+        Source entry:
+        • Word: \(source.word)\(scriptHint)
+        • \(native) translation: \(source.translation)
+        • Language: \(dialect) \(language)
+        • Learner level: \(level)
+
+        Submit your output by calling the `submit_related_items` tool. The `title` field is not displayed for related items — any short label is fine.
+
+        Content rules:
+        • Exactly \(count) items in the "items" array.
+        • Each must be a real, commonly-used word in \(dialect) \(language), calibrated to a \(level) learner.
+        • Prefer concrete, learnable words; each must be clearly associated with the source word but distinct from it.\(avoidClause)
+        • For non-Latin scripts, always include accurate romanization.
+        • For nouns in gendered languages, follow the usual convention: prefix the singular definite article where the language uses one (el/la, le/la, der/die/das, …); otherwise append "(m.)", "(f.)", or "(n.)" to the translation. Use the canonical lemma. Do NOT prepend articles for non-nouns.
+        """
         let decoded: GenerationResult = try await AnthropicClient.sendStructured(
             toolName: "submit_related_items",
             toolDescription: "Submit related vocabulary entries.",
@@ -1488,18 +1550,23 @@ enum DeckGenerator {
     // changes (i.e. a deck enters or leaves the top set).
     static func summarizeFavoriteTopic(decks: [DeckTopicSummary]) async throws -> String {
         guard !decks.isEmpty else { return "" }
+        // Normalize each deck's weight to a 1–10 relative importance for the
+        // prompt so the model weights the learner's emphasis without seeing raw
+        // internal numbers.
+        let maxWeight = decks.map(\.weight).max() ?? 1
         let lines = decks.map { deck -> String in
+            let rel = maxWeight > 0 ? Int((deck.weight / maxWeight * 9).rounded()) + 1 : 1
             let interests = deck.interests.isEmpty
                 ? ""
-                : " — interests: \(deck.interests.joined(separator: ", "))"
-            return "• \(deck.title) [\(deck.contentType)]\(interests)"
+                : " — \(deck.interests.joined(separator: ", "))"
+            return "• (importance \(rel)/10) \(deck.title) [\(deck.contentType)]\(interests)"
         }.joined(separator: "\n")
         let prompt = """
-        A language learner has been practicing these vocabulary decks the most:
+        Here is a language learner's full collection of vocabulary decks. Each line carries a relative importance (1–10) reflecting how much of their attention gravitates there — a blend of how many decks they've created on that theme and how much they've practiced them.
 
         \(lines)
 
-        In 1–3 words, written in \(AppLanguage.currentNative.promptName), name the overarching theme of what they're studying. Examples of the kind of label we want (translate the spirit of these into that language): "Literature", "Food & travel", "Skincare", "Business", "Pop culture".
+        Identify the single overarching theme the whole collection gravitates toward, giving more weight to the higher-importance decks. In 1–3 words, written in \(AppLanguage.currentNative.promptName), name that theme. Examples of the kind of label we want (translate the spirit of these into that language): "Literature", "Food & travel", "Aerospace", "Skincare", "Business", "Pop culture".
 
         Return ONLY the label — no quotes, no period, no preamble, no explanation. Title Case.
         """
@@ -1856,6 +1923,162 @@ enum DeckGenerator {
             maxTokens: 128
         )
         return reply.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // Translates a list of source-language sentences into `language`
+    // (in the given `dialect`), preserving order so the result lines up
+    // 1:1 with the input. Powers the Story view's optional third parallel
+    // column on iPad/Mac. Returns exactly `foreignSentences.count` strings
+    // — the result is padded/trimmed defensively so the columns never
+    // drift out of alignment even if the model miscounts.
+    static func translatePairs(
+        _ foreignSentences: [String],
+        from sourceLanguage: String,
+        to language: String,
+        dialect: String
+    ) async throws -> [String] {
+        guard !foreignSentences.isEmpty else { return [] }
+        let numbered = foreignSentences.enumerated()
+            .map { "\($0.offset + 1). \($0.element)" }
+            .joined(separator: "\n")
+        let dialectPrefix = (dialect.isEmpty || dialect == "Standard") ? "" : "\(dialect) "
+        let prompt = """
+        Translate each numbered \(sourceLanguage) sentence below into \(dialectPrefix)\(language), using \(language)'s native script. Preserve the exact count and order: return exactly \(foreignSentences.count) translations, one per input line, in the same order.
+
+        \(numbered)
+
+        Submit them by calling `submit_translations` with a "translations" array of \(foreignSentences.count) strings. Translation i corresponds to input line i. Do NOT merge, split, add, or drop lines, and do NOT include the leading numbers inside the strings. No preamble.
+        """
+        struct Translations: Codable { let translations: [String] }
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "translations": .schemaArray(
+                    items: .schemaString("One \(language) sentence, in native script."),
+                    description: "Exactly \(foreignSentences.count) translations, same order as the input."
+                )
+            ],
+            required: ["translations"]
+        )
+        let result: Translations = try await AnthropicClient.sendStructured(
+            toolName: "submit_translations",
+            toolDescription: "Submit the ordered \(language) translations.",
+            schema: schema,
+            userPrompt: prompt,
+            model: "claude-haiku-4-5-20251001",
+            as: Translations.self
+        )
+        var out = result.translations
+        if out.count < foreignSentences.count {
+            out.append(contentsOf: Array(repeating: "", count: foreignSentences.count - out.count))
+        } else if out.count > foreignSentences.count {
+            out = Array(out.prefix(foreignSentences.count))
+        }
+        return out
+    }
+
+    // The same word/meaning located across the parallel columns so the reader
+    // can see it mapped into every language on screen. `extras` holds one entry
+    // per extra translation column, in the order those columns were passed in.
+    struct WordMap: Codable, Hashable {
+        let foreign: String
+        let native: String
+        let extras: [String]
+    }
+
+    // Given a word the reader tapped in one of the parallel Story columns,
+    // returns the corresponding word (or shortest meaningful phrase) in the
+    // target language, the native language, and each extra translation column —
+    // taken verbatim from the aligned passages. One call feeds both the mapping
+    // callout and the per-column highlights.
+    static func mapWordAcrossLanguages(
+        tappedWord: String,
+        tappedColumn: String,          // "target" | "native" | "extra:<index>"
+        foreignPassage: String,
+        foreignLanguage: String,
+        nativePassage: String,
+        extraLanguages: [String],
+        extraPassages: [String]
+    ) async throws -> WordMap {
+        let native = AppLanguage.currentNative.promptName
+        // Human label for the tapped column, used in the prompt.
+        let columnName: String
+        if tappedColumn == "native" {
+            columnName = native
+        } else if tappedColumn.hasPrefix("extra:"),
+                  let i = Int(tappedColumn.dropFirst("extra:".count)),
+                  i < extraLanguages.count {
+            columnName = extraLanguages[i]
+        } else {
+            columnName = foreignLanguage
+        }
+
+        var sections = """
+        A reader tapped "\(tappedWord)" in the \(columnName) column of a parallel-text passage. For each language below, return the word — or the shortest complete multi-word phrase — that corresponds in meaning to what the reader tapped, exactly as it appears (verbatim) in that language's passage.
+
+        Important:
+        • Return WHOLE words. Languages like Chinese and Japanese don't put spaces between words, so a reader may have tapped a single character that is only part of a word (e.g. tapping 朋 in 朋友, or 你 in 你好). In that case return the complete word the character belongs to (朋友, 你好), NOT the isolated character. This applies to the tapped column itself as much as the others.
+        • Correspondence is often not one-to-one: one word in a language can map to several words or characters in another, and vice versa. Return whatever span carries the matching meaning in each language, even if the counts differ.
+        • Each returned value must appear verbatim (same characters/script/casing) somewhere in that language's passage.
+
+        \(foreignLanguage) passage:
+        \"\"\"
+        \(foreignPassage.trimmingCharacters(in: .whitespacesAndNewlines))
+        \"\"\"
+
+        \(native) passage:
+        \"\"\"
+        \(nativePassage.trimmingCharacters(in: .whitespacesAndNewlines))
+        \"\"\"
+        """
+        for (lang, passage) in zip(extraLanguages, extraPassages) {
+            let trimmed = passage.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            sections += "\n\n\(lang) passage:\n\"\"\"\n\(trimmed)\n\"\"\""
+        }
+
+        let extrasRule: String
+        if extraLanguages.isEmpty {
+            extrasRule = "- \"extras\": return an empty array (no extra columns)."
+        } else {
+            extrasRule = "- \"extras\": an array of exactly \(extraLanguages.count) strings — the matching word/phrase in each extra passage, verbatim, in this exact order: \(extraLanguages.joined(separator: ", "))."
+        }
+        let prompt = """
+        \(sections)
+
+        Call `submit_mapping` with:
+        - "foreign": the matching \(foreignLanguage) word/phrase, verbatim from the \(foreignLanguage) passage (same script and form).
+        - "native": the matching \(native) word/phrase, verbatim from the \(native) passage.
+        \(extrasRule)
+
+        Prefer a single whole word where one carries the meaning; use a short phrase only when the meaning genuinely spans several words. Never return a partial word or a lone character that's part of a larger word. If a language has no clear correspondence, return an empty string for it.
+        """
+        let schema = JSONValue.schemaObject(
+            properties: [
+                "foreign": .schemaString("Matching \(foreignLanguage) word/phrase, verbatim from the passage."),
+                "native": .schemaString("Matching \(native) word/phrase, verbatim from the passage."),
+                "extras": .schemaArray(
+                    items: .schemaString("Matching word/phrase for one extra column, verbatim from its passage."),
+                    description: "One entry per extra column, in the order the passages were given. Empty array if none."
+                )
+            ],
+            required: ["foreign", "native", "extras"]
+        )
+        let result: WordMap = try await AnthropicClient.sendStructured(
+            toolName: "submit_mapping",
+            toolDescription: "Submit the corresponding word in each language.",
+            schema: schema,
+            userPrompt: prompt,
+            model: "claude-haiku-4-5-20251001",
+            as: WordMap.self
+        )
+        // Pad/trim so `extras` always lines up with the columns we asked about.
+        var extras = result.extras
+        if extras.count < extraLanguages.count {
+            extras.append(contentsOf: Array(repeating: "", count: extraLanguages.count - extras.count))
+        } else if extras.count > extraLanguages.count {
+            extras = Array(extras.prefix(extraLanguages.count))
+        }
+        return WordMap(foreign: result.foreign, native: result.native, extras: extras)
     }
 
     // Large-body extraction. Takes raw text (from a paste or a PDF

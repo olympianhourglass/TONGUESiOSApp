@@ -498,12 +498,14 @@ struct SongVideoLinkPage: View {
     // save actions operate on.
     private var selectedItems: [GeneratedItem] {
         guard let extraction else { return [] }
+        let picks: [GeneratedItem]
         switch segment {
         case .words:
-            return extraction.words.filter { selectedWordIDs.contains($0.id) }
+            picks = extraction.words.filter { selectedWordIDs.contains($0.id) }
         case .sentences:
-            return extraction.sentences.filter { selectedSentenceIDs.contains($0.id) }
+            picks = extraction.sentences.filter { selectedSentenceIDs.contains($0.id) }
         }
+        return picks.map { $0.withSource(.songVideo) }
     }
 
     // Media is foreign-source. On a successful fetch, runFetch syncs the

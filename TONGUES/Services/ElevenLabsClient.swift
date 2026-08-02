@@ -3,9 +3,17 @@ import Foundation
 enum ElevenLabsClient {
     private static let apiKey = Secrets.elevenLabsAPIKey
 
-    // "Rachel" — ElevenLabs' default English voice. Swap the ID to use a
-    // different voice from your library.
+    // "Rachel" — ElevenLabs' default voice. Swap the ID to use a different
+    // voice from your library.
     private static let defaultVoiceId = "21m00Tcm4TlvDq8ikWAM"
+
+    // Multilingual model. The old `eleven_monolingual_v1` was English-only AND
+    // was retired by ElevenLabs on 2026-07-09, so it returns an API error and
+    // every generation silently fell back to the system voice. Multilingual v2
+    // auto-detects the language from the text — essential for a language-
+    // learning app — and is the documented replacement. (Use `eleven_flash_v2_5`
+    // instead if lower latency/cost matters more than narration quality.)
+    private static let modelId = "eleven_multilingual_v2"
 
     static var isConfigured: Bool { !apiKey.isEmpty }
 
@@ -21,8 +29,10 @@ enum ElevenLabsClient {
 
         // Cache hit (disk or Firebase Storage) — no API call, no characters
         // consumed. Always check before API key — even if the key is removed
-        // later, previously-cached phrases still play.
-        let key = "elevenlabs-\(MediaCache.shaKey("\(voiceId)|\(trimmed)"))"
+        // later, previously-cached phrases still play. The model id is part of
+        // the key so switching models (e.g. off the retired English-only one)
+        // regenerates fresh audio instead of serving stale blobs.
+        let key = "elevenlabs-\(MediaCache.shaKey("\(voiceId)|\(modelId)|\(trimmed)"))"
         if let cached = await MediaCache.fetch(key: key) {
             print("ElevenLabs cache hit (\(cached.count) bytes)")
             return cached
@@ -48,7 +58,7 @@ enum ElevenLabsClient {
 
         let body: [String: Any] = [
             "text": trimmed,
-            "model_id": "eleven_monolingual_v1",
+            "model_id": modelId,
             "voice_settings": [
                 "stability": 0.5,
                 "similarity_boost": 0.75

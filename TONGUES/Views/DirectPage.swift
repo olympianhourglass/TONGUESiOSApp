@@ -175,6 +175,14 @@ struct DirectPage: View {
     @State private var showConvCreateCover = false
     @State private var isSavingConvDeck = false
 
+    // Suggested-words web. The first three related words appear automatically
+    // under a result; each of those can be expanded into three more (recursive,
+    // depth-capped). Added words merge into whichever save flow is active.
+    @State private var directSuggestionRoot: WordSuggestionNode?
+    @State private var convSuggestionRoots: [UUID: WordSuggestionNode] = [:]
+    @State private var suggestedAdditions: [GeneratedItem] = []
+    private let suggestionDepth = 5
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
@@ -184,6 +192,7 @@ struct DirectPage: View {
                     inputCard
                     actionRow
                     resultSection
+                    directSuggestions
                     saveActions
                 } else {
                     conversationSection
@@ -207,6 +216,10 @@ struct DirectPage: View {
             didApplyInitialMode = true
             if startInConversation { mode = .conversation }
         }
+        .onChange(of: mode) { _, _ in
+            // Suggestions belong to the mode that produced them.
+            resetSuggestions()
+        }
         .alert(L("Something went wrong"), isPresented: errorBinding) {
             Button(L("OK")) { errorText = nil }
         } message: {
@@ -215,7 +228,7 @@ struct DirectPage: View {
         .sheet(isPresented: $showDeckPicker) {
             if let item = translated?.item {
                 DeckPickerSheet(
-                    itemsToAdd: [item],
+                    itemsToAdd: directSaveItems,
                     sourceLanguage: language,
                     sourceDialect: dialect,
                     onAdded: {
@@ -224,6 +237,7 @@ struct DirectPage: View {
                         onSaved()
                     }
                 )
+                .id(item.id)
             }
         }
         .sheet(isPresented: $showCreateCover) {
@@ -234,9 +248,10 @@ struct DirectPage: View {
                     level: level
                 ) { newTitle, chosenStyle, isPublic in
                     showCreateCover = false
+                    let items = directSaveItems
                     Task {
                         await saveAsNewDeck(
-                            item: item,
+                            items: items,
                             title: newTitle,
                             style: chosenStyle,
                             isPublic: isPublic
@@ -249,7 +264,7 @@ struct DirectPage: View {
         // Conversation-mode save sheets.
         .sheet(isPresented: $showConvDeckPicker) {
             DeckPickerSheet(
-                itemsToAdd: selectedConvItems,
+                itemsToAdd: convSaveItems,
                 sourceLanguage: convLanguage,
                 sourceDialect: convDialect,
                 onAdded: {
@@ -526,6 +541,127 @@ struct DirectPage: View {
         }
     }
 
+    // MARK: Suggested words
+
+    // The three auto-suggestions under a direct translation, each expandable.
+    @ViewBuilder
+    private var directSuggestions: some View {
+        if let root = directSuggestionRoot {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(L("Related words"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 11))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                suggestionTree(for: root)
+            }
+        }
+    }
+
+    // The three auto-suggestions under one conversation study-pick, indented
+    // under its word.
+    @ViewBuilder
+    private func convItemSuggestions(for item: GeneratedItem) -> some View {
+        if let root = convSuggestionRoots[item.id],
+           root.isLoading || !root.children.isEmpty || root.errorText != nil {
+            suggestionTree(for: root)
+                .padding(.leading, 44)
+                .padding(.trailing, 14)
+                .padding(.bottom, 12)
+        }
+    }
+
+    // Shared body of a root's suggestion area: the loaded children, a loading
+    // row while the first three arrive, or an error with retry.
+    @ViewBuilder
+    private func suggestionTree(for root: WordSuggestionNode) -> some View {
+        if !root.children.isEmpty {
+            SuggestionChildrenView(
+                nodes: root.children,
+                maxDepth: suggestionDepth,
+                palette: .light,
+                onAdd: addSuggestion,
+                onExpand: expandSuggestion
+            )
+        } else if root.isLoading {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(L("Finding related words…"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        } else if let err = root.errorText {
+            HStack(spacing: 8) {
+                Text(err)
+                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .foregroundStyle(.red)
+                Button(L("Retry")) {
+                    Haptics.light()
+                    expandSuggestion(root)
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.black)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func addSuggestion(_ node: WordSuggestionNode) {
+        Haptics.light()
+        node.isAdded = true
+        if !suggestedAdditions.contains(where: { $0.word.lowercased() == node.item.word.lowercased() }) {
+            suggestedAdditions.append(node.item)
+        }
+    }
+
+    // Loads a node's related words (once). Recursion is capped at
+    // `suggestionDepth`. The avoid-list is every word on screen so re-expanding
+    // never repeats one. Uses the conversation-detected language when active.
+    private func expandSuggestion(_ node: WordSuggestionNode) {
+        guard node.depth < suggestionDepth, !node.isLoading, node.children.isEmpty else { return }
+        node.isLoading = true
+        node.errorText = nil
+        let avoid = Array(wordsOnScreen())
+        let lang = mode == .conversation ? convLanguage : language
+        let dia = mode == .conversation ? convDialect : dialect
+        Task { @MainActor in
+            do {
+                let related = try await DeckGenerator.suggestRelatedWords(
+                    to: node.item,
+                    language: lang,
+                    dialect: dia,
+                    level: level,
+                    count: 3,
+                    avoid: avoid
+                )
+                node.children = related.map { WordSuggestionNode(item: $0, depth: node.depth + 1) }
+                node.isLoading = false
+            } catch {
+                node.errorText = L("Couldn't load suggestions.")
+                node.isLoading = false
+            }
+        }
+    }
+
+    private func wordsOnScreen() -> Set<String> {
+        var set = Set<String>()
+        if let item = translated?.item { set.insert(item.word.lowercased()) }
+        if let analysis = conversationAnalysis {
+            for i in analysis.items { set.insert(i.word.lowercased()) }
+        }
+        if let root = directSuggestionRoot { set.formUnion(root.wordsInSubtree()) }
+        for root in convSuggestionRoots.values { set.formUnion(root.wordsInSubtree()) }
+        for added in suggestedAdditions { set.insert(added.word.lowercased()) }
+        return set
+    }
+
+    private func resetSuggestions() {
+        directSuggestionRoot = nil
+        convSuggestionRoots = [:]
+        suggestedAdditions = []
+    }
+
     // MARK: Translate
 
     @MainActor
@@ -543,7 +679,12 @@ struct DirectPage: View {
                 dialect: dialect
             )
             Haptics.success()
+            resetSuggestions()
             translated = result
+            // Auto-surface the first three related words; each expandable.
+            let root = WordSuggestionNode(item: result.item, depth: 0)
+            directSuggestionRoot = root
+            expandSuggestion(root)
         } catch {
             Haptics.error()
             errorText = error.localizedDescription
@@ -738,6 +879,7 @@ struct DirectPage: View {
                 VStack(spacing: 0) {
                     ForEach(analysis.items) { item in
                         convItemRow(item)
+                        convItemSuggestions(for: item)
                         if item.id != analysis.items.last?.id {
                             Divider().padding(.leading, 16)
                         }
@@ -814,12 +956,12 @@ struct DirectPage: View {
                 Haptics.medium()
                 showConvCreateCover = true
             }
-            .disabled(selectedConvItems.isEmpty || isSavingConvDeck)
+            .disabled(convSaveItems.isEmpty || isSavingConvDeck)
             ActionCard(title: L("Save to Deck"), systemImage: "plus.circle", isPrimary: true) {
                 Haptics.medium()
                 showConvDeckPicker = true
             }
-            .disabled(selectedConvItems.isEmpty || isSavingConvDeck)
+            .disabled(convSaveItems.isEmpty || isSavingConvDeck)
         }
     }
 
@@ -832,6 +974,16 @@ struct DirectPage: View {
     private var selectedConvItems: [GeneratedItem] {
         guard let analysis = conversationAnalysis else { return [] }
         return analysis.items.filter { selectedConvItemIDs.contains($0.id) }
+    }
+    // Selected study picks plus any related words the learner added, deduped.
+    private var convSaveItems: [GeneratedItem] {
+        var out = selectedConvItems
+        var seen = Set(out.map { $0.word.lowercased() })
+        for s in suggestedAdditions where !seen.contains(s.word.lowercased()) {
+            out.append(s)
+            seen.insert(s.word.lowercased())
+        }
+        return out.map { $0.withSource(.conversation) }
     }
     private var convDeckTitle: String { "Conversation – Picks" }
 
@@ -886,8 +1038,16 @@ struct DirectPage: View {
                 level: level
             )
             Haptics.success()
+            resetSuggestions()
             conversationAnalysis = analysis
             selectedConvItemIDs = Set(analysis.items.map(\.id))
+            // Auto-surface three related words under each study-pick; each of
+            // those can be expanded into three more.
+            for item in analysis.items {
+                let root = WordSuggestionNode(item: item, depth: 0)
+                convSuggestionRoots[item.id] = root
+                expandSuggestion(root)
+            }
         } catch {
             Haptics.error()
             errorText = error.localizedDescription
@@ -896,7 +1056,7 @@ struct DirectPage: View {
 
     @MainActor
     private func saveConversationAsNewDeck(title: String, style: DeckCoverStyle, isPublic: Bool) async {
-        let items = selectedConvItems
+        let items = convSaveItems
         guard !items.isEmpty else { return }
         isSavingConvDeck = true
         defer { isSavingConvDeck = false }
@@ -934,6 +1094,7 @@ struct DirectPage: View {
         conversationTranscript = ""
         conversationAnalysis = nil
         selectedConvItemIDs = []
+        resetSuggestions()
     }
 
     // MARK: Save flows
@@ -941,6 +1102,7 @@ struct DirectPage: View {
     private func clear() {
         inputText = ""
         translated = nil
+        resetSuggestions()
     }
 
     private func deckTitle(for item: GeneratedItem) -> String {
@@ -948,23 +1110,36 @@ struct DirectPage: View {
         return "\(label) – Direct"
     }
 
+    // The translated word plus any related words the learner added, deduped.
+    private var directSaveItems: [GeneratedItem] {
+        guard let item = translated?.item else { return [] }
+        var out = [item]
+        var seen = Set([item.word.lowercased()])
+        for s in suggestedAdditions where !seen.contains(s.word.lowercased()) {
+            out.append(s)
+            seen.insert(s.word.lowercased())
+        }
+        return out.map { $0.withSource(.direct) }
+    }
+
     @MainActor
     private func saveAsNewDeck(
-        item: GeneratedItem,
+        items: [GeneratedItem],
         title: String,
         style: DeckCoverStyle,
         isPublic: Bool
     ) async {
+        guard !items.isEmpty else { return }
         isSavingNewDeck = true
         defer { isSavingNewDeck = false }
         let deck = GeneratedDeck(
             title: title,
-            items: [item.withLanguage(language)],
+            items: items.map { $0.withLanguage(language) },
             language: language,
             dialect: dialect,
             level: level,
             contentType: "Words",
-            amount: "1",
+            amount: "\(items.count)",
             tones: [],
             interests: [],
             userPrompt: "Direct translation",

@@ -237,8 +237,10 @@ struct StudyView: View {
     }
 
     // How long the finger must stay down before the quick-actions menu
-    // opens. Shorter than this on release counts as a tap.
-    private let quickActionHoldThreshold: TimeInterval = 0.35
+    // opens. Shorter than this on release counts as a tap. Kept short so
+    // the menu feels immediate on a deliberate hold while still leaving
+    // room for a quick tap to fall through to Generate.
+    private let quickActionHoldThreshold: TimeInterval = 0.2
 
     // Single-gesture press/drag/release, timed by hand so tap vs.
     // long-press is unambiguous:

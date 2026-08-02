@@ -24,6 +24,14 @@ final class AuthService {
     // every fresh login. Transient — not persisted.
     var didJustAuthenticate: Bool = false
 
+    // Whether the most recent interactive sign-in actually CREATED a new
+    // Firebase account (vs. matching an existing one). Sourced from Firebase's
+    // `AuthDataResult.additionalUserInfo.isNewUser`, so it's reliable even when
+    // a returning user walks the new-user onboarding path and then authenticates
+    // into an account they already have. Consumed by onboarding to decide
+    // whether to seed the starter decks. Transient — not persisted.
+    var lastSignInWasNewUser: Bool = false
+
     private var currentNonce: String?
 
     private init() {}
@@ -55,9 +63,10 @@ final class AuthService {
                 rawNonce: nonce,
                 fullName: credential.fullName
             )
-            _ = try await Auth.auth().signIn(with: firebaseCredential)
+            let result = try await Auth.auth().signIn(with: firebaseCredential)
             isAuthenticated = true
             didJustAuthenticate = true
+            lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? false
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -88,9 +97,10 @@ final class AuthService {
                 withIDToken: idToken,
                 accessToken: result.user.accessToken.tokenString
             )
-            _ = try await Auth.auth().signIn(with: credential)
+            let signInResult = try await Auth.auth().signIn(with: credential)
             isAuthenticated = true
             didJustAuthenticate = true
+            lastSignInWasNewUser = signInResult.additionalUserInfo?.isNewUser ?? false
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -109,9 +119,11 @@ final class AuthService {
     /// pre-auth data.
     func signInAnonymously() async {
         do {
-            _ = try await Auth.auth().signInAnonymously()
+            let result = try await Auth.auth().signInAnonymously()
             isAuthenticated = true
             didJustAuthenticate = true
+            // A fresh anonymous account is always new.
+            lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? true
             lastError = nil
         } catch {
             lastError = error.localizedDescription
@@ -152,9 +164,10 @@ final class AuthService {
             verificationCode: code
         )
         do {
-            _ = try await Auth.auth().signIn(with: credential)
+            let result = try await Auth.auth().signIn(with: credential)
             isAuthenticated = true
             didJustAuthenticate = true
+            lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? false
             lastError = nil
             return true
         } catch {
@@ -175,9 +188,10 @@ final class AuthService {
     @discardableResult
     func signInWithEmail(_ email: String, password: String) async -> Bool {
         do {
-            _ = try await Auth.auth().signIn(withEmail: email, password: password)
+            let result = try await Auth.auth().signIn(withEmail: email, password: password)
             isAuthenticated = true
             didJustAuthenticate = true
+            lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? false
             lastError = nil
             return true
         } catch {
@@ -189,9 +203,11 @@ final class AuthService {
     @discardableResult
     func createUserWithEmail(_ email: String, password: String) async -> Bool {
         do {
-            _ = try await Auth.auth().createUser(withEmail: email, password: password)
+            let result = try await Auth.auth().createUser(withEmail: email, password: password)
             isAuthenticated = true
             didJustAuthenticate = true
+            // Freshly created account — new by definition.
+            lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? true
             lastError = nil
             return true
         } catch {

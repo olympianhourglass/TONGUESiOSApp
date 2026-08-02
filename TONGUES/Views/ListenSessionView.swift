@@ -7,6 +7,11 @@ struct ListenSessionView: View {
     @Environment(\.dismiss) private var dismiss
     let deck: DeckDocument
 
+    // Hardware-keyboard transport (iPad/Mac): ← acts as Back, → as Next. A
+    // focusable container receives the key presses.
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @FocusState private var keyboardNavFocused: Bool
+
     @State private var currentIndex = 0
     @State private var isPaused = false
     @State private var dragOffset: CGFloat = 0
@@ -182,6 +187,14 @@ struct ListenSessionView: View {
         // onAppear timing passes below can miss the freshly-presented
         // controller (e.g. when opened from a pushed DeckDetailView).
         .background(StatusBarRefresher().frame(width: 0, height: 0))
+        // Hardware-keyboard transport (iPad/Mac): ← = Back, → = Next. The
+        // focusable container receives the key presses; the focus ring is
+        // hidden so no outline appears over the player.
+        .focusable(supportsArrowKeyNav)
+        .focusEffectDisabled()
+        .focused($keyboardNavFocused)
+        .onKeyPress(.leftArrow) { handleTransportLeftArrow() }
+        .onKeyPress(.rightArrow) { handleTransportRightArrow() }
         .onAppear {
             // This view always has a dark radial backdrop, so its status
             // bar must read as white content no matter which surface
@@ -218,6 +231,10 @@ struct ListenSessionView: View {
             // the study audio.
             ambient.set(ambientSoundId, for: .sound)
             ambient.set(ambientMusicId, for: .music)
+            // Take focus so the ← / → keys drive transport immediately.
+            if supportsArrowKeyNav {
+                keyboardNavFocused = true
+            }
         }
         .onDisappear {
             // Release the white-bar override so the presenter (a tab or
@@ -622,6 +639,29 @@ struct ListenSessionView: View {
         chainTask = nil
         guard currentIndex > 0 else { return }
         currentIndex -= 1
+    }
+
+    // Arrow-key transport only where a hardware keyboard is expected —
+    // Mac Catalyst or an iPad in a regular-width layout. iPhone is untouched.
+    private var supportsArrowKeyNav: Bool {
+        MacLayout.isMac || horizontalSizeClass == .regular
+    }
+
+    // ← / → mirror the Back / Next transport buttons, but stop at the ends
+    // rather than wrapping or dismissing: left is ignored at the first item
+    // (matching the disabled Back button), and right is ignored at the last
+    // item so the arrow key never ends the session — unlike the Next button,
+    // which intentionally completes and dismisses on the final track.
+    private func handleTransportLeftArrow() -> KeyPress.Result {
+        guard supportsArrowKeyNav, !isAtFirst else { return .ignored }
+        goBack()
+        return .handled
+    }
+
+    private func handleTransportRightArrow() -> KeyPress.Result {
+        guard supportsArrowKeyNav, !isAtLast else { return .ignored }
+        goNext()
+        return .handled
     }
 
     private func togglePause() {

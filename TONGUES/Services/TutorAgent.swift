@@ -1,7 +1,7 @@
 import Foundation
 
 // The tool-using tutor. ChatViewModel routes a user turn here (instead
-// of ConversationClient.sendTurn) when the message looks like a meta /
+// of ConversationClient.sendReply) when the message looks like a meta /
 // planning request — "what should I work on?", "make me a study plan",
 // "build me a deck about X", "how am I doing?".
 //

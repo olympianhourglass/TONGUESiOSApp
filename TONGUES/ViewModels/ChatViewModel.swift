@@ -120,7 +120,8 @@ final class ChatViewModel {
         if !countedConversationIds.contains(current.id) {
             countedConversationIds.insert(current.id)
             let convId = current.id
-            Task { try? await XPService.recordConversationSession(conversationId: convId) }
+            let convLanguage = current.language
+            Task { try? await XPService.recordConversationSession(conversationId: convId, language: convLanguage) }
         }
         current.messages.append(userMessage)
         conversation = current

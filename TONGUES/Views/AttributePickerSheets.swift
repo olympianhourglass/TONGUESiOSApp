@@ -204,7 +204,7 @@ struct DialectPickerSheet: View {
                                     if dialect.speakers > 0 {
                                         Text(formatSpeakers(dialect.speakers))
                                             .font(.custom("NeueHaasDisplay-Light", size: 12))
-                                            .foregroundStyle(.red)
+                                            .foregroundStyle(Color(white: 0.5))
                                     }
                                 }
                                 Spacer()

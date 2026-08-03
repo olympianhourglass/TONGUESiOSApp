@@ -337,6 +337,9 @@ enum DeckGenerator {
             schema: wordInfoSchema(language: language),
             userPrompt: prompt,
             system: systemPolicy(for: language),
+            // Opus intentionally: rich, accurate word metadata is quality-
+            // sensitive. Stated explicitly so it doesn't ride the library default.
+            model: "claude-opus-4-7",
             as: WordInfo.self
         )
     }
@@ -399,6 +402,9 @@ enum DeckGenerator {
             schema: etymologySchema(),
             userPrompt: prompt,
             system: systemPolicy(for: sourceLanguage),
+            // Opus intentionally: etymology needs depth/accuracy. Explicit so it
+            // doesn't ride the library default.
+            model: "claude-opus-4-7",
             as: Etymology.self
         )
     }
@@ -523,6 +529,9 @@ enum DeckGenerator {
             schema: grammarBreakdownSchema(),
             userPrompt: prompt,
             system: systemPolicy(for: language),
+            // Opus intentionally: pedagogical grammar breakdowns are quality-
+            // sensitive. Explicit so it doesn't ride the library default.
+            model: "claude-opus-4-7",
             as: GrammarBreakdown.self
         )
     }
@@ -1020,6 +1029,8 @@ enum DeckGenerator {
                 toolDescription: "Submit the \(language) word that aligns to the \(native) word.",
                 schema: schema,
                 userPrompt: prompt,
+                // Explicit so it doesn't ride the library default (now Haiku).
+                model: "claude-opus-4-7",
                 as: CorrespondingForeignWord.self
             )
             let trimmed = result.word.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1072,6 +1083,8 @@ enum DeckGenerator {
                 toolDescription: "Submit aligned \(native) tokens for the foreign word.",
                 schema: schema,
                 userPrompt: prompt,
+                // Explicit so it doesn't ride the library default (now Haiku).
+                model: "claude-opus-4-7",
                 as: CorrespondingTokens.self
             )
             return result.tokens

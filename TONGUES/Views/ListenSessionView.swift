@@ -54,6 +54,12 @@ struct ListenSessionView: View {
     // ambient channels. Persisted so the choice carries across sessions.
     @AppStorage("listenAmbientSound") private var ambientSoundId: String = ""
     @AppStorage("listenAmbientMusic") private var ambientMusicId: String = ""
+    // Chosen background gradient for the session backdrop.
+    @AppStorage("listenGradientTheme") private var gradientThemeRaw = ListenGradientTheme.original.rawValue
+
+    private var selectedGradientTheme: ListenGradientTheme {
+        ListenGradientTheme(rawValue: gradientThemeRaw) ?? .original
+    }
 
     // Looping ambient players layered under the study audio. Held as a
     // stable reference for the lifetime of the session view.
@@ -103,11 +109,12 @@ struct ListenSessionView: View {
                 let phase = sin(t * .pi * 2 / 9.0) * 0.5 + 0.5  // 0…1
                 let amplitude: Double = SpeechClient.shared.isSpeaking ? 0.04 : 0.015
                 let breath = 1.0 + phase * amplitude
+                let stops = selectedGradientTheme.colors
                 RadialGradient(
                     gradient: Gradient(stops: [
-                        .init(color: Color(red: 10/255, green: 10/255, blue: 10/255), location: 0.0),
-                        .init(color: Color(red: 83/255, green: 104/255, blue: 120/255), location: 0.167),
-                        .init(color: Color(red: 229/255, green: 228/255, blue: 226/255), location: 0.5)
+                        .init(color: stops[0], location: 0.0),
+                        .init(color: stops[1], location: 0.167),
+                        .init(color: stops[2], location: 0.5)
                     ]),
                     center: .top,
                     startRadius: 0,
@@ -346,14 +353,21 @@ struct ListenSessionView: View {
     private var wordSection: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let item = currentItem {
+                // Light gradients (Arctic, Aura) need dark session text; the
+                // rest keep the white treatment.
+                let textColor: Color = selectedGradientTheme.usesDarkText
+                    ? .black.opacity(0.7)
+                    : .white
                 Text(item.word)
                     .font(.custom("NeueHaasDisplay-Mediu", size: 56))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(textColor)
                     .lineLimit(2)
                     .minimumScaleFactor(0.5)
                 Text(item.translation)
                     .font(.custom("NeueHaasDisplay-Light", size: 22))
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(selectedGradientTheme.usesDarkText
+                        ? .black.opacity(0.7)
+                        : .white.opacity(0.75))
                     .lineLimit(2)
             }
         }
@@ -765,6 +779,7 @@ struct ListenSessionView: View {
             do {
                 let sessionGrants = try await XPService.awardAudioSession(
                     deckId: deckId,
+                    language: deck.language,
                     secondsListened: elapsed,
                     cardsAdvanced: advanced,
                     playlistCompleted: completed
@@ -791,12 +806,13 @@ struct ListenSessionView: View {
                 .onTapGesture { /* swallow taps so they don't pass through */ }
 
             VStack(spacing: 0) {
-                // Swipeable settings: page 1 is the original playback
-                // options; page 2 layers ambient background audio. Page dots
-                // hint that a second page exists.
+                // Swipeable settings: page 1 is the original playback options;
+                // page 2 layers ambient background audio; page 3 picks the
+                // background color gradient. Page dots hint at the extra pages.
                 TabView {
                     optionsPageOne
                     ambientPage
+                    backgroundColorPage
                 }
                 .tabViewStyle(.page(indexDisplayMode: .always))
                 .indexViewStyle(.page(backgroundDisplayMode: .interactive))
@@ -912,6 +928,63 @@ struct ListenSessionView: View {
         }
         .padding(.horizontal, 24)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // Page 3 — background color gradient. Each option is a circle previewing
+    // its gradient; tapping swaps the session backdrop live.
+    private var backgroundColorPage: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(L("COLOR"))
+                .font(.custom("NeueHaasDisplay-Black", size: 22))
+                .foregroundStyle(.white)
+                .padding(.top, 96)
+
+            Text(L("Change the background gradient of your session."))
+                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .foregroundStyle(.white.opacity(0.6))
+                .padding(.top, 8)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 20) {
+                ForEach(ListenGradientTheme.allCases) { theme in
+                    gradientSwatch(theme)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .offset(y: -32)
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func gradientSwatch(_ theme: ListenGradientTheme) -> some View {
+        let selected = selectedGradientTheme == theme
+        return Button {
+            Haptics.light()
+            gradientThemeRaw = theme.rawValue
+        } label: {
+            VStack(spacing: 10) {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: theme.colors,
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(width: 60, height: 60)
+                    .overlay(Circle().stroke(.white.opacity(0.15), lineWidth: 0.5))
+                    .overlay(Circle().stroke(.white, lineWidth: selected ? 2.5 : 0))
+                Text(L(theme.displayName))
+                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .foregroundStyle(selected ? .white : .white.opacity(0.6))
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // One ambient channel: a label above a horizontal strip of pills —
@@ -1075,6 +1148,78 @@ private struct StatusBarRefresher: UIViewControllerRepresentable {
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
             StatusBarStyleSwap.installAndRefresh()
+        }
+    }
+}
+
+// MARK: - Background gradient themes
+
+// Selectable backdrops for the listening session. `colors` are the three stops
+// top → bottom, mapped onto the radial gradient's 0.0 / 0.167 / 0.5 locations
+// (the same layout the original uses).
+enum ListenGradientTheme: String, CaseIterable, Identifiable {
+    case original
+    case arctic
+    case peach
+    case myst
+    case aura
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .original: return "Original"
+        case .arctic:   return "Arctic"
+        case .peach:    return "Peach"
+        case .myst:     return "Myst"
+        case .aura:     return "Aura"
+        }
+    }
+
+    // The light themes need dark session text; the rest keep white.
+    var usesDarkText: Bool {
+        switch self {
+        case .arctic, .aura: return true
+        case .original, .peach, .myst: return false
+        }
+    }
+
+    var colors: [Color] {
+        switch self {
+        case .original:
+            return [
+                Color(red: 10/255, green: 10/255, blue: 10/255),
+                Color(red: 83/255, green: 104/255, blue: 120/255),
+                Color(red: 229/255, green: 228/255, blue: 226/255)
+            ]
+        case .arctic:
+            // 54728B → EFF3F6 → 8FA1A5
+            return [
+                Color(red: 0x54/255, green: 0x72/255, blue: 0x8B/255),
+                Color(red: 0xEF/255, green: 0xF3/255, blue: 0xF6/255),
+                Color(red: 0x8F/255, green: 0xA1/255, blue: 0xA5/255)
+            ]
+        case .peach:
+            // 4E2C23 → E2725B → FFDAB9
+            return [
+                Color(red: 0x4E/255, green: 0x2C/255, blue: 0x23/255),
+                Color(red: 0xE2/255, green: 0x72/255, blue: 0x5B/255),
+                Color(red: 0xFF/255, green: 0xDA/255, blue: 0xB9/255)
+            ]
+        case .myst:
+            // AA0003 → BFB4DC → FAFBFD
+            return [
+                Color(red: 0xAA/255, green: 0x00/255, blue: 0x03/255),
+                Color(red: 0xBF/255, green: 0xB4/255, blue: 0xDC/255),
+                Color(red: 0xFA/255, green: 0xFB/255, blue: 0xFD/255)
+            ]
+        case .aura:
+            // 9993A5 → CBD0D2 → E5E4E2
+            return [
+                Color(red: 0x99/255, green: 0x93/255, blue: 0xA5/255),
+                Color(red: 0xCB/255, green: 0xD0/255, blue: 0xD2/255),
+                Color(red: 0xE5/255, green: 0xE4/255, blue: 0xE2/255)
+            ]
         }
     }
 }

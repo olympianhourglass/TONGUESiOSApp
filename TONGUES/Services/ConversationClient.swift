@@ -219,7 +219,9 @@ enum ConversationClient {
             schema: schema,
             messages: messages,
             system: system,
-            model: "claude-opus-4-7",
+            // Off the critical path (post-turn correction analysis), so Sonnet
+            // is ample here — no need for Opus-class cost.
+            model: "claude-sonnet-4-6",
             maxTokens: 700,
             as: Decoded.self
         )

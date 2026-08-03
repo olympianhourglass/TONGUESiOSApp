@@ -361,7 +361,7 @@ struct LibraryView: View {
                 NavigationLink {
                     let topPracticed = vm.favoriteTopicDeckSummaries()
                     StatisticsView(
-                        reviewsByLanguage: vm.reviewsByLanguage,
+                        languageBreakdown: vm.preferredLanguageBreakdown,
                         itemsLearned: vm.itemsTouched,
                         cardsEncountered: vm.totalCardsReviewed,
                         wordsInLibrary: vm.libraryItemCount(forContentType: "Words"),
@@ -407,7 +407,7 @@ struct LibraryView: View {
     // saved study sessions. Falls back to an em-dash until any session has
     // been logged.
     private var mostPracticedLanguage: String {
-        vm.reviewsByLanguage.max { $0.value < $1.value }?.key ?? "—"
+        vm.mostPracticedLanguage
     }
 
     private var streakLabel: String {
@@ -494,9 +494,16 @@ struct LibraryView: View {
     private var deckList: some View {
         VStack(spacing: 0) {
             if vm.isLoading && vm.decks.isEmpty {
-                ProgressView()
-                    .padding(.vertical, 40)
-                    .frame(maxWidth: .infinity)
+                LazyVStack(spacing: 0) {
+                    ForEach(0..<6, id: \.self) { index in
+                        LibraryDeckRowSkeleton()
+                        if index < 5 {
+                            Divider().padding(.horizontal, 8)
+                        }
+                    }
+                }
+                .modifier(LibrarySkeletonShimmer())
+                .padding(.top, 4)
             } else if let error = vm.errorText, vm.decks.isEmpty {
                 Text(error)
                     .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(14)))
@@ -994,6 +1001,61 @@ private struct LibraryDeckRow: View {
         .padding(.horizontal, 8)
         .padding(.vertical, MacLayout.s(14))
         .contentShape(Rectangle())
+    }
+}
+
+// Placeholder that mirrors `LibraryDeckRow`'s layout (cover thumbnail +
+// title + subtitle) while decks load, shown under a shared shimmer sweep in
+// place of a bare spinner.
+private struct LibraryDeckRowSkeleton: View {
+    private let fill = Color(white: 0.91)
+
+    var body: some View {
+        HStack(alignment: .center, spacing: MacLayout.s(16)) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(fill)
+                .frame(width: MacLayout.s(60), height: MacLayout.s(36))
+
+            VStack(alignment: .leading, spacing: 8) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(fill)
+                    .frame(width: MacLayout.s(150), height: MacLayout.f(14))
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(fill)
+                    .frame(width: MacLayout.s(96), height: MacLayout.f(11))
+            }
+
+            Spacer(minLength: 12)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, MacLayout.s(14))
+    }
+}
+
+// Sweeps a soft highlight left-to-right across its content, looping forever —
+// the shimmer that signals skeleton placeholders are loading.
+private struct LibrarySkeletonShimmer: ViewModifier {
+    @State private var phase: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color.white.opacity(0.7), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width)
+                    .offset(x: phase * geo.size.width)
+                }
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                    phase = 1
+                }
+            }
     }
 }
 

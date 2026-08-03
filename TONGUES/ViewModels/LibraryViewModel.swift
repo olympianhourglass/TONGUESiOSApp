@@ -16,6 +16,13 @@ final class LibraryViewModel {
     // saved to Firestore. Source of truth for the library's "Preferred
     // Language" stat — biggest tally wins.
     var reviewsByLanguage: [String: Int] = [:]
+    // Time-weighted "Preferred Language" inputs. Flashcard time (real, from
+    // StudySession durations) + `learningSecondsByLanguage` (audio real +
+    // conversation/comprehension estimates, snapshot from XPService) form the
+    // time half; `itemsByLanguage` is the lower-weighted content half.
+    var flashcardSecondsByLanguage: [String: Double] = [:]
+    var learningSecondsByLanguage: [String: Double] = [:]
+    var itemsByLanguage: [String: Int] = [:]
     // Number of cards reviewed per calendar day (start-of-day in the user's
     // current calendar). Source data for both the daily streak walk and
     // the Statistics tab's contribution heatmap, which colors cells by the
@@ -118,11 +125,31 @@ final class LibraryViewModel {
     // session, but tight enough that a real walk-away clearly does.
     private static let sessionGapThreshold: TimeInterval = 5 * 60
 
+    // Generous upper bound on active time per reviewed card. A single
+    // StudySession's raw wall-clock (`completedAt - startedAt`) can balloon to
+    // many hours when the app is backgrounded/suspended mid-session and the
+    // session finalizes long after real activity stopped — producing absurd
+    // "longest session" values (e.g. 12h) and inflating the time-weighted
+    // preferred-language score. We cap credited time against the work actually
+    // done: at most this many seconds per card reviewed.
+    private static let maxSecondsPerCard: TimeInterval = 120
+
+    // Real active time to credit a single flashcard session: the wall-clock
+    // duration, clamped so it can't exceed `maxSecondsPerCard` per reviewed
+    // card. Sessions with corrupt ordering (completedAt < startedAt) clamp to 0.
+    static func activeSeconds(for session: StudySession) -> TimeInterval {
+        let wallClock = max(0, session.completedAt.timeIntervalSince(session.startedAt))
+        let workCap = Double(max(session.totalReviewed, 1)) * maxSecondsPerCard
+        return min(wallClock, workCap)
+    }
+
     // Reloads only if the last load started more than `minInterval` seconds
     // ago (and one isn't already in flight). Called on every Library
     // appearance so returning from the Study tab re-aggregates the latest
     // sessions — the fix for stats that "don't update frequently enough."
-    func refreshIfNeeded(minInterval: TimeInterval = 3) async {
+    // The 20s window keeps stats fresh while avoiding a full (unbounded)
+    // session re-read on every quick tab bounce, to hold down Firestore reads.
+    func refreshIfNeeded(minInterval: TimeInterval = 20) async {
         if isLoading { return }
         if let last = lastLoadStartedAt, Date().timeIntervalSince(last) < minInterval {
             return
@@ -159,16 +186,29 @@ final class LibraryViewModel {
             let calendar = Calendar.current
             var counts: [Date: Int] = [:]
             var byDeck: [String: Int] = [:]
+            var flashcardSeconds: [String: Double] = [:]
             for session in sessions {
                 totals[session.language, default: 0] += session.totalReviewed
                 let day = calendar.startOfDay(for: session.completedAt)
                 counts[day, default: 0] += session.totalReviewed
                 byDeck[session.deckId, default: 0] += session.totalReviewed
+                // Real flashcard time per language for the time-weighted score,
+                // clamped so a suspended/backgrounded session can't inflate it.
+                flashcardSeconds[session.language, default: 0] += Self.activeSeconds(for: session)
+            }
+
+            // Amount of content per language — the lower-weighted half of the
+            // preferred-language score.
+            var itemsByLang: [String: Int] = [:]
+            for deck in fetched {
+                itemsByLang[deck.language, default: 0] += deck.items.count
             }
 
             decks = fetched
             urgencies = urgencyMap
             reviewsByLanguage = totals
+            flashcardSecondsByLanguage = flashcardSeconds
+            itemsByLanguage = itemsByLang
             practiceCountsByDay = counts
             reviewsByDeck = byDeck
             longestSessionSeconds = Self.computeLongestMetaSession(
@@ -226,6 +266,56 @@ final class LibraryViewModel {
     // is the raw "how many cards have I encountered" volume, so it's ≥ learned.
     var totalCardsReviewed: Int {
         reviewsByLanguage.values.reduce(0, +)
+    }
+
+    // Time-weighted "Preferred Language" distribution: 70% time share (audio +
+    // flashcard + conversation + comprehension) + 30% content share (words in
+    // that language), so engagement leads but generated content still counts.
+    // Sorted heaviest-first; percents sum to ~1. Drives both the Library metric
+    // and the Statistics card — including the ordering of the list.
+    var preferredLanguageBreakdown: [(language: String, percent: Double)] {
+        var languages = Set<String>()
+        languages.formUnion(flashcardSecondsByLanguage.keys)
+        languages.formUnion(learningSecondsByLanguage.keys)
+        languages.formUnion(itemsByLanguage.keys)
+        guard !languages.isEmpty else { return [] }
+
+        var timeByLang: [String: Double] = [:]
+        for lang in languages {
+            timeByLang[lang] = (flashcardSecondsByLanguage[lang] ?? 0)
+                + (learningSecondsByLanguage[lang] ?? 0)
+        }
+        let totalTime = timeByLang.values.reduce(0, +)
+        let totalContent = itemsByLanguage.values.reduce(0, +)
+
+        let timeWeight = 0.7
+        let contentWeight = 0.3
+        var scores: [(String, Double)] = []
+        for lang in languages {
+            let timeShare = totalTime > 0 ? (timeByLang[lang] ?? 0) / totalTime : 0
+            let contentShare = totalContent > 0
+                ? Double(itemsByLanguage[lang] ?? 0) / Double(totalContent)
+                : 0
+            let score: Double
+            if totalTime <= 0 {
+                score = contentShare            // no sessions yet → content only
+            } else if totalContent <= 0 {
+                score = timeShare
+            } else {
+                score = timeWeight * timeShare + contentWeight * contentShare
+            }
+            if score > 0 { scores.append((lang, score)) }
+        }
+        let total = scores.reduce(0.0) { $0 + $1.1 }
+        guard total > 0 else { return [] }
+        return scores
+            .sorted { $0.1 > $1.1 }
+            .map { (language: $0.0, percent: $0.1 / total) }
+    }
+
+    // Top language by the blended score, for the Library tab's metric card.
+    var mostPracticedLanguage: String {
+        preferredLanguageBreakdown.first?.language ?? "—"
     }
 
     var itemsTouched: Int {
@@ -377,9 +467,9 @@ final class LibraryViewModel {
         var intervals: [(start: Date, end: Date)] = []
         intervals.reserveCapacity(studySessions.count + decks.count)
         for session in studySessions {
-            // Guard against malformed records where completedAt is somehow
-            // earlier than startedAt — treat them as a zero-length point.
-            let end = max(session.startedAt, session.completedAt)
+            // Use active (work-capped) duration, not raw wall-clock, so a
+            // session left open in the background can't produce a 12h interval.
+            let end = session.startedAt.addingTimeInterval(activeSeconds(for: session))
             intervals.append((session.startedAt, end))
         }
         for deck in decks {
@@ -413,6 +503,7 @@ final class LibraryViewModel {
         conversationSessionCount = state.conversationSessionCount
         artifactSessionCount = state.artifactSessionCount
         comprehensionSessionCount = state.comprehensionSessionCount
+        learningSecondsByLanguage = state.learningSecondsByLanguage
         let calendar = Calendar.current
         var decoded: [Date: Int] = [:]
         for (key, value) in state.xpByDayKey {
@@ -429,7 +520,7 @@ final class LibraryViewModel {
     private static func computeAverageSessionLength(studySessions: [StudySession]) -> TimeInterval {
         guard !studySessions.isEmpty else { return 0 }
         let total = studySessions.reduce(0.0) { acc, session in
-            acc + max(0, session.completedAt.timeIntervalSince(session.startedAt))
+            acc + activeSeconds(for: session)
         }
         return total / Double(studySessions.count)
     }
@@ -441,7 +532,7 @@ final class LibraryViewModel {
         guard !studySessions.isEmpty else { return "" }
         var byLanguage: [String: [(start: Date, end: Date)]] = [:]
         for session in studySessions {
-            let end = max(session.startedAt, session.completedAt)
+            let end = session.startedAt.addingTimeInterval(activeSeconds(for: session))
             byLanguage[session.language, default: []].append((session.startedAt, end))
         }
         var bestLanguage = ""

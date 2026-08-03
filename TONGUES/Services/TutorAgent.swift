@@ -238,7 +238,9 @@ enum TutorAgent {
             toolDescription: "Submit the learner's CEFR placement.",
             schema: schema,
             userPrompt: prompt,
-            model: "claude-sonnet-4-6",
+            // CEFR placement is a simple bounded classification — Haiku handles
+            // it reliably (the structured-output retry loop covers rare misses).
+            model: "claude-haiku-4-5-20251001",
             maxTokens: 256,
             as: Decoded.self
         )

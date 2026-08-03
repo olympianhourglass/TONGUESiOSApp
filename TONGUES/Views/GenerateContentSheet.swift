@@ -1263,10 +1263,12 @@ struct GenerateContentSheet: View {
 
     private func handleFirstAttempt(_ question: ComprehensionQuestion, correct: Bool) {
         // Count one "comprehension" learning-method session per artifact, the
-        // first time the learner answers any of its questions.
+        // first time the learner answers any of its questions — plus a flat
+        // time estimate for the time-weighted preferred-language score.
         if !didCountComprehensionSession {
             didCountComprehensionSession = true
-            Task { try? await XPService.recordComprehensionSession() }
+            let lang = deck.language
+            Task { try? await XPService.recordComprehensionSession(language: lang, seconds: 60) }
         }
         // One award per question, on the first attempt only: 10 XP for a
         // correct first try, 5 XP for a wrong first guess. Later taps on the

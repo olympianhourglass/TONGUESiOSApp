@@ -7,11 +7,11 @@ import Charts
 // data; the rest is still presentation-only mock data for now — wiring
 // will come once the real metrics pipeline lands.
 struct StatisticsView: View {
-    // Per-language flashcard review totals, sourced from the same Firestore
-    // `studySessions` aggregation that powers the Library tab's "Preferred
-    // Language" metric. Passed in by the parent so we don't duplicate the
-    // fetch; refreshes follow LibraryViewModel.loadDecks().
-    let reviewsByLanguage: [String: Int]
+    // Time-weighted "Preferred Language" distribution (already blended +
+    // sorted by the LibraryViewModel: 70% learning-time share + 30% content
+    // share). Each entry is a language and its share of the total; drives the
+    // card's headline, bar, and ordered list.
+    let languageBreakdown: [(language: String, percent: Double)]
 
     // FSRS-derived "learned so far": cards across every deck that the user
     // has graded at least once. Same urgency math the Library/Study tabs
@@ -95,17 +95,6 @@ struct StatisticsView: View {
     // trend chart. Nil = no touch in progress, the chart renders flat
     // with no scrubber overlay.
     @State private var selectedDayIndex: Int? = nil
-
-    // Languages sorted by review volume, paired with their share of the
-    // user's total practice. Empty array when the user hasn't reviewed
-    // anything yet.
-    private var languageBreakdown: [(language: String, percent: Double)] {
-        let total = reviewsByLanguage.values.reduce(0, +)
-        guard total > 0 else { return [] }
-        return reviewsByLanguage
-            .sorted { $0.value > $1.value }
-            .map { (language: $0.key, percent: Double($0.value) / Double(total)) }
-    }
 
     private var topLanguageName: String {
         languageBreakdown.first?.language ?? "—"

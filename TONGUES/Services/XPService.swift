@@ -39,6 +39,10 @@ struct UserXPState: Codable, Hashable {
     // Conversations the learner has actually messaged in, so each counts toward
     // the method distribution exactly once (new or resumed).
     var conversedConversationIds: [String] = []
+    // Learning time (seconds) per language, accumulated from audio, conversation
+    // and comprehension sessions. Flashcard time is derived separately from the
+    // StudySession durations. Feeds the time-weighted "Preferred Language" score.
+    var learningSecondsByLanguage: [String: Double] = [:]
     // XP earned per calendar day, keyed by "yyyy-MM-dd" (user-local).
     // String keys instead of Date so the dict serializes cleanly through
     // Firestore. Source for the Statistics tab's weekly trend chart.
@@ -59,6 +63,7 @@ struct UserXPState: Codable, Hashable {
         case artifactSessionCount
         case comprehensionSessionCount
         case conversedConversationIds
+        case learningSecondsByLanguage
         case xpByDayKey
     }
 
@@ -87,6 +92,7 @@ struct UserXPState: Codable, Hashable {
         self.artifactSessionCount        = (try? c.decodeIfPresent(Int.self, forKey: .artifactSessionCount)) ?? 0
         self.comprehensionSessionCount   = (try? c.decodeIfPresent(Int.self, forKey: .comprehensionSessionCount)) ?? 0
         self.conversedConversationIds    = (try? c.decodeIfPresent([String].self, forKey: .conversedConversationIds)) ?? []
+        self.learningSecondsByLanguage   = (try? c.decodeIfPresent([String: Double].self, forKey: .learningSecondsByLanguage)) ?? [:]
         self.xpByDayKey                  = (try? c.decodeIfPresent([String: Int].self, forKey: .xpByDayKey)) ?? [:]
     }
 }
@@ -220,6 +226,7 @@ enum XPService {
     @discardableResult
     static func awardAudioSession(
         deckId: String,
+        language: String,
         secondsListened: TimeInterval,
         cardsAdvanced: Int,
         playlistCompleted: Bool
@@ -248,6 +255,10 @@ enum XPService {
             }
             state.audioSessionCount += 1
             mutated = true
+            // Real listening time feeds the time-weighted preferred-language score.
+            if secondsListened > 0, !language.isEmpty {
+                state.learningSecondsByLanguage[language, default: 0] += secondsListened
+            }
             if let multimodal = multimodalGrantIfNeeded(deckId: deckId, state: &state) {
                 grants.append(multimodal)
             }
@@ -356,11 +367,29 @@ enum XPService {
     // conversation so the Statistics learning-method distribution reflects it.
     // Deduped by conversation id, so each conversation counts once whether it's
     // brand new or resumed; repeat turns don't inflate it.
-    static func recordConversationSession(conversationId: String) async throws {
+    static func recordConversationSession(conversationId: String, language: String) async throws {
         var state = try await fetchState()
         guard !state.conversedConversationIds.contains(conversationId) else { return }
         state.conversedConversationIds.append(conversationId)
         state.conversationSessionCount += 1
+        // Flat time estimate per conversation for the time-weighted preferred-
+        // language score (chat has no clean session timer). Undercounts long
+        // conversations, but keeps the write to once-per-conversation.
+        if !language.isEmpty {
+            state.learningSecondsByLanguage[language, default: 0] += 120
+        }
+        try await commit(grants: [], into: &state)
+    }
+
+    // MARK: - Learning time
+
+    // Accumulates learning time (seconds) for a language into the time-weighted
+    // "Preferred Language" score. Counter-only. Used for the sessions that lack
+    // a clean StudySession duration (comprehension answering, etc.).
+    static func recordLearningTime(language: String, seconds: Double) async throws {
+        guard seconds > 0, !language.isEmpty else { return }
+        var state = try await fetchState()
+        state.learningSecondsByLanguage[language, default: 0] += seconds
         try await commit(grants: [], into: &state)
     }
 
@@ -369,9 +398,15 @@ enum XPService {
     // Counter-only (no XP) — records that the learner answered an artifact's
     // comprehension questions. The call site guards to fire once per artifact's
     // question set, so this is comparable to one artifact / one conversation.
-    static func recordComprehensionSession() async throws {
+    // Optionally folds the learning-time credit into the SAME read/write so a
+    // comprehension engagement is one Firestore round-trip, not two. The reader
+    // (which has no language) calls it with the defaults to bump the count only.
+    static func recordComprehensionSession(language: String = "", seconds: Double = 0) async throws {
         var state = try await fetchState()
         state.comprehensionSessionCount += 1
+        if seconds > 0, !language.isEmpty {
+            state.learningSecondsByLanguage[language, default: 0] += seconds
+        }
         try await commit(grants: [], into: &state)
     }
 

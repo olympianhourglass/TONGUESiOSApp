@@ -10,10 +10,16 @@ enum AnthropicClient {
 
     private static let apiKey = Secrets.anthropicAPIKey
 
+    // The default `model` on the helpers below is deliberately the cheapest
+    // tier (Haiku): a safe cost floor so a new call site that forgets to pass
+    // `model:` can never silently bill Opus. Quality-sensitive callers opt UP
+    // explicitly (e.g. DeckGenerator's word-info/etymology/grammar pass Opus).
+    // `maxTokens` stays generous because it's only a ceiling — output tokens
+    // are billed as generated, so a high cap costs nothing on short responses.
     static func sendMessage(
         _ messages: [AnthropicMessage],
         system: String? = nil,
-        model: String = "claude-opus-4-7",
+        model: String = "claude-haiku-4-5-20251001",
         maxTokens: Int = 16000
     ) async throws -> String {
         let url = URL(string: "https://api.anthropic.com/v1/messages")!
@@ -112,7 +118,7 @@ enum AnthropicClient {
         schema: JSONValue,
         userPrompt: String,
         system: String? = nil,
-        model: String = "claude-opus-4-7",
+        model: String = "claude-haiku-4-5-20251001",
         maxTokens: Int = 16000,
         as _: T.Type = T.self
     ) async throws -> T {
@@ -134,7 +140,7 @@ enum AnthropicClient {
         schema: JSONValue,
         messages: [AnthropicToolMessage],
         system: String? = nil,
-        model: String = "claude-opus-4-7",
+        model: String = "claude-haiku-4-5-20251001",
         maxTokens: Int = 16000,
         as _: T.Type = T.self
     ) async throws -> T {
@@ -160,7 +166,7 @@ enum AnthropicClient {
         schema: JSONValue,
         messages: [AnthropicToolMessage],
         system: String? = nil,
-        model: String = "claude-opus-4-7",
+        model: String = "claude-haiku-4-5-20251001",
         maxTokens: Int = 16000,
         as _: T.Type = T.self
     ) async throws -> (decoded: T, rawJSON: String) {

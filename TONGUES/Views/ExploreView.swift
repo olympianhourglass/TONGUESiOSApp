@@ -155,10 +155,11 @@ struct ExploreView: View {
                     await loadDestinationLanguagesIfNeeded()
                     await loadCulturalInsight()
                 }
-                // Refresh the plan strip every time the tab shows so a
-                // plan accepted in chat (or progress made in Study)
-                // reflects without an app restart.
-                Task { await loadCurriculum() }
+                // Refresh the plan strip when the tab shows so a plan accepted
+                // in chat (or progress made in Study) reflects without an app
+                // restart — throttled so quick tab-bouncing doesn't re-run the
+                // due-cards + curriculum reads every time.
+                Task { await loadCurriculumIfNeeded() }
             }
         }
     }
@@ -172,8 +173,23 @@ struct ExploreView: View {
     // skeleton instead of flashing the "Get a guided plan" empty state
     // before we actually know whether a plan exists.
     @State private var isLoadingCurriculum = true
+    // When the last curriculum load started, so `loadCurriculumIfNeeded()` can
+    // skip a redundant reload (due-cards query + curriculum fetch) on rapid
+    // tab re-entry, mirroring the Library tab's throttle.
+    @State private var lastCurriculumLoadAt: Date?
+
+    // Reloads the plan strip only if the last load began more than
+    // `minInterval` seconds ago. Fresh enough that a plan accepted in chat
+    // shows on the next Explore visit, without re-reading on every appearance.
+    private func loadCurriculumIfNeeded(minInterval: TimeInterval = 20) async {
+        if let last = lastCurriculumLoadAt, Date().timeIntervalSince(last) < minInterval {
+            return
+        }
+        await loadCurriculum()
+    }
 
     private func loadCurriculum() async {
+        lastCurriculumLoadAt = Date()
         defer { isLoadingCurriculum = false }
         async let dueTask: [CardSchedule]? = try? await FirebaseDeckService.fetchDueSchedules()
         let plans = (try? await FirebaseCurriculumService.fetchAll()) ?? []

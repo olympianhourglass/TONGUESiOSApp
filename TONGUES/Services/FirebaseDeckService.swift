@@ -488,6 +488,34 @@ enum FirebaseDeckService {
         return ref.documentID
     }
 
+    // Records a minimal one-review StudySession so a streak-eligible activity
+    // that isn't a full flashcard review — listening to an audio session,
+    // answering comprehension questions on a saved artifact — still registers
+    // the day in the streak walk. The daily streak is derived purely from
+    // StudySession records (see LibraryViewModel.dailyStreak and
+    // LearnerModelService.computeStreak); XP alone doesn't feed it, so every
+    // activity that should count a day must leave a session behind.
+    @discardableResult
+    static func recordStreakActivity(
+        deckId: String,
+        deckTitle: String,
+        language: String
+    ) async throws -> String {
+        let now = Date()
+        let session = StudySession(
+            deckId: deckId,
+            deckTitle: deckTitle,
+            language: language,
+            startedAt: now,
+            completedAt: now,
+            totalReviewed: 1,
+            correctCount: 1,
+            incorrectCount: 0,
+            reviews: []
+        )
+        return try await saveStudySession(session)
+    }
+
     static func fetchStudySessions(deckId: String? = nil) async throws -> [StudySession] {
         let collection = try userStudySessions()
         var query: Query = collection.order(by: "completedAt", descending: true)

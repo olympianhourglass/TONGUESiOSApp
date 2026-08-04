@@ -482,7 +482,8 @@ struct ResultRow: View {
                         SpeechClient.shared.speak(
                             item.word,
                             language: item.language ?? deckLanguage,
-                            allowForvo: true
+                            allowForvo: true,
+                            pronunciation: item.transliteration
                         )
                     },
                     font: .system(size: 18)
@@ -718,6 +719,187 @@ struct SpeechStatusToast: View {
             .padding(.vertical, 9)
             .background(Color.black.opacity(0.88), in: Capsule())
             .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 3)
+    }
+}
+
+// Overlays the "where the audio came from" chip (ElevenLabs / Forvo / system
+// voice) whenever `SpeechClient` emits a status, auto-clearing with it. Any
+// screen that plays word audio can opt in with `.speechStatusToast()`.
+extension View {
+    func speechStatusToast(alignment: Alignment = .bottom) -> some View {
+        modifier(SpeechStatusToastModifier(alignment: alignment))
+    }
+}
+
+private struct SpeechStatusToastModifier: ViewModifier {
+    let alignment: Alignment
+    @State private var speech = SpeechClient.shared
+    @State private var showAudit = false
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: alignment) {
+                if let message = speech.statusMessage {
+                    // Tapping the chip opens the audit sheet for the last clip.
+                    Button {
+                        Haptics.light()
+                        showAudit = true
+                    } label: {
+                        SpeechStatusToast(message: message)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 24)
+                    .padding(alignment == .top ? .top : .bottom, 16)
+                    .transition(.move(edge: alignment == .top ? .top : .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.35, dampingFraction: 0.85), value: speech.statusMessage)
+            .sheet(isPresented: $showAudit) {
+                if let info = speech.lastSpoken {
+                    AudioSourceSheet(info: info)
+                        .presentationDetents([.height(info.engine == .elevenLabs ? 400 : 300)])
+                        .presentationBackground(.black)
+                        .presentationDragIndicator(.visible)
+                }
+            }
+    }
+}
+
+// Black audit sheet opened by tapping the audio-source chip. Shows where the
+// audio came from and, for an ElevenLabs clip, lets the user regenerate a
+// fresh take (overwriting the cached version) when the voice-over is wrong.
+struct AudioSourceSheet: View {
+    let info: SpeechClient.SpokenAudioInfo
+    @Environment(\.dismiss) private var dismiss
+    @State private var isRegenerating = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 10) {
+                Image(systemName: engineIcon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                Text(L("Audio source"))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 20))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button { dismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .frame(width: 30, height: 30)
+                        .background(Circle().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(info.text)
+                .font(.custom("NeueHaasDisplay-Light", size: 16))
+                .foregroundStyle(.white)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 0) {
+                detailRow(icon: "waveform", label: L("Source"), value: engineLabel)
+                if let lang = info.language, !lang.isEmpty {
+                    Divider().overlay(Color.white.opacity(0.1))
+                    detailRow(icon: "globe", label: L("Language"), value: localizedLanguageName(lang))
+                }
+                if let voice = info.voiceID {
+                    Divider().overlay(Color.white.opacity(0.1))
+                    detailRow(icon: "person.wave.2", label: L("Voice ID"), value: voice)
+                }
+            }
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color.white.opacity(0.06)))
+
+            actionButton(icon: "play.fill", title: L("Play again"), primary: false) {
+                SpeechClient.shared.speak(info.text, language: info.language)
+            }
+
+            if info.engine == .elevenLabs {
+                actionButton(
+                    icon: "arrow.triangle.2.circlepath",
+                    title: isRegenerating ? L("Regenerating…") : L("Regenerate voice"),
+                    primary: true,
+                    disabled: isRegenerating
+                ) {
+                    isRegenerating = true
+                    Task {
+                        await SpeechClient.shared.regenerateLastElevenLabs()
+                        isRegenerating = false
+                    }
+                }
+                Text(L("Creates a fresh take and replaces the cached audio. Uses one generation."))
+                    .font(.custom("NeueHaasDisplay-Light", size: 12))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var engineLabel: String {
+        switch info.engine {
+        case .elevenLabs: return L("ElevenLabs — native voice")
+        case .forvo:      return L("Forvo — native recording")
+        case .apple:      return L("iOS system voice")
+        }
+    }
+
+    private var engineIcon: String {
+        switch info.engine {
+        case .elevenLabs: return "waveform"
+        case .forvo:      return "person.wave.2"
+        case .apple:      return "iphone"
+        }
+    }
+
+    private func detailRow(icon: String, label: String, value: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 20)
+            Text(label)
+                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .foregroundStyle(.white.opacity(0.55))
+            Spacer()
+            Text(value)
+                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.trailing)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+    }
+
+    private func actionButton(icon: String, title: String, primary: Bool, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+        Button {
+            Haptics.light()
+            action()
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: icon).font(.system(size: 15, weight: .semibold))
+                Text(title).font(.custom("NeueHaasDisplay-Mediu", size: 16))
+                Spacer()
+            }
+            .foregroundStyle(primary ? .black : .white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(primary ? Color.white : Color.white.opacity(0.1))
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.6 : 1)
     }
 }
 

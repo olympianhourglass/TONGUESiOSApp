@@ -309,6 +309,38 @@ final class SubscriptionService {
         }
     }
 
+    // MARK: - ElevenLabs TTS character budget
+
+    // Remaining ElevenLabs characters the user may generate this month before
+    // native-voice TTS falls back to Apple. Reads the live in-memory state — a
+    // soft budget doesn't warrant a Firestore fetch per spoken phrase.
+    func remainingTTSCharacters() -> Int {
+        let cap = currentTier.monthlyTTSCharacters
+        let used = state.ttsCharsByMonthKey[currentMonthKey, default: 0]
+        return Swift.max(0, cap - used)
+    }
+
+    // Check-and-reserve. If `chars` fits the remaining monthly TTS budget,
+    // increment the counter (so two phrases racing for the last of it can't
+    // both spend it) and return true; otherwise return false so the caller
+    // falls back to Apple TTS. Called ONLY on a cache miss — cache hits are
+    // free and never reach here. Reserves optimistically: if the subsequent
+    // API call fails, the small over-count is harmless and self-heals next
+    // month.
+    @discardableResult
+    func reserveTTSCharactersIfAffordable(_ chars: Int) async -> Bool {
+        guard chars > 0 else { return true }
+        guard remainingTTSCharacters() >= chars else { return false }
+        state.ttsCharsByMonthKey[currentMonthKey, default: 0] += chars
+        do {
+            let ref = try Self.docRef()
+            try await ref.setData(from: state, merge: true)
+        } catch {
+            print("⚠️ SubscriptionService.reserveTTSCharacters failed: \(error)")
+        }
+        return true
+    }
+
     // MARK: - Entitlement application (called by StoreKitClient)
 
     // Writes the resolved tier through to Firestore. Idempotent: same

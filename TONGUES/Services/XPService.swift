@@ -161,18 +161,32 @@ enum XPService {
 
     // MARK: - Flashcard session bundle
 
-    // Awarded at the end of a completed deck. `cardGrades` is the array of
+    // Minimum average seconds per item for a session to count as genuine
+    // engagement rather than rushing. Below this the flat completion and
+    // perfect-session bonuses are withheld — the per-item review XP is still
+    // granted and the day still counts toward the streak. Tunable.
+    static let minSecondsPerItemForBonus: Double = 2.0
+
+    // Awarded at the end of a flashcard session. `cardGrades` is the array of
     // grades the user submitted, in order, so we can compute per-card +
-    // perfect-session bonuses.
+    // perfect-session bonuses. `completed` is true only when the learner
+    // reached the end of the deck (not an early exit); `averageSecondsPerCard`
+    // gates the flat bonuses so mashing through without absorbing still earns
+    // the per-card XP but not the completion/perfect bonuses.
     @discardableResult
     static func awardFlashcardSession(
         deckId: String,
         language: String,
         cardGrades: [ReviewResult],
-        handwrittenCount: Int = 0
+        handwrittenCount: Int = 0,
+        completed: Bool,
+        averageSecondsPerCard: Double
     ) async throws -> [XPGrant] {
         var state = try await fetchState()
         var grants: [XPGrant] = []
+
+        // Genuine completion at an absorbing pace unlocks the flat bonuses.
+        let engaged = completed && averageSecondsPerCard >= minSecondsPerItemForBonus
 
         // Per-card: 1 XP for again/hard, 2 XP for good/easy. Sums silently
         // into one grant so we don't spam a toast per card.
@@ -183,8 +197,10 @@ enum XPService {
             grants.append(XPGrant(amount: perCardXP, reason: "Reviews"))
         }
 
-        // Deck completed.
-        grants.append(XPGrant(amount: 10, reason: "Deck complete"))
+        // Deck completed — flat bonus only for a genuine, unhurried finish.
+        if engaged {
+            grants.append(XPGrant(amount: 10, reason: "Deck complete"))
+        }
 
         // Handwriting bonus: words the learner wrote out by hand this
         // session (3 XP each). Rewards the extra effort over recall alone.
@@ -194,7 +210,7 @@ enum XPService {
 
         // Perfect session: nothing graded "again" (= memory lapse). Hards
         // are still allowed since the user did recall the card.
-        if !cardGrades.isEmpty, !cardGrades.contains(where: { $0.isLapse }) {
+        if engaged, !cardGrades.isEmpty, !cardGrades.contains(where: { $0.isLapse }) {
             grants.append(XPGrant(amount: 10, reason: "Perfect session"))
         }
 
@@ -243,7 +259,12 @@ enum XPService {
             grants.append(XPGrant(amount: perMinuteXP, reason: "Listening time"))
         }
 
-        if playlistCompleted {
+        // "Complete" bonus only when the playlist was genuinely listened
+        // through. Tapping Next to the end also sets playlistCompleted, but
+        // leaves secondsListened tiny, so require a real average dwell per
+        // advanced item — the same anti-rush gate the flashcard bonus uses.
+        let avgSecondsPerItem = secondsListened / Double(max(1, cardsAdvanced))
+        if playlistCompleted, avgSecondsPerItem >= minSecondsPerItemForBonus {
             grants.append(XPGrant(amount: 10, reason: "Audio complete"))
         }
 

@@ -18,17 +18,19 @@ enum MediaCache {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    // Returns cached audio Data if present locally or in Firebase Storage.
-    // Side effects: hydrates the disk cache on a Firebase hit.
-    static func fetch(key: String) async -> Data? {
-        if let local = diskRead(key: key) {
+    // Returns cached data if present locally or in Firebase Storage.
+    // Side effects: hydrates the disk cache on a Firebase hit. `ext` selects
+    // the payload type ("mp3" audio by default, "json" for the timestamp
+    // alignment sidecar) so both share one key but never collide on disk.
+    static func fetch(key: String, ext: String = "mp3") async -> Data? {
+        if let local = diskRead(key: key, ext: ext) {
             return local
         }
 
         do {
-            let ref = Storage.storage().reference(withPath: "\(remotePrefix)/\(key).mp3")
+            let ref = Storage.storage().reference(withPath: "\(remotePrefix)/\(key).\(ext)")
             let data = try await ref.data(maxSize: maxSizeBytes)
-            diskWrite(data, key: key)
+            diskWrite(data, key: key, ext: ext)
             return data
         } catch {
             return nil
@@ -38,33 +40,33 @@ enum MediaCache {
     // Writes to disk immediately, then uploads to Firebase Storage in the
     // background. Upload errors are swallowed — a missed upload just means the
     // next user pays the upstream cost again; it's not playback-blocking.
-    static func store(_ data: Data, key: String) async {
-        diskWrite(data, key: key)
-        let ref = Storage.storage().reference(withPath: "\(remotePrefix)/\(key).mp3")
+    static func store(_ data: Data, key: String, ext: String = "mp3") async {
+        diskWrite(data, key: key, ext: ext)
+        let ref = Storage.storage().reference(withPath: "\(remotePrefix)/\(key).\(ext)")
         let metadata = StorageMetadata()
-        metadata.contentType = "audio/mpeg"
+        metadata.contentType = ext == "json" ? "application/json" : "audio/mpeg"
         _ = try? await ref.putDataAsync(data, metadata: metadata)
     }
 
     // MARK: Disk layer
 
-    private static func diskURL(key: String) -> URL? {
+    private static func diskURL(key: String, ext: String) -> URL? {
         guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
             return nil
         }
         let dir = caches.appendingPathComponent("MediaCache", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("\(key).mp3")
+        return dir.appendingPathComponent("\(key).\(ext)")
     }
 
-    static func diskRead(key: String) -> Data? {
-        guard let url = diskURL(key: key),
+    static func diskRead(key: String, ext: String = "mp3") -> Data? {
+        guard let url = diskURL(key: key, ext: ext),
               FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try? Data(contentsOf: url)
     }
 
-    static func diskWrite(_ data: Data, key: String) {
-        guard let url = diskURL(key: key) else { return }
+    static func diskWrite(_ data: Data, key: String, ext: String = "mp3") {
+        guard let url = diskURL(key: key, ext: ext) else { return }
         try? data.write(to: url, options: .atomic)
     }
 }

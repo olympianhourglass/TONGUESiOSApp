@@ -12,6 +12,10 @@ final class SpeechClient {
     private let appleSynth = AVSpeechSynthesizer()
     private var appleDelegate: AppleSpeechDelegate?
     private var audioPlayerDelegate: AudioPlayerFinishDelegate?
+    // Drives the read-along word highlight during ElevenLabs playback (Apple
+    // TTS uses its own willSpeakRange delegate instead). Cancelled whenever
+    // playback is stopped or superseded.
+    private var highlightTask: Task<Void, Never>?
 
     // Fired exactly once when the current utterance finishes playing on its own.
     // Cleared (without firing) when playback is superseded by a new speak() call
@@ -19,8 +23,10 @@ final class SpeechClient {
     private var pendingCompletion: (() -> Void)?
 
     // Observed by views to draw a read-along highlight over the currently
-    // spoken word. The range is into the exact text passed to `speak`.
-    // nil means nothing is currently being read aloud via Apple TTS.
+    // spoken word. The range is into the exact text passed to `speak`. Set by
+    // Apple TTS's willSpeakRange delegate, or — for ElevenLabs playback with
+    // `highlightPassage` — driven from the clip's character timestamps. nil
+    // means nothing is currently being read aloud.
     var currentSpokenWordRange: NSRange?
 
     // Short transient label describing which engine just produced audio
@@ -28,6 +34,18 @@ final class SpeechClient {
     // views that opt in via `.speechStatusToast()`; auto-clears after a few
     // seconds.
     var statusMessage: String?
+
+    // Details of the most recent playback, surfaced by the audio-source chip's
+    // audit sheet: it shows the engine/voice and, for ElevenLabs, offers a
+    // regenerate. Set at every play point.
+    struct SpokenAudioInfo: Equatable {
+        enum Engine: String { case elevenLabs, forvo, apple }
+        let text: String
+        let language: String?
+        let engine: Engine
+        let voiceID: String?   // ElevenLabs voice id; nil for Forvo / Apple
+    }
+    var lastSpoken: SpokenAudioInfo?
 
     private init() {
         let delegate = AppleSpeechDelegate(
@@ -56,10 +74,21 @@ final class SpeechClient {
     // flashcards). Forvo's library is per-word — passages and stories can't
     // be retrieved from it, so the multi-sentence "Read aloud" button leaves
     // this false.
-    func speak(_ text: String, language: String? = nil, allowForvo: Bool = false, rate: Float = 1.0, onFinish: (() -> Void)? = nil) {
+    // `highlightPassage` requests a read-along word highlight for long-form
+    // playback ("Read aloud"): Apple TTS drives it via its willSpeakRange
+    // delegate, ElevenLabs via the clip's character timestamps. Single-word
+    // playback leaves it false (no highlight needed, and it avoids paying for
+    // timestamps on cheap short clips).
+    // `pronunciation` is a Latin-script romanization of `text`, used as a
+    // last-resort spoken form when NO engine can pronounce the target language
+    // (e.g. Mongolian: no ElevenLabs voice, no Forvo recording, no installed
+    // Apple voice). Reading the romanization with the default voice at least
+    // approximates the sound instead of falling silent.
+    func speak(_ text: String, language: String? = nil, allowForvo: Bool = false, rate: Float = 1.0, highlightPassage: Bool = false, pronunciation: String? = nil, onFinish: (() -> Void)? = nil) {
         // Strip emoji so they're never read aloud (or mispronounced as
         // their Unicode names) by any of the playback engines.
         let trimmed = text.strippingEmoji()
+        let pron = pronunciation?.strippingEmoji()
         guard !trimmed.isEmpty else {
             onFinish?()
             return
@@ -69,20 +98,62 @@ final class SpeechClient {
         // playback that's about to be superseded, not one that finished.
         pendingCompletion = nil
         activeTask?.cancel()
+        highlightTask?.cancel()
         player?.stop()
         appleSynth.stopSpeaking(at: .immediate)
         currentSpokenWordRange = nil
         pendingCompletion = onFinish
 
-        // Tier 1: Apple TTS when iOS has an installed voice for the locale.
-        if let language, Self.appleHasInstalledVoice(for: language) {
-            emitStatus("iOS system voice (\(language))")
-            speakWithApple(trimmed, language: language, rate: rate)
+        // Preferred tier: ElevenLabs speaking the TARGET language in a native
+        // voice. English uses Rachel; other languages resolve a native voice
+        // from the shared Voice Library. Any failure (no key, no native voice
+        // found, API/playback error) falls through to the Apple/Forvo tiers,
+        // so this only ever upgrades quality — it never removes a fallback.
+        if let language, ElevenLabsClient.isConfigured {
+            activeTask = Task { [weak self] in
+                guard let self else { return }
+                if highlightPassage {
+                    // Read-aloud: fetch audio + character timestamps so the
+                    // native voice gets the same karaoke highlight Apple TTS
+                    // produces on the fallback path.
+                    if let result = await self.nativeElevenLabsTimestamped(for: trimmed, language: language) {
+                        if Task.isCancelled { return }
+                        self.emitStatus("ElevenLabs native voice (\(language))")
+                        do {
+                            try self.playWithAlignment(audio: result.audio, alignment: result.alignment, text: trimmed, rate: rate)
+                            return
+                        } catch {
+                            // Playback failed — drop to the classic tiers below.
+                        }
+                    }
+                } else if let data = await self.nativeElevenLabsData(for: trimmed, language: language) {
+                    if Task.isCancelled { return }
+                    self.emitStatus("ElevenLabs native voice (\(language))")
+                    do {
+                        try self.play(data: data, rate: rate)
+                        return
+                    } catch {
+                        // Playback failed — drop to the classic tiers below.
+                    }
+                }
+                if Task.isCancelled { return }
+                self.fallbackSpeak(trimmed, language: language, allowForvo: allowForvo, rate: rate, pronunciation: pron)
+            }
             return
         }
 
-        // Tier 2: Forvo native-speaker recording for single-word lookups when
-        // Apple has no installed voice for the language.
+        fallbackSpeak(trimmed, language: language, allowForvo: allowForvo, rate: rate, pronunciation: pron)
+    }
+
+    // The original Apple-TTS / Forvo tier ladder, used when ElevenLabs isn't
+    // configured or its native-voice attempt fails. Assumes `speak` has
+    // already torn down any in-flight playback and set `pendingCompletion`.
+    private func fallbackSpeak(_ trimmed: String, language: String?, allowForvo: Bool, rate: Float, pronunciation: String? = nil) {
+        // Preferred fallback: Forvo native-speaker recording (single-word
+        // lookups only) — a real human voice, so it's chosen over Apple TTS.
+        // On a miss or error the Forvo task itself drops to Apple TTS. This is
+        // the ElevenLabs → Forvo → Apple ladder (ElevenLabs was already tried
+        // in `speak`; passages skip Forvo since it's word-only).
         if allowForvo,
            let language,
            let isoCode = languageISOCode(for: language) {
@@ -95,6 +166,7 @@ final class SpeechClient {
                 if let cached = await MediaCache.fetch(key: forvoKey) {
                     if Task.isCancelled { return }
                     self.emitStatus("Forvo cached (\(language))")
+                    self.lastSpoken = SpokenAudioInfo(text: trimmed, language: language, engine: .forvo, voiceID: nil)
                     try? self.play(data: cached, rate: rate)
                     return
                 }
@@ -105,37 +177,113 @@ final class SpeechClient {
                     ) else {
                         if Task.isCancelled { return }
                         self.emitStatus("No \(language) recording — system fallback")
-                        self.speakWithApple(trimmed, language: language, rate: rate)
+                        self.speakWithApple(trimmed, language: language, rate: rate, pronunciation: pronunciation)
                         return
                     }
                     let (data, _) = try await URLSession.shared.data(from: audioURL)
                     if Task.isCancelled { return }
                     self.emitStatus("Forvo native recording (\(language))")
+                    self.lastSpoken = SpokenAudioInfo(text: trimmed, language: language, engine: .forvo, voiceID: nil)
                     try self.play(data: data, rate: rate)
                     Task.detached { await MediaCache.store(data, key: forvoKey) }
                 } catch {
                     if Self.isCancellationError(error) || Task.isCancelled { return }
                     print("Forvo error: \(error). Falling back to Apple TTS.")
                     self.emitStatus("Couldn't reach Forvo — system fallback")
-                    self.speakWithApple(trimmed, language: language, rate: rate)
+                    self.speakWithApple(trimmed, language: language, rate: rate, pronunciation: pronunciation)
                 }
             }
             return
         }
 
-        // Final fallback: Apple TTS with whatever the system can muster.
-        if let language {
+        // Apple TTS — reached for passages (no Forvo), an unresolved language
+        // code, or a language for which Forvo had no recording (that miss is
+        // handled inside the Forvo task above).
+        if let language, Self.appleHasInstalledVoice(for: language) {
+            emitStatus("iOS system voice (\(language))")
+        } else if let language {
             emitStatus("No \(language) voice on this device")
         } else {
             emitStatus("iOS system voice")
         }
-        speakWithApple(trimmed, language: language, rate: rate)
+        speakWithApple(trimmed, language: language, rate: rate, pronunciation: pronunciation)
+    }
+
+    // Resolves and fetches ElevenLabs audio for the target language in a
+    // native voice. English maps to Rachel; other languages look up a native
+    // voice from the shared library (cached after first use). Returns nil when
+    // no native voice can be resolved — deliberately, so foreign text is never
+    // read in an English voice; the caller then falls back to Apple/Forvo.
+    private func nativeElevenLabsData(for text: String, language: String) async -> Data? {
+        guard let iso = languageISOCode(for: language) else { return nil }
+        let voiceId: String?
+        if iso.lowercased() == "en" {
+            voiceId = ElevenLabsClient.defaultVoiceId
+        } else {
+            voiceId = await ElevenLabsClient.nativeVoiceId(forLanguageCode: iso)
+        }
+        guard let voiceId else { return nil }
+        guard let data = try? await ElevenLabsClient.textToSpeech(
+            text,
+            voiceId: voiceId,
+            onCacheMiss: Self.ttsBudgetGate
+        ) else { return nil }
+        lastSpoken = SpokenAudioInfo(text: text, language: language, engine: .elevenLabs, voiceID: voiceId)
+        return data
+    }
+
+    // Same resolution as `nativeElevenLabsData`, but fetches the audio WITH
+    // character timestamps so the caller can render a karaoke highlight.
+    private func nativeElevenLabsTimestamped(for text: String, language: String) async -> ElevenLabsClient.TimestampedSpeech? {
+        guard let iso = languageISOCode(for: language) else { return nil }
+        let voiceId: String?
+        if iso.lowercased() == "en" {
+            voiceId = ElevenLabsClient.defaultVoiceId
+        } else {
+            voiceId = await ElevenLabsClient.nativeVoiceId(forLanguageCode: iso)
+        }
+        guard let voiceId else { return nil }
+        guard let result = try? await ElevenLabsClient.textToSpeechWithTimestamps(
+            text,
+            voiceId: voiceId,
+            onCacheMiss: Self.ttsBudgetGate
+        ) else { return nil }
+        lastSpoken = SpokenAudioInfo(text: text, language: language, engine: .elevenLabs, voiceID: voiceId)
+        return result
+    }
+
+    // Regenerates a fresh ElevenLabs take of the last-spoken audio and
+    // overwrites the cached version (so future plays use the corrected one),
+    // then plays it. No-op unless the last playback was ElevenLabs.
+    func regenerateLastElevenLabs() async {
+        guard let info = lastSpoken, info.engine == .elevenLabs, let voiceId = info.voiceID else { return }
+        do {
+            let data = try await ElevenLabsClient.regenerate(
+                info.text,
+                voiceId: voiceId,
+                onCacheMiss: Self.ttsBudgetGate
+            )
+            try play(data: data, rate: 1.0)
+            emitStatus("ElevenLabs voice — regenerated")
+        } catch {
+            print("ElevenLabs regenerate failed: \(error)")
+            emitStatus("Couldn't regenerate voice")
+        }
+    }
+
+    // Budget gate handed to ElevenLabs on a cache miss: reserves the
+    // characters against the user's monthly TTS budget and returns whether
+    // the generation is allowed. Out-of-budget → false → the caller falls
+    // back to Apple's on-device voice. Cache hits never invoke this.
+    private static let ttsBudgetGate: @Sendable (Int) async -> Bool = { chars in
+        await SubscriptionService.shared.reserveTTSCharactersIfAffordable(chars)
     }
 
     // Public stop — used by ListenSessionView's pause control.
     func stop() {
         pendingCompletion = nil
         activeTask?.cancel()
+        highlightTask?.cancel()
         player?.stop()
         appleSynth.stopSpeaking(at: .immediate)
         currentSpokenWordRange = nil
@@ -183,7 +331,10 @@ final class SpeechClient {
         activeTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let data = try await ElevenLabsClient.textToSpeech(trimmed)
+                let data = try await ElevenLabsClient.textToSpeech(
+                    trimmed,
+                    onCacheMiss: Self.ttsBudgetGate
+                )
                 if Task.isCancelled { return }
                 self.emitStatus("ElevenLabs voice")
                 try self.play(data: data, rate: rate)
@@ -222,8 +373,19 @@ final class SpeechClient {
 
     private func play(data: Data, rate: Float = 1.0) throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .spokenAudio, options: [])
-        try session.setActive(true, options: [])
+        do {
+            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            try session.setActive(true, options: [])
+        } catch {
+            // The speech recognizer leaves the session active in
+            // `.playAndRecord`/`.measurement` (its stop() doesn't deactivate
+            // it), which can reject the switch to `.playback` — the failure
+            // that was dropping ElevenLabs playback to Apple TTS. Deactivate
+            // and retry so the native voice actually plays.
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try session.setCategory(.playback, mode: .spokenAudio, options: [])
+            try session.setActive(true, options: [])
+        }
 
         let newPlayer = try AVAudioPlayer(data: data)
         newPlayer.delegate = audioPlayerDelegate
@@ -236,15 +398,115 @@ final class SpeechClient {
         player = newPlayer
     }
 
-    private func speakWithApple(_ text: String, language: String?, rate: Float = 1.0) {
-        let utterance = AVSpeechUtterance(string: text)
-        if let language, let locale = appleSpeechLocale(for: language),
-           let voice = AVSpeechSynthesisVoice(language: locale) {
+    // Plays ElevenLabs audio and drives `currentSpokenWordRange` from the
+    // clip's character timestamps, so the read-along highlight tracks the
+    // native voice the same way it tracks Apple TTS. `text` is the exact
+    // (emoji-stripped) string passed to `speak`, so the ranges line up with
+    // what the view renders.
+    private func playWithAlignment(
+        audio: Data,
+        alignment: ElevenLabsClient.SpeechAlignment?,
+        text: String,
+        rate: Float
+    ) throws {
+        try play(data: audio, rate: rate)   // sets `player`, starts playback
+
+        highlightTask?.cancel()
+        guard let alignment, !alignment.characters.isEmpty else {
+            currentSpokenWordRange = nil
+            return
+        }
+
+        // Word ranges into `text` (locale-aware, so spaced languages break on
+        // words and CJK on characters). The alignment's characters concatenate
+        // to the whitespace-trimmed text ElevenLabs spoke, so shift character
+        // offsets past any leading whitespace to land back in `text`.
+        let words = Self.wordRanges(in: text)
+        let leadingWS = text.prefix { $0.isWhitespace || $0.isNewline }.utf16.count
+        var charOffsets: [Int] = []
+        charOffsets.reserveCapacity(alignment.characters.count)
+        var acc = leadingWS
+        for ch in alignment.characters {
+            charOffsets.append(acc)
+            acc += ch.utf16.count
+        }
+        let startTimes = alignment.startTimesSeconds
+
+        highlightTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let player = self.player, player.isPlaying else { break }
+                let t = player.currentTime
+                if let idx = Self.lastIndex(of: startTimes, notAfter: t), idx < charOffsets.count {
+                    let range = Self.word(in: words, containingUTF16: charOffsets[idx])
+                    if self.currentSpokenWordRange != range {
+                        self.currentSpokenWordRange = range
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            if !Task.isCancelled { self?.currentSpokenWordRange = nil }
+        }
+    }
+
+    // Locale-aware word ranges (UTF-16) for the read-along highlight.
+    private static func wordRanges(in text: String) -> [NSRange] {
+        var ranges: [NSRange] = []
+        text.enumerateSubstrings(in: text.startIndex..<text.endIndex,
+                                 options: [.byWords, .localized]) { _, range, _, _ in
+            ranges.append(NSRange(range, in: text))
+        }
+        if ranges.isEmpty {
+            let length = (text as NSString).length
+            if length > 0 { ranges.append(NSRange(location: 0, length: length)) }
+        }
+        return ranges
+    }
+
+    // The word range containing `offset`, or the next word after it (so a
+    // space/punctuation gap snaps the highlight forward), or the last word.
+    private static func word(in words: [NSRange], containingUTF16 offset: Int) -> NSRange? {
+        for r in words {
+            if offset >= r.location && offset < r.location + r.length { return r }
+            if offset < r.location { return r }
+        }
+        return words.last
+    }
+
+    // Rightmost index into the nondecreasing `times` whose value is <= `t`.
+    private static func lastIndex(of times: [Double], notAfter t: Double) -> Int? {
+        var lo = 0, hi = times.count - 1, ans: Int? = nil
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            if times[mid] <= t { ans = mid; lo = mid + 1 } else { hi = mid - 1 }
+        }
+        return ans
+    }
+
+    private func speakWithApple(_ text: String, language: String?, rate: Float = 1.0, pronunciation: String? = nil) {
+        let voice: AVSpeechSynthesisVoice? = {
+            guard let language, let locale = appleSpeechLocale(for: language) else { return nil }
+            return AVSpeechSynthesisVoice(language: locale)
+        }()
+
+        // With no installed voice for the language (e.g. Mongolian), the
+        // default voice can't pronounce the native script — it just falls
+        // silent. If we have a Latin-script romanization, speak THAT instead so
+        // there's still an audible approximation of the pronunciation.
+        let spoken: String
+        if voice == nil, let pronunciation, !pronunciation.isEmpty {
+            spoken = pronunciation
+        } else {
+            spoken = text
+        }
+
+        let utterance = AVSpeechUtterance(string: spoken)
+        if let voice {
             utterance.voice = voice
         }
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate * rate
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
         try? AVAudioSession.sharedInstance().setActive(true, options: [])
+        lastSpoken = SpokenAudioInfo(text: text, language: language, engine: .apple, voiceID: nil)
         appleSynth.speak(utterance)
     }
 

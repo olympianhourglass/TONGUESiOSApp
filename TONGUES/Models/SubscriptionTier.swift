@@ -95,6 +95,24 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
         }
     }
 
+    // Monthly budget of ElevenLabs characters the user may GENERATE on a
+    // cache miss. Cache hits are shared across the whole user base and cost
+    // nothing, so this only meters genuinely-novel first-generations. A soft
+    // cap: once spent, native-voice TTS falls back to Apple's on-device voice
+    // for the rest of the month — playback is never blocked. Sized so the
+    // worst case (every character novel and never re-heard) stays a minority
+    // of the tier's net revenue after Apple's cut; the shared cache means real
+    // usage sits far below these. Free stays at 0, so premium voices are a
+    // paid differentiator and free users always use the Apple voice. Tunable.
+    var monthlyTTSCharacters: Int {
+        switch self {
+        case .free:     return 0
+        case .beginner: return 20_000
+        case .pro:      return 60_000
+        case .max:      return 150_000
+        }
+    }
+
     // Total cap on saved languages on the user's profile (NOT monthly —
     // a snapshot count). Beginner keeps the 3-language ceiling; Pro
     // raises it to 5; Max removes it. Free reuses the Beginner cap so a

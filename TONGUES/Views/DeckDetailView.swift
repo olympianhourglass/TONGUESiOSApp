@@ -240,7 +240,7 @@ struct DeckDetailView: View {
         }
         // Full-screen on Mac + iPad (a proper detail view), a sheet on iPhone.
         .adaptiveFullScreenOrSheet(item: $selectedArtifact) { artifact in
-            ArtifactReaderSheet(artifact: artifact)
+            ArtifactReaderSheet(artifact: artifact, deckLanguage: deck.language)
         }
         .confirmationDialog(
             L("Delete this artifact?"),
@@ -278,6 +278,7 @@ struct DeckDetailView: View {
         // those keep white content.
         .onAppear { updateForcedStatusBar() }
         .onDisappear { AppTabRouter.shared.forceDarkStatusBar = false }
+        .speechStatusToast()
         .onChange(of: isPlaying) { _, _ in updateForcedStatusBar() }
         .onChange(of: isListening) { _, _ in updateForcedStatusBar() }
     }
@@ -569,7 +570,8 @@ struct DeckDetailView: View {
                             SpeechClient.shared.speak(
                                 item.word,
                                 language: item.language ?? deck.language,
-                                allowForvo: true
+                                allowForvo: true,
+                                pronunciation: item.transliteration
                             )
                         }
                     }
@@ -1864,10 +1866,16 @@ struct TargetRetentionInfoSheet: View {
 struct ArtifactReaderSheet: View {
     @Environment(\.dismiss) private var dismiss
     let artifact: Artifact
+    // The deck's language, threaded from the presenting view so a streak
+    // session recorded here is attributed to the right language in stats.
+    var deckLanguage: String = ""
     @State private var isInterleaved = false
     // Counts one "comprehension" learning-method session the first time the
     // learner answers a question in this saved artifact.
     @State private var didCountComprehension = false
+    // Records at most one streak-eligible study session per opened artifact,
+    // so answering its comprehension questions extends the daily streak.
+    @State private var didRegisterArtifactStreak = false
 
     var body: some View {
         NavigationStack {
@@ -1923,7 +1931,9 @@ struct ArtifactReaderSheet: View {
                                             Task { try? await XPService.recordComprehensionSession() }
                                         }
                                     },
-                                    onSolved: {}
+                                    onSolved: {
+                                        Task { await registerArtifactStreakIfNeeded() }
+                                    }
                                 )
                             }
                         }
@@ -1941,6 +1951,20 @@ struct ArtifactReaderSheet: View {
                 }
             }
         }
+    }
+
+    // Answering a comprehension question on a saved artifact counts toward
+    // the daily streak, mirroring the fresh-generation path in
+    // GenerateContentSheet. Fires at most once per opened artifact.
+    @MainActor
+    private func registerArtifactStreakIfNeeded() async {
+        guard !didRegisterArtifactStreak else { return }
+        didRegisterArtifactStreak = true
+        _ = try? await FirebaseDeckService.recordStreakActivity(
+            deckId: artifact.deckId,
+            deckTitle: artifact.title,
+            language: deckLanguage
+        )
     }
 
     @ViewBuilder

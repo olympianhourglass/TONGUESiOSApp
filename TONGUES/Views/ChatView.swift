@@ -301,6 +301,7 @@ struct ChatView: View {
         // closes so it can't compete with the suggestion flow.
         .onChange(of: vm.isSuggesting) { _, _ in reconcileMic() }
         .onChange(of: vm.suggestions.isEmpty) { _, _ in reconcileMic() }
+        .speechStatusToast(alignment: .top)
         .onChange(of: vm.conversation?.id) { _, _ in
             if speech.isRecording { speech.stop() }
             // Stale hints belong to the thread we're leaving.
@@ -674,10 +675,20 @@ struct ChatView: View {
             HStack(spacing: 14) {
                 Button {
                     Haptics.light()
+                    // Tear the mic down first: the recognizer holds the audio
+                    // session in .playAndRecord, so ElevenLabs' AVAudioPlayer
+                    // can't take it and would silently fall back to Apple TTS.
+                    // Suppress the mic for the playback too (mirrors auto-play).
+                    if speech.isRecording { speech.stop() }
+                    isSpeakingPlayback = true
                     SpeechClient.shared.speak(
                         message.text,
                         language: vm.conversation?.language,
-                        allowForvo: false
+                        allowForvo: false,
+                        pronunciation: message.transliteration,
+                        onFinish: {
+                            Task { @MainActor in isSpeakingPlayback = false }
+                        }
                     )
                 } label: {
                     Image(systemName: "speaker.wave.2")
@@ -838,19 +849,6 @@ struct ChatView: View {
                 .padding(.vertical, 10)
                 .background(Color(libraryHex: "F4F4F4"))
                 .clipShape(RoundedRectangle(cornerRadius: 18))
-                .toolbar {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button {
-                            Haptics.light()
-                            inputFocused = false
-                        } label: {
-                            Image(systemName: "keyboard.chevron.compact.down")
-                                .font(.system(size: MacLayout.f(18), weight: .regular))
-                                .foregroundStyle(.black)
-                        }
-                    }
-                }
 
                 Button {
                     Haptics.medium()
@@ -870,6 +868,30 @@ struct ChatView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
         }
+        // Floating dismiss button that hovers just above the whole input row
+        // (rather than living in the keyboard accessory bar, where it crowded
+        // the mic / lightbulb / send buttons). Only shown while editing.
+        .overlay(alignment: .topTrailing) {
+            if inputFocused {
+                Button {
+                    Haptics.light()
+                    inputFocused = false
+                } label: {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                        .font(.system(size: MacLayout.f(15), weight: .semibold))
+                        .foregroundStyle(.black)
+                        .frame(width: MacLayout.s(34), height: MacLayout.s(34))
+                        .background(.ultraThinMaterial, in: Circle())
+                        .overlay(Circle().stroke(Color.black.opacity(0.08), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 12)
+                .offset(y: -(MacLayout.s(34) + 10))
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: inputFocused)
     }
 
     // MARK: - Suggested replies ("I'm stuck")
@@ -1082,6 +1104,7 @@ struct ChatView: View {
             last.text,
             language: conversation.language,
             allowForvo: false,
+            pronunciation: last.transliteration,
             onFinish: {
                 Task { @MainActor in
                     isSpeakingPlayback = false

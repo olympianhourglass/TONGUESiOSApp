@@ -205,6 +205,7 @@ struct DirectPage: View {
             .padding(.bottom, 120)
         }
         .scrollDismissesKeyboard(.interactively)
+        .speechStatusToast()
         .background(
             Color.clear
                 .contentShape(Rectangle())
@@ -490,7 +491,8 @@ struct DirectPage: View {
                                 SpeechClient.shared.speak(
                                     item.word,
                                     language: language,
-                                    allowForvo: true
+                                    allowForvo: true,
+                                    pronunciation: item.transliteration
                                 )
                             },
                             font: .system(size: 20)

@@ -519,7 +519,8 @@ struct GenerateContentSheet: View {
                                 readAloudPlayCount += 1
                                 SpeechClient.shared.speak(
                                     foreignContext,
-                                    language: deck.language
+                                    language: deck.language,
+                                    highlightPassage: true
                                 )
                             }
                         } label: {
@@ -819,7 +820,7 @@ struct GenerateContentSheet: View {
            DeckGenerator.isChinese(deck.language),
            let translit, !translit.isEmpty,
            let tokens = RubyPinyinAligner.align(foreign: pair.foreign, pinyin: translit) {
-            RubyPinyinLine(tokens: tokens, highlightPhrases: foreignHighlightPhrases) { word in
+            RubyPinyinLine(tokens: tokens, highlightPhrases: foreignHighlightPhrases, spokenRange: spokenRange) { word in
                 handleColumnTap(word: word, column: .target)
             }
         } else {
@@ -1099,7 +1100,7 @@ struct GenerateContentSheet: View {
            DeckGenerator.isChinese(deck.language),
            let translit, !translit.isEmpty,
            let tokens = RubyPinyinAligner.align(foreign: pair.foreign, pinyin: translit) {
-            RubyPinyinLine(tokens: tokens) { word in
+            RubyPinyinLine(tokens: tokens, spokenRange: spokenRange) { word in
                 Haptics.light()
                 handleWordTap(word: word, kind: .foreign)
             }
@@ -1130,12 +1131,19 @@ struct GenerateContentSheet: View {
     // then the whole native translation follows as one block.
     private var storyWithPronunciation: some View {
         let pairs = interleavedPairs()
+        let highlight = spokenPairHighlight
         let native = pairs.map(\.english).filter { !$0.isEmpty }.joined(separator: " ")
         return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
-                ForEach(Array(pairs.enumerated()), id: \.offset) { _, pair in
+                ForEach(Array(pairs.enumerated()), id: \.offset) { index, pair in
                     if !pair.foreign.isEmpty {
-                        foreignWithPinyin(pair)
+                        // Pipe the read-aloud highlight only to the pair
+                        // currently being spoken (same mapping the other views
+                        // use), so pinyin mode highlights like plain text.
+                        foreignWithPinyin(
+                            pair,
+                            spokenRange: highlight?.pairIndex == index ? highlight?.range : nil
+                        )
                     }
                 }
             }
@@ -1294,19 +1302,11 @@ struct GenerateContentSheet: View {
     private func registerComprehensionStreakIfNeeded() async {
         guard !didRegisterComprehensionStreak, let deckId = deck.id else { return }
         didRegisterComprehensionStreak = true
-        let now = Date()
-        let session = StudySession(
+        _ = try? await FirebaseDeckService.recordStreakActivity(
             deckId: deckId,
             deckTitle: deck.title,
-            language: deck.language,
-            startedAt: now,
-            completedAt: now,
-            totalReviewed: 1,
-            correctCount: 1,
-            incorrectCount: 0,
-            reviews: []
+            language: deck.language
         )
-        _ = try? await FirebaseDeckService.saveStudySession(session)
     }
 
     // Maps the speech engine's spoken-word range (which is relative to
@@ -1777,6 +1777,11 @@ private struct RubyPinyinLine: View {
     // a multi-character word lights up across its tokens — mirrors the plain
     // TappableContentText highlight so the pinyin view behaves identically.
     var highlightPhrases: [String] = []
+    // The read-along spoken-word range (UTF-16, into the joined character run
+    // — which equals the foreign sentence), highlighted orange to match
+    // TappableContentText. nil means nothing is currently being spoken. Without
+    // this the karaoke highlight vanished whenever pinyin was revealed.
+    var spokenRange: NSRange? = nil
     var onTap: (String) -> Void = { _ in }
 
     var body: some View {
@@ -1795,9 +1800,11 @@ private struct RubyPinyinLine: View {
                 .fixedSize()
                 .background(
                     RoundedRectangle(cornerRadius: 3)
-                        .fill(highlightedIndices.contains(index)
-                              ? Color.yellow.opacity(0.55)
-                              : Color.clear)
+                        .fill(spokenIndices.contains(index)
+                              ? Color.orange.opacity(0.55)
+                              : highlightedIndices.contains(index)
+                                ? Color.yellow.opacity(0.55)
+                                : Color.clear)
                 )
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -1812,6 +1819,24 @@ private struct RubyPinyinLine: View {
     // character (see RubyPinyinAligner), so a token's index equals its offset in
     // the joined character run — letting us map a matched substring straight
     // back to the tokens it spans.
+    // Token indices overlapping the spoken-word range. Each token is exactly
+    // one character, so its UTF-16 offset in the joined run locates it against
+    // the range the speech engine reports.
+    private var spokenIndices: Set<Int> {
+        guard let spokenRange, spokenRange.length > 0 else { return [] }
+        var indices = Set<Int>()
+        var utf16Offset = 0
+        for (i, token) in tokens.enumerated() {
+            let length = token.text.utf16.count
+            let tokenRange = NSRange(location: utf16Offset, length: length)
+            if NSIntersectionRange(tokenRange, spokenRange).length > 0 {
+                indices.insert(i)
+            }
+            utf16Offset += length
+        }
+        return indices
+    }
+
     private var highlightedIndices: Set<Int> {
         guard !highlightPhrases.isEmpty else { return [] }
         let joined = tokens.map(\.text).joined()

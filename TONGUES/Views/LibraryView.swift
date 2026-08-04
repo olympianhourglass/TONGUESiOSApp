@@ -190,7 +190,10 @@ struct LibraryView: View {
             }
             // Full-screen on Mac + iPad (a proper detail view), a sheet on iPhone.
             .adaptiveFullScreenOrSheet(item: $selectedArtifact) { artifact in
-                ArtifactReaderSheet(artifact: artifact)
+                ArtifactReaderSheet(
+                    artifact: artifact,
+                    deckLanguage: decksById[artifact.deckId]?.language ?? ""
+                )
             }
             // Two triggers: the deckID arriving (warm app) and the deck
             // list finishing its initial load (cold launch from widget,

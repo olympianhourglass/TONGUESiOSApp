@@ -380,7 +380,8 @@ struct FlashcardView: View {
             SpeechClient.shared.speak(
                 item.word,
                 language: item.language ?? deck.language,
-                allowForvo: true
+                allowForvo: true,
+                pronunciation: item.transliteration
             )
             return
         }
@@ -909,6 +910,14 @@ struct FlashcardView: View {
         let deckIdForXP = deckId
         let languageForXP = deck.language
         let handwrittenForXP = handwrittenItemIDs.count
+        // Completion + pace gate the flat "Deck complete"/"Perfect" bonuses.
+        // `isFinished` is true only when the last card was reached (not an
+        // early exit); the average dwell per reviewed card guards against
+        // mashing through. Partial/rushed sessions still record the study
+        // session (streak) and earn per-card review XP.
+        let completedForXP = isFinished
+        let elapsedForXP = max(0, Date().timeIntervalSince(startedAt))
+        let avgPerCardForXP = reviews.isEmpty ? 0 : elapsedForXP / Double(reviews.count)
         Task {
             do {
                 _ = try await FirebaseDeckService.saveStudySession(session)
@@ -926,7 +935,9 @@ struct FlashcardView: View {
                 deckId: deckIdForXP,
                 language: languageForXP,
                 grades: gradesForXP,
-                handwrittenCount: handwrittenForXP
+                handwrittenCount: handwrittenForXP,
+                completed: completedForXP,
+                averageSecondsPerCard: avgPerCardForXP
             )
         }
     }
@@ -935,14 +946,18 @@ struct FlashcardView: View {
         deckId: String,
         language: String,
         grades: [ReviewResult],
-        handwrittenCount: Int
+        handwrittenCount: Int,
+        completed: Bool,
+        averageSecondsPerCard: Double
     ) async {
         do {
             let sessionGrants = try await XPService.awardFlashcardSession(
                 deckId: deckId,
                 language: language,
                 cardGrades: grades,
-                handwrittenCount: handwrittenCount
+                handwrittenCount: handwrittenCount,
+                completed: completed,
+                averageSecondsPerCard: averageSecondsPerCard
             )
             let dailyGrants = try await XPService.awardDailyBonusIfNeeded()
             await MainActor.run {

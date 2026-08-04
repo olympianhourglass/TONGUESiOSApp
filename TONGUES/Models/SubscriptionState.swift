@@ -24,6 +24,13 @@ struct UserSubscriptionState: Codable, Hashable {
     var artifactsByMonthKey: [String: Int] = [:]
     var audioSessionsByMonthKey: [String: Int] = [:]
 
+    // Per-month ElevenLabs characters GENERATED on a cache miss — the only
+    // thing that actually costs money, since cache hits are shared across all
+    // users and free. A soft budget: when the tier's monthly allowance runs
+    // out, native-voice TTS silently falls back to Apple's on-device voice
+    // rather than blocking playback. Keyed by "yyyy-MM".
+    var ttsCharsByMonthKey: [String: Int] = [:]
+
     // One-time free-deck grace: a brand-new (free) user gets to generate
     // and save a single deck before the paywall appears. Flipped true the
     // first time they save a deck. Lifetime flag, not monthly.
@@ -69,6 +76,7 @@ struct UserSubscriptionState: Codable, Hashable {
         case sentencesByMonthKey
         case artifactsByMonthKey
         case audioSessionsByMonthKey
+        case ttsCharsByMonthKey
         case freeDeckUsed
         case promoTier
         case promoExpiresAt
@@ -92,6 +100,7 @@ struct UserSubscriptionState: Codable, Hashable {
         self.sentencesByMonthKey     = (try? c.decodeIfPresent([String: Int].self, forKey: .sentencesByMonthKey)) ?? [:]
         self.artifactsByMonthKey     = (try? c.decodeIfPresent([String: Int].self, forKey: .artifactsByMonthKey)) ?? [:]
         self.audioSessionsByMonthKey = (try? c.decodeIfPresent([String: Int].self, forKey: .audioSessionsByMonthKey)) ?? [:]
+        self.ttsCharsByMonthKey      = (try? c.decodeIfPresent([String: Int].self, forKey: .ttsCharsByMonthKey)) ?? [:]
         self.freeDeckUsed            = (try? c.decodeIfPresent(Bool.self, forKey: .freeDeckUsed)) ?? false
         self.promoTier               = try? c.decodeIfPresent(String.self, forKey: .promoTier)
         self.promoExpiresAt          = try? c.decodeIfPresent(Date.self, forKey: .promoExpiresAt)

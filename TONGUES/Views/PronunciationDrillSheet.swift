@@ -82,7 +82,8 @@ struct PronunciationDrillSheet: View {
                         SpeechClient.shared.speak(
                             target,
                             language: language,
-                            allowForvo: false
+                            allowForvo: false,
+                            pronunciation: transliteration
                         )
                     } label: {
                         HStack(spacing: 4) {
@@ -257,7 +258,8 @@ struct PronunciationDrillSheet: View {
                     SpeechClient.shared.speak(
                         target,
                         language: language,
-                        allowForvo: false
+                        allowForvo: false,
+                        pronunciation: transliteration
                     )
                 } label: {
                     Label(L("Hear native"), systemImage: "speaker.wave.2")

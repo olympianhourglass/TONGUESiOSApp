@@ -20,6 +20,10 @@ struct ListenSessionView: View {
     @State private var advanceTask: Task<Void, Never>?
     @State private var chainTask: Task<Void, Never>?
     @State private var showOptions = false
+    // Bound to the options TabView so each page keeps a stable identity —
+    // without an explicit selection + tags, the paged TabView recycles page
+    // views mid-swipe and briefly renders one page's content over the next.
+    @State private var optionsPage = 0
 
     // Spotify-style transport state. `playOrder` is a mapping from session
     // position → index in `deck.items`. Shuffle reshuffles it; the un-shuffled
@@ -447,7 +451,8 @@ struct ListenSessionView: View {
                         SpeechClient.shared.speak(
                             item.word,
                             language: item.language ?? deck.language,
-                            allowForvo: true
+                            allowForvo: true,
+                            pronunciation: item.transliteration
                         )
                     },
                     font: .system(size: 22),
@@ -536,12 +541,13 @@ struct ListenSessionView: View {
                         language: language,
                         allowForvo: true,
                         rate: rate,
+                        pronunciation: item.transliteration,
                         onFinish: autoPlay ? { scheduleAutoAdvance() } : nil
                     )
                 }
             }
         } else if readTranslation {
-            SpeechClient.shared.speak(word, language: language, allowForvo: true, rate: rate) {
+            SpeechClient.shared.speak(word, language: language, allowForvo: true, rate: rate, pronunciation: item.transliteration) {
                 speakAfterGap {
                     SpeechClient.shared.speakElevenLabs(
                         translation,
@@ -556,6 +562,7 @@ struct ListenSessionView: View {
                 language: language,
                 allowForvo: true,
                 rate: rate,
+                pronunciation: item.transliteration,
                 onFinish: autoPlay ? { scheduleAutoAdvance() } : nil
             )
         }
@@ -775,6 +782,10 @@ struct ListenSessionView: View {
         let elapsed = max(0, Date().timeIntervalSince(sessionStartedAt))
         let advanced = advancedDeckIndices.count
         let completed = didCompletePlaylist
+        // A genuine listen — not an accidental open-and-dismiss — counts toward
+        // the daily streak. The streak reads StudySession records, which the XP
+        // grants below don't produce, so leave a lightweight session behind.
+        let didListen = completed || elapsed >= 15
         Task {
             do {
                 let sessionGrants = try await XPService.awardAudioSession(
@@ -784,6 +795,13 @@ struct ListenSessionView: View {
                     cardsAdvanced: advanced,
                     playlistCompleted: completed
                 )
+                if didListen {
+                    _ = try? await FirebaseDeckService.recordStreakActivity(
+                        deckId: deckId,
+                        deckTitle: deck.title,
+                        language: deck.language
+                    )
+                }
                 let dailyGrants = try await XPService.awardDailyBonusIfNeeded()
                 await MainActor.run {
                     XPToastCenter.shared.enqueue(sessionGrants + dailyGrants)
@@ -809,10 +827,10 @@ struct ListenSessionView: View {
                 // Swipeable settings: page 1 is the original playback options;
                 // page 2 layers ambient background audio; page 3 picks the
                 // background color gradient. Page dots hint at the extra pages.
-                TabView {
-                    optionsPageOne
-                    ambientPage
-                    backgroundColorPage
+                TabView(selection: $optionsPage) {
+                    optionsPageOne.clipped().tag(0)
+                    ambientPage.clipped().tag(1)
+                    backgroundColorPage.clipped().tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .always))
                 .indexViewStyle(.page(backgroundDisplayMode: .interactive))

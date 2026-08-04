@@ -95,6 +95,12 @@ struct StatisticsView: View {
     // trend chart. Nil = no touch in progress, the chart renders flat
     // with no scrubber overlay.
     @State private var selectedDayIndex: Int? = nil
+    // Absolute x (in the chart's own coordinate space) of each weekday dot,
+    // captured from the chart proxy. The weekday letters are positioned at
+    // these exact x's so every letter is centered under its dot — computing
+    // the positions from the same scale the dots use is the only reliable way
+    // to align them (AxisValueLabel anchoring drifted by a half-band).
+    @State private var weekdayDotXs: [CGFloat] = []
 
     private var topLanguageName: String {
         languageBreakdown.first?.language ?? "—"
@@ -573,6 +579,7 @@ struct StatisticsView: View {
             VStack(alignment: .leading, spacing: 16) {
                 weeklyTrendCommentary
 
+                VStack(alignment: .leading, spacing: 6) {
                 Chart {
                     // Last week sits underneath as a shadow series, drawn
                     // first so this week's line is layered on top. X is
@@ -582,7 +589,7 @@ struct StatisticsView: View {
                     // duplicate categorical values as the same x.
                     ForEach(lastWeekChartData) { entry in
                         LineMark(
-                            x: .value("Day", entry.id),
+                            x: .value("Day", Double(entry.id)),
                             y: .value("XP", entry.xp),
                             series: .value("Week", "Last week")
                         )
@@ -591,7 +598,7 @@ struct StatisticsView: View {
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
 
                         PointMark(
-                            x: .value("Day", entry.id),
+                            x: .value("Day", Double(entry.id)),
                             y: .value("XP", entry.xp)
                         )
                         .foregroundStyle(Color.white.opacity(0.30))
@@ -599,7 +606,7 @@ struct StatisticsView: View {
                     }
                     ForEach(thisWeekChartData) { entry in
                         LineMark(
-                            x: .value("Day", entry.id),
+                            x: .value("Day", Double(entry.id)),
                             y: .value("XP", entry.xp),
                             series: .value("Week", "This week")
                         )
@@ -608,7 +615,7 @@ struct StatisticsView: View {
                         .lineStyle(StrokeStyle(lineWidth: 1.5))
 
                         PointMark(
-                            x: .value("Day", entry.id),
+                            x: .value("Day", Double(entry.id)),
                             y: .value("XP", entry.xp)
                         )
                         .foregroundStyle(.white)
@@ -619,7 +626,7 @@ struct StatisticsView: View {
                     // the user's finger lands on the chart. Drawn last
                     // so it sits above both series.
                     if let idx = selectedDayIndex {
-                        RuleMark(x: .value("Day", idx))
+                        RuleMark(x: .value("Day", Double(idx)))
                             .foregroundStyle(.white.opacity(0.5))
                             .lineStyle(StrokeStyle(lineWidth: 1))
                             .annotation(
@@ -637,22 +644,12 @@ struct StatisticsView: View {
                 // gives their centered weekday labels room to align under the
                 // dots and keeps the last label (Sat/Sun) from clipping.
                 .chartXScale(domain: -0.5...6.5)
-                .chartXAxis {
-                    AxisMarks(values: Array(0...6)) { value in
-                        // anchor: .top pins the label's top-CENTER to its
-                        // value, so each weekday letter sits horizontally
-                        // centered under its dot. Without it the label
-                        // attaches by its leading edge and hangs to the
-                        // right, making every dot look skewed left of its day.
-                        AxisValueLabel(centered: false, anchor: .top) {
-                            if let idx = value.as(Int.self), idx >= 0, idx < weekdayLabels.count {
-                                Text(weekdayLabels[idx])
-                                    .font(.custom("NeueHaasDisplay-Light", size: 12))
-                                    .foregroundStyle(.white.opacity(0.6))
-                            }
-                        }
-                    }
-                }
+                // The built-in X-axis labels are hidden; the weekday letters
+                // are drawn in a sibling row below and positioned from the
+                // chart proxy (see weekdayDotXs) so each sits dead-centre under
+                // its dot. Swift Charts' own AxisValueLabel anchoring drifted a
+                // half-band no matter how it was configured.
+                .chartXAxis(.hidden)
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                         AxisGridLine()
@@ -670,6 +667,12 @@ struct StatisticsView: View {
                 .frame(height: 180)
                 .chartOverlay { proxy in
                     GeometryReader { geo in
+                        // Absolute x of each day's dot, read from the same
+                        // scale the marks are plotted on. proxy.position(forX:)
+                        // returns the x within the plot area, so add the plot's
+                        // leading inset to land in the chart's coordinate space.
+                        let plotMinX = proxy.plotFrame.map { geo[$0].minX } ?? 0
+                        let xs = (0..<7).map { plotMinX + (proxy.position(forX: Double($0)) ?? 0) }
                         Rectangle()
                             .fill(Color.clear)
                             .contentShape(Rectangle())
@@ -690,7 +693,34 @@ struct StatisticsView: View {
                                         selectedDayIndex = nil
                                     }
                             )
+                            .onAppear { weekdayDotXs = xs }
+                            // Recompute whenever the dot positions change for ANY
+                            // reason — not just when the chart's outer size does.
+                            // As data loads, larger XP numbers widen the Y-axis,
+                            // which shifts the plot inset (and the dots) right
+                            // WITHOUT changing geo.size; observing geo.size alone
+                            // left the labels behind, so the dots drifted past
+                            // their letters. Tracking `xs` itself keeps them locked.
+                            .onChange(of: xs) { _, newValue in weekdayDotXs = newValue }
                     }
+                }
+
+                // Weekday letters, each centred on its dot via the captured
+                // proxy x-positions. A ZStack + .position gives exact
+                // horizontal control; the fixed height keeps the row compact
+                // directly under the plot, replacing the drifting axis labels.
+                ZStack(alignment: .topLeading) {
+                    ForEach(0..<weekdayLabels.count, id: \.self) { idx in
+                        if idx < weekdayDotXs.count {
+                            Text(weekdayLabels[idx])
+                                .font(.custom("NeueHaasDisplay-Light", size: 12))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .position(x: weekdayDotXs[idx], y: 8)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 16)
                 }
 
                 HStack(spacing: 18) {

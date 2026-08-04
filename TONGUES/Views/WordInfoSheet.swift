@@ -35,6 +35,7 @@ struct WordInfoSheet: View {
         NavigationStack {
             rootContent
                 .toolbar(.hidden, for: .navigationBar)
+                .speechStatusToast()
         }
         .presentationBackground(.black)
         .task {

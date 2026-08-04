@@ -187,6 +187,11 @@ enum AnthropicClient {
         let maxAttempts = 3
         var lastError: Error?
 
+        // Top-level fields the schema declares as arrays, so we can coerce a
+        // malformed submission (array sent as a single object / index-map /
+        // JSON string) back into an array before decoding.
+        let arrayFields = topLevelArrayFields(in: schema)
+
         for attempt in 1...maxAttempts {
             // On retries, steer via `system` (a plain string) rather than an
             // extra user turn, which sidesteps any role-alternation concern.
@@ -226,8 +231,16 @@ enum AnthropicClient {
             }
 
             do {
-                let decoded = try decodeToolPayload(T.self, toolName: toolName, json: json, data: data)
-                return (decoded, json)
+                // Fix-forward common shape errors before decoding: weaker
+                // models sometimes emit an array field (e.g. `pairs`) as a
+                // single object or an index-keyed map. Coerce those back into a
+                // JSON array so a recoverable payload succeeds without burning
+                // a retry (and rescues the case where all attempts repeat it).
+                let coerced = coerceArrayFields(json: json, arrayFields: arrayFields)
+                let decodeData = coerced ?? data
+                let decodeJSON = coerced.flatMap { String(data: $0, encoding: .utf8) } ?? json
+                let decoded = try decodeToolPayload(T.self, toolName: toolName, json: decodeJSON, data: decodeData)
+                return (decoded, decodeJSON)
             } catch {
                 lastError = error
             }
@@ -308,6 +321,67 @@ enum AnthropicClient {
                 """
             ]
         )
+    }
+
+    // MARK: - Malformed-payload coercion
+
+    // The names of top-level properties the schema declares as `type: array`.
+    // Used to know which fields to fix up when the model submits the wrong
+    // shape (the input_schema is guidance, not a hard constraint).
+    private static func topLevelArrayFields(in schema: JSONValue) -> Set<String> {
+        guard case let .object(root) = schema,
+              case let .object(properties)? = root["properties"] else { return [] }
+        var fields: Set<String> = []
+        for (name, value) in properties {
+            if case let .object(field) = value,
+               case let .string(type)? = field["type"], type == "array" {
+                fields.insert(name)
+            }
+        }
+        return fields
+    }
+
+    // Rewrites any `arrayFields` in the submitted JSON that came through as
+    // something other than an array back into one, returning the fixed data —
+    // or nil when nothing needed changing (so the caller keeps the original).
+    private static func coerceArrayFields(json: String, arrayFields: Set<String>) -> Data? {
+        guard !arrayFields.isEmpty,
+              let data = json.data(using: .utf8),
+              var root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return nil
+        }
+        var changed = false
+        for field in arrayFields {
+            guard let value = root[field], !(value is [Any]) else { continue }
+            if let array = coerceToArray(value) {
+                root[field] = array
+                changed = true
+            }
+        }
+        guard changed,
+              let out = try? JSONSerialization.data(withJSONObject: root) else { return nil }
+        return out
+    }
+
+    // Best-effort conversion of a non-array value into an array:
+    //  • an index-keyed object {"0":…,"1":…} → its values in key order
+    //  • any other single object → a one-element array wrapping it
+    //  • a JSON string → parsed, then coerced
+    private static func coerceToArray(_ value: Any) -> [Any]? {
+        if let array = value as? [Any] { return array }
+        if let dict = value as? [String: Any] {
+            let intKeys = dict.keys.compactMap { Int($0) }
+            if !dict.isEmpty, intKeys.count == dict.count {
+                return intKeys.sorted().compactMap { dict[String($0)] }
+            }
+            return [dict]
+        }
+        if let string = value as? String,
+           let data = string.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) {
+            return coerceToArray(parsed)
+        }
+        return nil
     }
 
     // Vision-aware structured output. Single user turn with an image

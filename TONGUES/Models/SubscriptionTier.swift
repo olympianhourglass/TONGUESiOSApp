@@ -53,7 +53,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // generate across every deck. Counts toward `wordsByMonthKey`.
     var monthlyWords: Int {
         switch self {
-        case .free:     return 0
+        case .free:     return 100
         case .beginner: return 200
         case .pro:      return 1_000
         case .max:      return 5_000
@@ -64,7 +64,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // (the Phrases bucket shares the Sentences counter per spec).
     var monthlySentences: Int {
         switch self {
-        case .free:     return 0
+        case .free:     return 20
         case .beginner: return 100
         case .pro:      return 600
         case .max:      return 3_000
@@ -76,20 +76,23 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // users can re-roll without burning the budget.
     var monthlyArtifacts: Int {
         switch self {
-        case .free:     return 0
-        case .beginner: return 1
-        case .pro:      return 5
+        case .free:     return 5
+        case .beginner: return 20
+        case .pro:      return 60
         case .max:      return 200
         }
     }
 
     // Monthly cap of listen sessions (the ListenSessionView audio
-    // playback). Pro + Max are effectively unlimited via Int.max so
-    // the cap check arithmetic stays uniform with the other buckets.
+    // playback). Audio playback is unlimited on every tier — including
+    // Free — via Int.max, so the cap check arithmetic stays uniform with
+    // the other buckets while never blocking playback. (Premium native
+    // voices remain a paid differentiator via monthlyTTSCharacters; Free
+    // simply plays unlimited audio through the on-device Apple voice.)
     var monthlyAudioSessions: Int {
         switch self {
-        case .free:     return 0
-        case .beginner: return 50
+        case .free:     return Int.max
+        case .beginner: return Int.max
         case .pro:      return Int.max
         case .max:      return Int.max
         }

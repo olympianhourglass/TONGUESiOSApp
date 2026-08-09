@@ -2097,7 +2097,7 @@ struct WordAuditPanel: View {
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
-            .background(addedSuccess ? Color(red: 0.18, green: 0.45, blue: 0.22) : .black)
+            .background(Color.black)
             .clipShape(Capsule())
         }
         .disabled(isAdding || addedSuccess)

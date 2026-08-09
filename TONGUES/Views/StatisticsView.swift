@@ -86,6 +86,14 @@ struct StatisticsView: View {
     @AppStorage("overallSummarySignature") private var cachedOverallSummarySignature: String = ""
     @AppStorage("overallSummaryText") private var cachedOverallSummaryText: String = ""
 
+    // Re-entrancy guards. The eager `NavigationLink { StatisticsView(...) }` in
+    // LibraryView re-instantiates this view whenever the library's data
+    // publishes, which can fire `.task` more than once; without these, two
+    // overlapping LLM calls each set the label/summary and the card flickers
+    // between them. A second concurrent run bails immediately.
+    @State private var favoriteTopicInFlight = false
+    @State private var overallSummaryInFlight = false
+
     @State private var sharePayload: SharePayload?
 
     @Environment(\.dismiss) private var dismiss
@@ -296,6 +304,10 @@ struct StatisticsView: View {
     // signature change, and stays silent (no card content) when there's
     // nothing meaningful to summarize yet.
     private func refreshOverallSummary() async {
+        guard !overallSummaryInFlight else { return }
+        overallSummaryInFlight = true
+        defer { overallSummaryInFlight = false }
+
         let sig = overallSummarySignature
         let sigBody = sig.replacingOccurrences(of: "|", with: "").replacingOccurrences(of: "streak:0", with: "")
         guard !sigBody.isEmpty else {
@@ -356,11 +368,15 @@ struct StatisticsView: View {
                     stackedBar(segments: preferredLanguageSegments)
 
                     VStack(spacing: 8) {
+                        // Whole percentages computed over the full breakdown so
+                        // the numbers total 100; the collapsed view just shows
+                        // the first three of those already-rounded values.
+                        let percents = Self.wholePercentages(languageBreakdown.map(\.percent))
                         let visible = isLanguagesExpanded
                             ? languageBreakdown
                             : Array(languageBreakdown.prefix(3))
-                        ForEach(Array(visible.enumerated()), id: \.offset) { _, entry in
-                            languageRow(entry.language, percentLabel(entry.percent))
+                        ForEach(Array(visible.enumerated()), id: \.offset) { index, entry in
+                            languageRow(entry.language, "\(percents[index])%")
                         }
                     }
 
@@ -389,13 +405,41 @@ struct StatisticsView: View {
         }
     }
 
-    private func percentLabel(_ value: Double) -> String {
-        // Round to the nearest whole percent. Sub-1% languages still show as
-        // "1%" so the row reads as something rather than "0%".
-        let raw = value * 100
-        let rounded = Int(raw.rounded())
-        if rounded == 0 && raw > 0 { return "1%" }
-        return "\(rounded)%"
+    // Converts a set of fractional shares (each 0…1, summing to ~1) into
+    // whole-number percentages that ALWAYS total exactly 100. Every nonzero
+    // share still reads as at least 1%, and the rounding drift is absorbed by
+    // the largest share(s) — so a distribution never displays as
+    // "100% + 1% + 1% = 102%". Rounding each value independently (the old
+    // percentLabel) produced exactly that; this keeps the column honest.
+    private static func wholePercentages(_ fractions: [Double]) -> [Int] {
+        let total = fractions.reduce(0, +)
+        guard total > 0 else { return Array(repeating: 0, count: fractions.count) }
+
+        let scaled = fractions.map { $0 / total * 100 }
+        var result = scaled.map { Int($0) }   // floor
+        // A real-but-tiny share shows as at least 1% rather than vanishing.
+        for i in result.indices where result[i] == 0 && scaled[i] > 0 { result[i] = 1 }
+
+        var diff = 100 - result.reduce(0, +)
+        if diff > 0 {
+            // Hand leftover points to the largest fractional remainders.
+            let order = scaled.indices.sorted {
+                (scaled[$0] - Double(Int(scaled[$0]))) > (scaled[$1] - Double(Int(scaled[$1])))
+            }
+            for i in 0..<diff { result[order[i % order.count]] += 1 }
+        } else if diff < 0 {
+            // Over-allocated (many tiny shares rounded up to 1%). Reclaim points
+            // from the largest entries, never dropping a nonzero share below 1%.
+            let order = result.indices.sorted { result[$0] > result[$1] }
+            var k = 0
+            while diff < 0 {
+                let i = order[k % order.count]
+                if result[i] > 1 { result[i] -= 1; diff += 1 }
+                k += 1
+                if k > order.count * 200 { break }   // safety valve
+            }
+        }
+        return result
     }
 
     // MARK: - Card 2: Words / library counts
@@ -961,6 +1005,10 @@ struct StatisticsView: View {
     // Empty-state (no practice yet) clears the label so the card reads
     // "—" honestly rather than showing a stale topic.
     private func refreshFavoriteTopic() async {
+        guard !favoriteTopicInFlight else { return }
+        favoriteTopicInFlight = true
+        defer { favoriteTopicInFlight = false }
+
         guard !topPracticedDecks.isEmpty else {
             favoriteTopic = ""
             return
@@ -1011,10 +1059,11 @@ struct StatisticsView: View {
                         )
                         stackedBar(segments: learningMethodSegments)
                         VStack(spacing: 8) {
-                            ForEach(learningMethodShares) { share in
+                            let percents = Self.wholePercentages(learningMethodShares.map(\.percent))
+                            ForEach(Array(learningMethodShares.enumerated()), id: \.offset) { index, share in
                                 languageRow(
                                     L(share.method.displayName),
-                                    percentLabel(share.percent)
+                                    "\(percents[index])%"
                                 )
                             }
                         }
@@ -1068,10 +1117,11 @@ struct StatisticsView: View {
                     )
                     stackedBar(segments: sourcingMethodSegments)
                     VStack(spacing: 8) {
-                        ForEach(sourcingMethodShares) { share in
+                        let percents = Self.wholePercentages(sourcingMethodShares.map(\.percent))
+                        ForEach(Array(sourcingMethodShares.enumerated()), id: \.offset) { index, share in
                             languageRow(
                                 L(share.method.displayName),
-                                percentLabel(share.percent)
+                                "\(percents[index])%"
                             )
                         }
                     }

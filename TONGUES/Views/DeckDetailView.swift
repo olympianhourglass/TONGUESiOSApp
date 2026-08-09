@@ -1870,6 +1870,10 @@ struct ArtifactReaderSheet: View {
     // session recorded here is attributed to the right language in stats.
     var deckLanguage: String = ""
     @State private var isInterleaved = false
+    // Drives the "Read aloud" button, mirroring the fresh-generation flow in
+    // GenerateContentSheet so a revisited artifact can be played back too.
+    @State private var speech = SpeechClient.shared
+    @State private var readAloudPlayCount = 0
     // Counts one "comprehension" learning-method session the first time the
     // learner answers a question in this saved artifact.
     @State private var didCountComprehension = false
@@ -1890,6 +1894,37 @@ struct ArtifactReaderSheet: View {
 
                     contentBody
                         .padding(.horizontal)
+
+                    Button {
+                        Haptics.light()
+                        // Toggle play/stop, matching GenerateContentSheet's
+                        // read-aloud behavior (SpeechClient has no true
+                        // pause/resume, so tapping while playing stops).
+                        if speech.isSpeaking {
+                            SpeechClient.shared.stop()
+                        } else {
+                            readAloudPlayCount += 1
+                            SpeechClient.shared.speak(
+                                foreignText,
+                                language: deckLanguage,
+                                highlightPassage: true
+                            )
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: speech.isSpeaking ? "stop.fill" : "waveform")
+                                .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: readAloudPlayCount)
+                            Text(speech.isSpeaking ? L("Stop") : L("Read aloud"))
+                        }
+                        .font(.system(size: 14, weight: .medium))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .foregroundStyle(.black)
+                        .overlay(Capsule().stroke(Color(white: 0.85)))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(foreignText.isEmpty)
+                    .padding(.horizontal)
 
                     if let prompt = artifact.userPrompt, !prompt.isEmpty {
                         VStack(alignment: .leading, spacing: 6) {
@@ -1951,6 +1986,25 @@ struct ArtifactReaderSheet: View {
                 }
             }
         }
+        .onDisappear { SpeechClient.shared.stop() }
+    }
+
+    // The foreign-language text to read aloud. Prefers the pre-aligned
+    // foreign sentences (clean, with no English mixed in); falls back to
+    // the prose minus its "English:" block, mirroring how GenerateContentSheet
+    // builds `foreignContext`.
+    private var foreignText: String {
+        if !artifact.pairs.isEmpty {
+            return artifact.pairs
+                .map(\.foreign)
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if let range = artifact.prose.range(of: "English:") {
+            return artifact.prose[..<range.lowerBound]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return artifact.prose.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // Answering a comprehension question on a saved artifact counts toward

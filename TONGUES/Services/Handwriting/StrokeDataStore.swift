@@ -28,9 +28,12 @@ final class StrokeDataStore {
         return table[String(character)]
     }
 
-    /// True when every non-whitespace character of `word` has bundled data.
+    /// True when every writable character of `word` has bundled data.
+    /// Whitespace and punctuation are ignored — they're never practiced — so
+    /// a punctuated word/sentence still resolves to true when its characters
+    /// are covered.
     func hasFullCoverage(for word: String, script: HandwritingScript) -> Bool {
-        let chars = word.filter { !$0.isWhitespace }
+        let chars = word.filter { !$0.isWhitespace && !$0.isPunctuation }
         guard !chars.isEmpty else { return false }
         if script == .korean {
             return chars.allSatisfy { HangulComposer.compose($0) != nil }
@@ -42,10 +45,10 @@ final class StrokeDataStore {
     /// Characters of `word` that we can drive stroke-matching for, in order.
     func practicableCharacters(in word: String, script: HandwritingScript) -> [Character] {
         if script == .korean {
-            return word.filter { !$0.isWhitespace && HangulComposer.compose($0) != nil }
+            return word.filter { !$0.isWhitespace && !$0.isPunctuation && HangulComposer.compose($0) != nil }
         }
         let table = dataset(for: script)
-        return word.filter { !$0.isWhitespace && table[String($0)] != nil }
+        return word.filter { !$0.isWhitespace && !$0.isPunctuation && table[String($0)] != nil }
     }
 
     private func dataset(for script: HandwritingScript) -> [String: [[CGPoint]]] {
@@ -74,7 +77,7 @@ final class StrokeDataStore {
     @discardableResult
     func ensureCoverage(for word: String, script: HandwritingScript) async -> Bool {
         guard script.tier == .strokeMatch else { return false }
-        let chars = Set(word.filter { !$0.isWhitespace })
+        let chars = Set(word.filter { !$0.isWhitespace && !$0.isPunctuation })
         guard !chars.isEmpty else { return false }
         for character in chars where strokes(for: character, script: script) == nil {
             if let cached = loadFromDisk(character, script: script) {

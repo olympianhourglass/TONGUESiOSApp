@@ -1,0 +1,108 @@
+rules_version = '2';
+
+// TONGUES Firestore security rules.
+//
+// Model: almost everything lives under users/{uid}/… and is private to
+// that user. A few top-level collections are shared: decks are surfaced
+// publicly when flagged isPublic; comments/ratings are world-readable but
+// author-write-only; friendships are visible to their two participants;
+// promoCodes backs in-app code redemption. Rules version 2 is required for
+// the recursive ({document=**}) and collection-group ({path=**}) matches.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---- Helpers ----
+    function signedIn() {
+      return request.auth != null;
+    }
+    function isUser(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // ---- User profile + all per-user data ----
+    // The profile doc itself is readable by any signed-in user (the app
+    // reads other users' docs to show friend names, deck authors, and
+    // public profiles — Firestore can't project fields, so the whole doc
+    // is exposed). Writes are owner-only. Every subcollection under the
+    // user (decks, xp, subscription, conversations, curricula, etc.) is
+    // fully private to that user.
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if isUser(uid);
+
+      match /{document=**} {
+        allow read, write: if isUser(uid);
+      }
+    }
+
+    // ---- Public deck discovery ----
+    // collectionGroup("decks") query, filtered to isPublic == true. Owner
+    // CRUD on their own decks is already granted by the per-user rule
+    // above; this adds read-only access to decks explicitly made public.
+    match /{path=**}/decks/{deckId} {
+      allow read: if signedIn() && resource.data.isPublic == true;
+    }
+
+    // ---- Deck comments (top-level, world-readable, author-write) ----
+    match /deckComments/{commentId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+                    && request.resource.data.authorUID == request.auth.uid;
+      allow update: if signedIn()
+                    && resource.data.authorUID == request.auth.uid
+                    && request.resource.data.authorUID == request.auth.uid;
+      allow delete: if signedIn()
+                    && resource.data.authorUID == request.auth.uid;
+    }
+
+    // ---- Deck ratings (top-level, world-readable, rater-write) ----
+    // Doc id is "{deckId}_{raterUID}"; ownership is enforced on the
+    // raterUID field so a user can only set/change their own rating.
+    match /deckRatings/{ratingId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn()
+                    && request.resource.data.raterUID == request.auth.uid;
+      allow delete: if signedIn()
+                    && resource.data.raterUID == request.auth.uid;
+    }
+
+    // ---- Friendships (visible + mutable to the two participants) ----
+    // Doc id is the sorted pair of uids; participants holds both.
+    match /friendships/{friendshipId} {
+      allow read: if signedIn()
+                  && request.auth.uid in resource.data.participants;
+      allow create: if signedIn()
+                    && request.auth.uid in request.resource.data.participants
+                    && request.resource.data.initiatedBy == request.auth.uid;
+      allow update, delete: if signedIn()
+                    && request.auth.uid in resource.data.participants;
+    }
+
+    // ---- Promo codes (in-app redemption) ----
+    // Redemption is a client-side transaction (SubscriptionService.
+    // claimRedemptionSlot): it reads the shared counter doc, bumps
+    // redeemedCount, and writes a per-user ledger doc. The counter is
+    // shared across all users, so its writes can't be uid-scoped; the
+    // per-user ledger doc IS uid-scoped (its id is the uid).
+    match /promoCodes/{code} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+
+      match /redemptions/{uid} {
+        allow read: if signedIn();
+        allow create: if isUser(uid);
+      }
+    }
+
+    // ---- Global word-info cache (shared, read + write by any user) ----
+    match /wordInfos/{wordId} {
+      allow read, write: if signedIn();
+    }
+
+    // ---- Feedback (write-only drop box; never read back by the app) ----
+    match /feedback/{docId} {
+      allow create: if signedIn();
+      allow read, update, delete: if false;
+    }
+  }
+}

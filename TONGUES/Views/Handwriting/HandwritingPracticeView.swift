@@ -65,7 +65,7 @@ struct HandwritingPracticeView: View {
     var body: some View {
         VStack(spacing: 10) {
             headerRow
-            if model.mode == .strokeMatch, model.characters.count > 1 {
+            if model.mode == .strokeMatch, model.practiceUnits.count > 1 {
                 characterStepper
             }
             drawingArea
@@ -101,7 +101,7 @@ struct HandwritingPracticeView: View {
     // and 3rd characters obviously reachable instead of only auto-advancing.
     private var characterStepper: some View {
         HStack(spacing: 8) {
-            ForEach(Array(model.characters.enumerated()), id: \.offset) { index, character in
+            ForEach(Array(model.practiceUnits.enumerated()), id: \.offset) { index, unit in
                 let isCurrent = index == model.currentCharIndex
                 let done = model.completedCharIndices.contains(index)
                 Button {
@@ -109,7 +109,7 @@ struct HandwritingPracticeView: View {
                     stopStrokeDemo()
                     model.selectCharacter(index)
                 } label: {
-                    Text(String(character))
+                    Text(unit)
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(isCurrent ? filledButtonText : primaryText)
                         .frame(width: 34, height: 34)
@@ -388,18 +388,51 @@ final class HandwritingPracticeModel: ObservableObject {
     // strokeMatch if the CDN fetch fills in coverage (see loadStrokesIfNeeded).
     @Published private(set) var mode: Mode
 
-    // strokeMatch state
-    private var chars: [Character] = []
+    // The pieces the learner writes one at a time. Both tiers step through
+    // these; the writing space only ever holds a single unit. See
+    // `practiceUnits(from:script:)` for how a word/sentence is split.
+    private var units: [String] = []
     @Published private(set) var currentCharIndex = 0
     @Published private(set) var expectedStrokeIndex = 0
     @Published private(set) var completedStrokes = 0
     @Published private(set) var currentLayout: CharacterLayout?
-    // Which characters of the word have been written successfully, so the
-    // stepper can mark them and the word finishes once all are done.
+    // Which units have been written successfully, so the stepper can mark
+    // them and the word finishes once all are done.
     @Published private(set) var completedCharIndices: Set<Int> = []
 
-    /// The word's practicable characters, for the navigation stepper.
-    var characters: [Character] { chars }
+    /// The practicable units, in order, for the navigation stepper + counter.
+    var practiceUnits: [String] { units }
+
+    /// The unit currently in the writing space.
+    private var currentUnit: String {
+        units.indices.contains(currentCharIndex) ? units[currentCharIndex] : word
+    }
+
+    // Splits the target text into the units practiced one at a time. CJK and
+    // Korean break into single characters (each grapheme is one cell); Arabic
+    // breaks into whole words, because its letters join and reshape within a
+    // word and a lone letter would render in its isolated form. Whitespace-
+    // and punctuation-only pieces are dropped so a space or period is never
+    // its own cell. Falls back to the trimmed whole string if nothing splits
+    // out, so the space is never empty.
+    static func practiceUnits(from text: String, script: HandwritingScript) -> [String] {
+        let units: [String]
+        if script == .arabic {
+            units = text
+                .split(whereSeparator: { $0.isWhitespace })
+                .map { token in String(token.filter { !$0.isPunctuation }) }
+                .filter { !$0.isEmpty }
+        } else {
+            units = text
+                .filter { !$0.isWhitespace && !$0.isPunctuation }
+                .map(String.init)
+        }
+        if units.isEmpty {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? [] : [trimmed]
+        }
+        return units
+    }
 
     // template state
     @Published private(set) var templateImage: UIImage?
@@ -427,10 +460,13 @@ final class HandwritingPracticeModel: ObservableObject {
     init(word: String, script: HandwritingScript) {
         self.word = word
         self.script = script
+        // Always decompose into single-unit cells — both tiers step through
+        // these so the writing space never holds more than one character
+        // (one word, for Arabic).
+        self.units = Self.practiceUnits(from: word, script: script)
         let store = StrokeDataStore.shared
         if script.tier == .strokeMatch, store.hasFullCoverage(for: word, script: script) {
             self.mode = .strokeMatch
-            self.chars = Array(word.filter { !$0.isWhitespace })
         } else {
             self.mode = .template
         }
@@ -456,31 +492,40 @@ final class HandwritingPracticeModel: ObservableObject {
 
     private func upgradeToStrokeMatch() {
         mode = .strokeMatch
-        chars = Array(word.filter { !$0.isWhitespace })
+        // Units are identical across tiers for CJK/Korean (per-character), so
+        // no need to recompute — just restart from the first one.
         currentCharIndex = 0
-        expectedStrokeIndex = 0
-        completedStrokes = 0
         completedCharIndices = []
-        attempts = 0
-        setHintLevel(0)
         feedback = .none
-        canvas?.clear()
-        if rect.width > 1 { rebuildLayout() }
+        loadCurrentUnit()
     }
 
-    // Jump to any character in the word so multi-character words are freely
-    // navigable — the user can move ahead or go back and redraw one.
+    // Jump to any unit so multi-unit words are freely navigable — the user
+    // can move ahead or go back and redraw one.
     func selectCharacter(_ index: Int) {
-        guard mode == .strokeMatch, chars.indices.contains(index) else { return }
+        guard mode == .strokeMatch, units.indices.contains(index) else { return }
         currentCharIndex = index
+        feedback = .none
+        if status == .complete { status = .inProgress }
+        loadCurrentUnit()
+    }
+
+    // Resets all per-unit state and rebuilds the guide for whichever unit is
+    // now current, in either tier. The single chokepoint used when advancing,
+    // jumping, upgrading, or restarting so the writing space always reflects
+    // exactly one unit.
+    private func loadCurrentUnit() {
         expectedStrokeIndex = 0
         completedStrokes = 0
         attempts = 0
+        lastRecall = 0
         setHintLevel(0)
-        feedback = .none
-        if status == .complete { status = .inProgress }
         canvas?.clear()
-        rebuildLayout()
+        guard rect.width > 1 else { return }
+        switch mode {
+        case .strokeMatch: rebuildLayout()
+        case .template:     renderTemplate()
+        }
     }
 
     func setRect(_ rect: CGRect) {
@@ -498,11 +543,12 @@ final class HandwritingPracticeModel: ObservableObject {
     var title: String {
         switch mode {
         case .strokeMatch:
-            return chars.count > 1
-                ? "Write \(String(chars[safe: currentCharIndex] ?? " ")) · \(currentCharIndex + 1)/\(chars.count)"
+            return units.count > 1
+                ? "Write \(units[safe: currentCharIndex] ?? " ") · \(currentCharIndex + 1)/\(units.count)"
                 : "Write the character"
         case .template:
-            return script == .arabic ? "Trace the word (right → left)" : "Trace the character"
+            let base = script == .arabic ? "Trace the word (right → left)" : "Trace the character"
+            return units.count > 1 ? "\(base) · \(currentCharIndex + 1)/\(units.count)" : base
         }
     }
 
@@ -510,7 +556,7 @@ final class HandwritingPracticeModel: ObservableObject {
         switch feedback {
         case .none:
             if mode == .strokeMatch { return "Follow the stroke order" }
-            return script == .korean ? Hangul.breakdown(word).isEmpty ? "Cover the whole shape" : Hangul.breakdown(word)
+            return script == .korean ? Hangul.breakdown(currentUnit).isEmpty ? "Cover the whole shape" : Hangul.breakdown(currentUnit)
                                      : "Cover the whole shape"
         case .good: return "Good"
         case .charDone: return "Character complete"
@@ -533,8 +579,9 @@ final class HandwritingPracticeModel: ObservableObject {
     // MARK: strokeMatch
 
     private func rebuildLayout() {
-        guard mode == .strokeMatch, chars.indices.contains(currentCharIndex),
-              let strokes = StrokeDataStore.shared.strokes(for: chars[currentCharIndex], script: script) else {
+        guard mode == .strokeMatch,
+              let char = currentUnit.first,
+              let strokes = StrokeDataStore.shared.strokes(for: char, script: script) else {
             currentLayout = nil
             return
         }
@@ -581,18 +628,21 @@ final class HandwritingPracticeModel: ObservableObject {
 
     private func finishCharacter() {
         Haptics.success()
+        advanceOrFinish(doneFeedback: .charDone)
+    }
+
+    // Marks the current unit complete and moves to the next one that still
+    // needs writing (wrapping so out-of-order practice via the stepper still
+    // finds the remainder), or finishes the whole word. Shared by both tiers.
+    private func advanceOrFinish(doneFeedback: Feedback) {
         completedCharIndices.insert(currentCharIndex)
-        // Move to the next character that still needs writing (wrapping so
-        // out-of-order practice via the stepper still finds the remainder).
         if let next = nextIncompleteIndex() {
-            feedback = .charDone
+            feedback = doneFeedback
             currentCharIndex = next
-            expectedStrokeIndex = 0
-            completedStrokes = 0
-            attempts = 0
-            setHintLevel(0)
-            canvas?.clear()
-            rebuildLayout()
+            loadCurrentUnit()
+            // Template units auto-play a directional guide; restart it for the
+            // new unit (the view replays on hintToken changes).
+            if mode == .template { hintToken += 1 }
         } else {
             feedback = .allDone
             status = .complete
@@ -600,9 +650,9 @@ final class HandwritingPracticeModel: ObservableObject {
     }
 
     private func nextIncompleteIndex() -> Int? {
-        guard !chars.isEmpty else { return nil }
-        for offset in 1...chars.count {
-            let i = (currentCharIndex + offset) % chars.count
+        guard !units.isEmpty else { return nil }
+        for offset in 1...units.count {
+            let i = (currentCharIndex + offset) % units.count
             if !completedCharIndices.contains(i) { return i }
         }
         return nil
@@ -618,7 +668,9 @@ final class HandwritingPracticeModel: ObservableObject {
     // MARK: template
 
     private func renderTemplate() {
-        glyph = TemplateGlyph.render(text: word, script: script, in: rect.size)
+        // Render only the current unit, never the whole word/sentence, so the
+        // tracing guide holds a single character (a single word, for Arabic).
+        glyph = TemplateGlyph.render(text: currentUnit, script: script, in: rect.size)
         templateImage = glyph?.displayImage
     }
 
@@ -648,10 +700,11 @@ final class HandwritingPracticeModel: ObservableObject {
         // Best-effort OCR upgrade for a borderline trace; never rejects.
         if cov.recall >= 0.35 {
             let rectCopy = rect
+            let target = currentUnit
             Task { [weak self] in
                 guard let self else { return }
                 let hits = await HandwritingOCR.recognize(strokes: all, rect: rectCopy, script: self.script)
-                if hits.contains(where: { $0.contains(self.word) }) {
+                if hits.contains(where: { $0.contains(target) }) {
                     await MainActor.run { if self.status == .inProgress { self.complete() } }
                 }
             }
@@ -660,8 +713,7 @@ final class HandwritingPracticeModel: ObservableObject {
 
     private func complete() {
         Haptics.success()
-        feedback = .allDone
-        status = .complete
+        advanceOrFinish(doneFeedback: .charDone)
     }
 
     // MARK: hints
@@ -702,16 +754,12 @@ final class HandwritingPracticeModel: ObservableObject {
         canvas?.clear()
         feedback = .none
         if status == .complete {
-            // Restart the whole word.
+            // Restart the whole word from the first unit.
             status = .inProgress
             currentCharIndex = 0
-            expectedStrokeIndex = 0
-            completedStrokes = 0
             completedCharIndices = []
-            lastRecall = 0
-            attempts = 0
-            setHintLevel(0)
-            if mode == .strokeMatch { rebuildLayout() }
+            loadCurrentUnit()
+            if mode == .template { hintToken += 1 }
         } else if mode == .strokeMatch {
             expectedStrokeIndex = 0
             completedStrokes = 0

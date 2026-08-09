@@ -47,9 +47,10 @@ final class AmbientAudioPlayer {
     private var musicPlayer: AVAudioPlayer?
 
     // Sound sits a touch louder than music since environmental beds are
-    // subtler; both stay well under the speech.
-    private let soundVolume: Float = 0.35
-    private let musicVolume: Float = 0.28
+    // subtler; both stay well under the speech. Reduced 25% from the original
+    // 0.35 / 0.28 so the background doesn't overpower the (normalized) voice.
+    private let soundVolume: Float = 0.2625
+    private let musicVolume: Float = 0.21
 
     // Swaps (or clears, when `resource` is nil/empty) the given channel and
     // starts it looping immediately.

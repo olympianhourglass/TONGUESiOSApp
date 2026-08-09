@@ -118,9 +118,11 @@ final class SpeechClient {
                     // produces on the fallback path.
                     if let result = await self.nativeElevenLabsTimestamped(for: trimmed, language: language) {
                         if Task.isCancelled { return }
+                        let audio = await Self.loudnessNormalizedAudio(result.audio)
+                        if Task.isCancelled { return }
                         self.emitStatus("ElevenLabs native voice (\(language))")
                         do {
-                            try self.playWithAlignment(audio: result.audio, alignment: result.alignment, text: trimmed, rate: rate)
+                            try self.playWithAlignment(audio: audio, alignment: result.alignment, text: trimmed, rate: rate)
                             return
                         } catch {
                             // Playback failed — drop to the classic tiers below.
@@ -128,9 +130,11 @@ final class SpeechClient {
                     }
                 } else if let data = await self.nativeElevenLabsData(for: trimmed, language: language) {
                     if Task.isCancelled { return }
+                    let audio = await Self.loudnessNormalizedAudio(data)
+                    if Task.isCancelled { return }
                     self.emitStatus("ElevenLabs native voice (\(language))")
                     do {
-                        try self.play(data: data, rate: rate)
+                        try self.play(data: audio, rate: rate)
                         return
                     } catch {
                         // Playback failed — drop to the classic tiers below.
@@ -263,7 +267,8 @@ final class SpeechClient {
                 voiceId: voiceId,
                 onCacheMiss: Self.ttsBudgetGate
             )
-            try play(data: data, rate: 1.0)
+            let audio = await Self.loudnessNormalizedAudio(data)
+            try play(data: audio, rate: 1.0)
             emitStatus("ElevenLabs voice — regenerated")
         } catch {
             print("ElevenLabs regenerate failed: \(error)")
@@ -336,8 +341,10 @@ final class SpeechClient {
                     onCacheMiss: Self.ttsBudgetGate
                 )
                 if Task.isCancelled { return }
+                let audio = await Self.loudnessNormalizedAudio(data)
+                if Task.isCancelled { return }
                 self.emitStatus("ElevenLabs voice")
-                try self.play(data: data, rate: rate)
+                try self.play(data: audio, rate: rate)
             } catch {
                 // Cancellation race: a newer speak() superseded this one and
                 // its .cancel() made URLSession throw. The new call already
@@ -368,6 +375,110 @@ final class SpeechClient {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             self?.statusMessage = nil
+        }
+    }
+
+    // MARK: - ElevenLabs loudness normalization
+    //
+    // ElevenLabs clips come back at inconsistent (and often low) levels, so a
+    // native voice can get buried under an ambient soundscape. We normalize
+    // every ElevenLabs clip to a FIXED target loudness the moment it arrives:
+    // this makes all native-voice playback the same level app-wide AND loud
+    // enough to sit over the soundscapes. Forvo/Apple paths never call this.
+
+    // Linear-amplitude (0...1) targets. `nonisolated` so the off-main-actor
+    // normalizer can read them.
+    nonisolated private static let targetPeak: Float = 0.97   // ceiling - keep just under clipping
+    nonisolated private static let targetRMS: Float = 0.16    // ~-16 dBFS, a healthy speech level
+    nonisolated private static let maxBoost: Float = 8.0       // don't amplify a near-silent clip into hiss
+
+    // Async wrapper that runs the (CPU-bound) normalize off the main actor and
+    // always yields playable audio — the original clip if anything goes wrong.
+    nonisolated static func loudnessNormalizedAudio(_ data: Data) async -> Data {
+        await Task.detached(priority: .userInitiated) {
+            loudnessNormalized(data) ?? data
+        }.value
+    }
+
+    // Peak+RMS normalize one ElevenLabs MP3. Decodes to PCM, computes a gain to
+    // reach `targetRMS` (capped by `targetPeak` so it never clips and by
+    // `maxBoost` so silence isn't over-amplified), applies it, and re-encodes to
+    // 16-bit PCM (CAF) that AVAudioPlayer plays directly — duration and sample
+    // rate are preserved, so the read-along timestamp highlight stays in sync.
+    // Returns nil (→ caller plays the original) if decoding fails or the clip is
+    // already at target.
+    nonisolated private static func loudnessNormalized(_ mp3: Data) -> Data? {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory
+        let inURL = dir.appendingPathComponent("ll-\(UUID().uuidString).mp3")
+        let outURL = dir.appendingPathComponent("ll-\(UUID().uuidString).caf")
+        defer {
+            try? fm.removeItem(at: inURL)
+            try? fm.removeItem(at: outURL)
+        }
+
+        do {
+            try mp3.write(to: inURL)
+            let inFile = try AVAudioFile(forReading: inURL)
+            let format = inFile.processingFormat   // float32, deinterleaved
+            let frameCount = AVAudioFrameCount(inFile.length)
+            guard frameCount > 0,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+                return nil
+            }
+            try inFile.read(into: buffer)
+            guard let channels = buffer.floatChannelData else { return nil }
+            let channelCount = Int(format.channelCount)
+            let frames = Int(buffer.frameLength)
+            guard frames > 0 else { return nil }
+
+            // Peak amplitude and RMS across every channel.
+            var peak: Float = 0
+            var sumSquares: Double = 0
+            for c in 0..<channelCount {
+                let samples = channels[c]
+                for i in 0..<frames {
+                    let v = samples[i]
+                    let a = abs(v)
+                    if a > peak { peak = a }
+                    sumSquares += Double(v) * Double(v)
+                }
+            }
+            guard peak > 0 else { return nil }
+            let rms = Float(sqrt(sumSquares / Double(frames * channelCount)))
+            guard rms > 0 else { return nil }
+
+            // Aim for target RMS, but never push the loudest peak past the
+            // ceiling and never boost more than maxBoost.
+            let gain = min(targetRMS / rms, targetPeak / peak, maxBoost)
+            // Already essentially at target — skip the re-encode round trip.
+            guard abs(gain - 1) >= 0.05 else { return nil }
+
+            for c in 0..<channelCount {
+                let samples = channels[c]
+                for i in 0..<frames {
+                    // Peak-limited gain, plus a hard clamp against float slop.
+                    samples[i] = max(-1, min(1, samples[i] * gain))
+                }
+            }
+
+            let settings: [String: Any] = [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: format.sampleRate,
+                AVNumberOfChannelsKey: format.channelCount,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false
+            ]
+            var outFile: AVAudioFile? = try AVAudioFile(forWriting: outURL, settings: settings)
+            try outFile?.write(from: buffer)
+            outFile = nil   // dealloc flushes/closes the file before we read it back
+
+            return try Data(contentsOf: outURL)
+        } catch {
+            print("ElevenLabs loudness normalize failed: \(error)")
+            return nil
         }
     }
 

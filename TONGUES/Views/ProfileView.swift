@@ -113,6 +113,20 @@ struct ProfileView: View {
                         logoutButton
                         deleteAccountButton
                     }
+
+                    // Low-key legal/attribution entry — present for
+                    // compliance (CC BY-SA data credits) but visually quiet.
+                    NavigationLink {
+                        licensesDetail
+                    } label: {
+                        Text(L("Licenses & acknowledgements"))
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 10)
                     .padding(.bottom, 32)
                 }
                 .padding(.horizontal, 8)
@@ -396,6 +410,26 @@ struct ProfileView: View {
                     .tint(.black)
                 }
             }
+        }
+    }
+
+    // Read-only attribution screen. Credits the third-party data the app
+    // ships (currently the HSK decks' vocabulary), satisfying the CC BY-SA
+    // share-alike attribution requirement without a prominent placement.
+    private var licensesDetail: some View {
+        settingsDetail(title: L("Licenses")) {
+            Text(L("HSK vocabulary data"))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.black)
+            Text(L("The HSK 1–9 character and word lists are derived from the open-source complete-hsk-vocabulary project. English definitions are from CC-CEDICT, used under the Creative Commons Attribution-ShareAlike 3.0 (CC BY-SA 3.0) license."))
+                .font(.system(size: 15))
+                .foregroundStyle(.black)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("github.com/drkameleon/complete-hsk-vocabulary\ncc-cedict.org\ncreativecommons.org/licenses/by-sa/3.0")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
         }
     }
 

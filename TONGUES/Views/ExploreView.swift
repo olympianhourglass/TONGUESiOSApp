@@ -18,12 +18,29 @@ struct ExploreView: View {
     @State private var capError: SubscriptionError?
     @State private var topicPresets: [TopicPreset] = []
     @State private var activePreset: TopicPreset?
+    // True once we know the signed-in user studies Mandarin — gates the
+    // HSK-by-level section, which is Mandarin-only.
+    @State private var studiesMandarin = false
+    // HSK decks currently being written to the library, and those already
+    // added this session, so each card can show a spinner / added checkmark.
+    @State private var addingHSKDeckIDs: Set<String> = []
+    @State private var addedHSKDeckIDs: Set<String> = []
 
     // Cultural insight card content — drawn fresh on every Explore
     // appearance from a random destination the user picked.
     @State private var culturalInsightCountry: String?
     @State private var culturalInsightFact: String?
     @State private var isLoadingCulturalInsight = false
+    // Re-entrancy guard distinct from the UI's `isLoadingCulturalInsight`:
+    // `onAppear` can fire more than once (tab/nav re-appearance), and two
+    // overlapping loads would each resolve an insight and overwrite one
+    // another — the "loaded twice" flicker. This blocks a second concurrent run.
+    @State private var culturalInsightInFlight = false
+    // True once the insight has been generated for this session. It's loaded
+    // exactly once — the first time Explore is shown after login — and then
+    // left alone on subsequent tab visits; the user re-rolls explicitly via
+    // "Get new insight". Resets naturally on next login (fresh view state).
+    @State private var didLoadInitialCulturalInsight = false
     // The learner's study language, tagged onto a saved cultural insight.
     @State private var culturalInsightLanguage: String?
     // Flips true once the current insight has been saved; reset whenever a
@@ -88,6 +105,9 @@ struct ExploreView: View {
                     }
                     culturalInsightCard
                     topicsSection
+                    if showsHSKSection {
+                        hskSection
+                    }
                     if !visibleDestinationLanguages.isEmpty {
                         destinationLanguagesSection
                             // 1.4× the standard 28pt section gap above the
@@ -135,6 +155,7 @@ struct ExploreView: View {
                 }
             }
             .task {
+                await loadHSKAvailabilityIfNeeded()
                 await loadTopicPresets()
                 locationManager.requestLocation()
                 await loadDestinationLanguagesIfNeeded()
@@ -148,12 +169,19 @@ struct ExploreView: View {
             // visible. If the user edited destinations from the Profile
             // page (or finished onboarding mid-session), the key changes
             // and the two destination-driven rows refetch. The cultural
-            // insight re-rolls on every appearance so the user sees a
-            // fresh niche fact each time they open the tab.
+            // insight, by contrast, is generated only ONCE per session — the
+            // first time Explore is shown — and stays put on later tab visits;
+            // the user re-rolls it explicitly with "Get new insight".
             .onAppear {
+                // Capture + flip synchronously so a second onAppear (tab
+                // re-entry) never triggers another insight generation.
+                let shouldLoadInsight = !didLoadInitialCulturalInsight
+                didLoadInitialCulturalInsight = true
                 Task {
                     await loadDestinationLanguagesIfNeeded()
-                    await loadCulturalInsight()
+                    if shouldLoadInsight {
+                        await loadCulturalInsight()
+                    }
                 }
                 // Refresh the plan strip when the tab shows so a plan accepted
                 // in chat (or progress made in Study) reflects without an app
@@ -661,6 +689,171 @@ struct ExploreView: View {
         }
     }
 
+    // MARK: HSK levels (Mandarin only)
+
+    // Shown only to Mandarin learners, and hidden when the language filter is
+    // narrowed to languages other than Mandarin — mirroring how the topic row
+    // respects the same filter.
+    private var showsHSKSection: Bool {
+        guard studiesMandarin else { return false }
+        if languageFilter.isEmpty { return true }
+        return languageFilter.contains { canonicalLanguageName($0) == "Chinese (Mandarin)" }
+    }
+
+    // Mirrors the "You might like these topics" row exactly — same header +
+    // horizontal strip of 220×230 preview cards — but the cards are the
+    // pre-authored HSK decks from the bundled catalog. Tapping "+" adds the
+    // whole list straight to the user's library (no generation).
+    private var hskSection: some View {
+        VStack(alignment: .leading, spacing: MacLayout.s(16)) {
+            Text(L("Learn Mandarin by HSK level"))
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(18)))
+                .foregroundStyle(.black)
+                .padding(.horizontal, 8)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(HSKCatalog.shared.decks) { deck in
+                        hskCard(deck: deck)
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+            .scrollClipDisabled()
+        }
+    }
+
+    // Stable cover style per deck so it doesn't reshuffle across re-renders
+    // (DeckCoverStyle.hashValue isn't stable, so derive from the deck id).
+    private func hskCoverStyle(for deck: HSKCatalog.Deck) -> DeckCoverStyle {
+        let styles = DeckCoverStyle.allCases
+        guard !styles.isEmpty else { return .gradient }
+        let seed = deck.id.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return styles[seed % styles.count]
+    }
+
+    private func hskCard(deck: HSKCatalog.Deck) -> some View {
+        let isAdding = addingHSKDeckIDs.contains(deck.id)
+        let isAdded = addedHSKDeckIDs.contains(deck.id)
+        let unit = deck.isCharacters ? L("characters") : L("words")
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(spacing: 0) {
+                HStack(alignment: .firstTextBaseline) {
+                    HStack(spacing: 4) {
+                        Text(shortLanguageLabel(HSKCatalog.Deck.language))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
+                            .foregroundStyle(.black)
+                        Text(L(deck.level))
+                            .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(15)))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image("Compass")
+                        .renderingMode(.template)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: MacLayout.s(18), height: MacLayout.s(18))
+                        .foregroundStyle(.black)
+                }
+                .padding(MacLayout.s(12))
+
+                Spacer(minLength: 0)
+
+                DeckCoverFill(style: hskCoverStyle(for: deck))
+                    .aspectRatio(90.0 / 53.0, contentMode: .fit)
+                    .frame(width: MacLayout.s(130))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(Color.black.opacity(0.08), lineWidth: 0.5)
+                    )
+                    .shadow(color: .black.opacity(0.08), radius: 8, x: 0, y: 4)
+
+                Spacer(minLength: 0)
+            }
+            .frame(width: MacLayout.s(220), height: MacLayout.s(230))
+            .background(
+                LinearGradient(
+                    colors: [Color(white: 0.93), Color(white: 0.975)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L(deck.title))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(22)))
+                        .foregroundStyle(.black)
+                        .lineLimit(1)
+                    Text(L("%d %@", deck.items.count, unit))
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Haptics.light()
+                    Task { await addHSKDeck(deck) }
+                } label: {
+                    if isAdding {
+                        ProgressView()
+                            .frame(width: 32, height: 32)
+                    } else if isAdded {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(Color.black))
+                    } else {
+                        addCircleButton(size: 32, plusSize: 14)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(isAdding || isAdded)
+                .accessibilityLabel(isAdded ? L("Added to your library") : L("Add to your library"))
+            }
+            .frame(width: MacLayout.s(220))
+        }
+    }
+
+    // Writes the whole pre-authored HSK deck into the user's library via the
+    // normal save path, so it appears on the Study tab like any other deck.
+    // Universal + free: no generation, no cap gate.
+    @MainActor
+    private func addHSKDeck(_ deck: HSKCatalog.Deck) async {
+        guard !addingHSKDeckIDs.contains(deck.id), !addedHSKDeckIDs.contains(deck.id) else { return }
+        addingHSKDeckIDs.insert(deck.id)
+        defer { addingHSKDeckIDs.remove(deck.id) }
+        do {
+            _ = try await FirebaseDeckService.saveDeck(
+                deck.makeGeneratedDeck(),
+                coverStyle: hskCoverStyle(for: deck).rawValue,
+                source: "hsk"
+            )
+            addedHSKDeckIDs.insert(deck.id)
+            Haptics.success()
+        } catch {
+            Haptics.error()
+            print("addHSKDeck failed: \(error)")
+        }
+    }
+
+    // Resolves whether the user studies Mandarin so the HSK section can show.
+    // Reads the on-device onboarding cache first; only hits the network when
+    // the cache is cold.
+    @MainActor
+    private func loadHSKAvailabilityIfNeeded() async {
+        if let cached = UserService.cachedOnboarding()?.languagePreferences {
+            studiesMandarin = cached.contains { canonicalLanguageName($0.language) == "Chinese (Mandarin)" }
+            return
+        }
+        if let profile = try? await UserService.fetchProfile() {
+            let langs = profile.onboarding?.languagePreferences ?? []
+            studiesMandarin = langs.contains { canonicalLanguageName($0.language) == "Chinese (Mandarin)" }
+        }
+    }
+
     // MARK: Decks Others Have Made
 
     // Mirrors the visual language of the "You might like these topics"
@@ -851,6 +1044,12 @@ struct ExploreView: View {
 
     @MainActor
     private func loadCulturalInsight() async {
+        // Dedupe overlapping loads (e.g. a double onAppear). Set synchronously
+        // before the first await so a second concurrent call bails immediately.
+        guard !culturalInsightInFlight else { return }
+        culturalInsightInFlight = true
+        defer { culturalInsightInFlight = false }
+
         guard let profile = try? await UserService.fetchProfile() else { return }
         culturalInsightLanguage = profile.onboarding?.languagePreferences?.first?.language
         let destinations = (profile.onboarding?.destinations ?? []).map { $0.name }

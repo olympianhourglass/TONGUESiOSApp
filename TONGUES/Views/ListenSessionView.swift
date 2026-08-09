@@ -616,16 +616,28 @@ struct ListenSessionView: View {
         let currentDeckIdx = playOrder[currentIndex]
         isShuffled.toggle()
         if isShuffled {
-            var indices = Array(0..<deck.items.count)
-            indices.shuffle()
-            playOrder = indices
+            // Keep everything up to and including the current item where it is,
+            // then shuffle ONLY the not-yet-reached items into the slots after
+            // it. This guarantees the current item never lands in the last slot
+            // (which would make `isAtLast` true and end the session on the next
+            // auto-advance — the "last card shuffled in ends the deck early"
+            // bug), while still randomizing the rest of the queue. `currentIndex`
+            // stays put, so playback and the progress counter don't jump, and
+            // the bar still carries the user through every remaining card to a
+            // real finish.
+            let prefix = Array(playOrder[0...currentIndex])
+            let alreadyPositioned = Set(prefix)
+            var remaining = (0..<deck.items.count).filter { !alreadyPositioned.contains($0) }
+            remaining.shuffle()
+            playOrder = prefix + remaining
+            // currentIndex is unchanged — the current item is still at it.
         } else {
+            // Restore linear deck order and snap to the current item's natural
+            // position so the counter reflects where it truly sits in the deck.
             playOrder = Array(0..<deck.items.count)
-        }
-        // Preserve the currently-playing item by snapping currentIndex to its
-        // new position in the reordered playOrder.
-        if let newPos = playOrder.firstIndex(of: currentDeckIdx) {
-            currentIndex = newPos
+            if let newPos = playOrder.firstIndex(of: currentDeckIdx) {
+                currentIndex = newPos
+            }
         }
     }
 

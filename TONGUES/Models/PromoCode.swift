@@ -28,9 +28,13 @@ struct PromoCode {
     ]
 
     // Resolves a user-typed string to a defined code, or nil if none match.
+    // Strips ALL whitespace (not just the edges) and uppercases before
+    // comparing, so codes shared with a space — "TONGUES VIP",
+    // "TONGUES Creator" — still resolve to the space-free stored codes.
     static func match(_ input: String) -> PromoCode? {
         let normalized = input
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines)
+            .joined()
             .uppercased()
         guard !normalized.isEmpty else { return nil }
         return all.first { $0.code.uppercased() == normalized }

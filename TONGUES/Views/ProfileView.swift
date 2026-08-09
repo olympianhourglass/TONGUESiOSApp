@@ -573,18 +573,64 @@ struct ProfileView: View {
     // straight off SubscriptionService (refreshed in .task above).
     private var usageDetail: some View {
         settingsDetail(title: L("Usage")) {
-            VStack(alignment: .leading, spacing: 14) {
-                ForEach(SubscriptionBucket.allCases, id: \.self) { bucket in
-                    usageRow(bucket)
+            VStack(alignment: .leading, spacing: 16) {
+                // Free is a one-time sample, so free (non-exempt) users get
+                // a dedicated one-off allowance graph sitting on top of the
+                // standard monthly card. Creator-comp redeemers keep the
+                // monthly-refreshing free caps, so they don't see it.
+                if subscription.currentTier == .free, !subscription.isFreeLockoutExempt {
+                    freeAllowanceCard
                 }
-                Text(L("This month · resets on the 1st"))
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                standardUsageCard
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
         }
+    }
+
+    // The standard "this month vs current tier cap" card. Shown for every
+    // tier; for a free user it sits below the one-off allowance card above.
+    private var standardUsageCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(SubscriptionBucket.allCases, id: \.self) { bucket in
+                usageRow(bucket)
+            }
+            Text(L("This month · resets on the 1st"))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // The metered buckets that make up the one-off Free allowance. Audio is
+    // unlimited on Free, so it's omitted — only words / sentences /
+    // artifacts have a finite one-time cap.
+    private let freeAllowanceBuckets: [SubscriptionBucket] = [.words, .sentences, .artifacts]
+
+    // One-time Free allowance graph. Free is a single lifetime sample — 100
+    // words / 20 sentences / 5 artifacts across the whole account, never
+    // resetting — so this mirrors the standard bars but reads off cumulative
+    // lifetime usage against the Free caps. Once every bar is full the user
+    // must subscribe to keep generating.
+    private var freeAllowanceCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L("Free plan · one-time allowance"))
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.black)
+            ForEach(freeAllowanceBuckets, id: \.self) { bucket in
+                usageBar(
+                    title: L(bucket.titleLabel),
+                    used: subscription.state.lifetimeUsage(in: bucket),
+                    cap: bucket.cap(for: .free)
+                )
+            }
+            Text(L("Doesn't reset. Subscribe for renewing limits."))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
     }
 
     // Both home-screen and lock-screen widget configurators, tucked behind a
@@ -596,15 +642,26 @@ struct ProfileView: View {
         }
     }
 
+    // This month's consumption of `bucket` against the current tier's cap.
     @ViewBuilder
     private func usageRow(_ bucket: SubscriptionBucket) -> some View {
-        let cap = bucket.cap(for: subscription.currentTier)
-        let used = subscription.state.usage(in: bucket, monthKey: subscription.currentMonthKey)
+        usageBar(
+            title: L(bucket.titleLabel),
+            used: subscription.state.usage(in: bucket, monthKey: subscription.currentMonthKey),
+            cap: bucket.cap(for: subscription.currentTier)
+        )
+    }
+
+    // Shared bar renderer: label, "used of total", and a progress capsule
+    // that turns red once the cap is reached. Used by both the standard
+    // monthly card and the one-off Free allowance card.
+    @ViewBuilder
+    private func usageBar(title: String, used: Int, cap: Int) -> some View {
         let isFinite = cap > 0 && cap != Int.max
         let fraction = isFinite ? min(1, Double(used) / Double(cap)) : 0
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(L(bucket.titleLabel))
+                Text(title)
                     .font(.system(size: 15))
                     .foregroundStyle(.black)
                 Spacer()

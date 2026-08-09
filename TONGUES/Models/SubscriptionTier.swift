@@ -262,6 +262,15 @@ enum SubscriptionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .capExceeded(let bucket, let tier, let remaining, _):
+            // Free is a one-time allowance, not a monthly one — its copy
+            // deliberately avoids "this month" so it reads correctly for a
+            // non-resetting lockout.
+            if tier == .free {
+                if remaining <= 0 {
+                    return "You've used up your free \(bucket.label). Subscribe to keep generating."
+                }
+                return "Only \(remaining) free \(bucket.label) left. Subscribe for more."
+            }
             if remaining <= 0 {
                 return "You've used all of your \(tier.displayName) \(bucket.label) for this month."
             }

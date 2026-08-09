@@ -53,6 +53,15 @@ final class SubscriptionService {
         state.resolvedTier
     }
 
+    // True when the account has ever redeemed a creator-comp code
+    // (TONGUESVIP / TONGUESCREATOR). Such users are exempt from the Free
+    // tier's one-time lockout: their Free usage stays on the
+    // monthly-refreshing caps and they're never forced into the paywall by
+    // exhausting the one-off allowance, even after the grant expires.
+    var isFreeLockoutExempt: Bool {
+        PromoCode.grantsFreeLockoutExemption(state.promoCode)
+    }
+
     // True while the user may still open the Create New Deck flow without
     // hitting the paywall: any paid tier, or a free user who hasn't yet
     // spent their one free deck. Drives the Study tab's create button.
@@ -271,7 +280,23 @@ final class SubscriptionService {
         }
 
         let cap = bucket.cap(for: currentTier)
-        let used = state.usage(in: bucket, monthKey: currentMonthKey)
+        // Unlimited buckets (audio on every tier, and all paid buckets that
+        // use Int.max) never block — bail before any arithmetic so a huge
+        // `used` can't overflow the subtraction below.
+        if cap == Int.max { return }
+
+        // The Free tier's allowance is a ONE-TIME lifetime grant, not a
+        // monthly one: once a free user has consumed their whole allowance
+        // (100 words / 20 sentences / 5 artifacts) across the entire life
+        // of the account, they must subscribe. Creator-comp redeemers
+        // (isFreeLockoutExempt) are excluded and keep the monthly-
+        // refreshing behaviour. Paid tiers always meter per calendar month.
+        let used: Int
+        if currentTier == .free, !isFreeLockoutExempt {
+            used = state.lifetimeUsage(in: bucket)
+        } else {
+            used = state.usage(in: bucket, monthKey: currentMonthKey)
+        }
         let remaining = Swift.max(0, cap - used)
         if requested > remaining {
             throw SubscriptionError.capExceeded(

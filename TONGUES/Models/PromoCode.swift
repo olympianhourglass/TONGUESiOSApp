@@ -27,6 +27,22 @@ struct PromoCode {
         PromoCode(code: "TONGUESCREATOR", tier: .max, durationDays: 365, maxRedemptions: 100)
     ]
 
+    // Codes whose redeemers are permanently exempt from the Free tier's
+    // one-time usage lockout. Even after the grant expires and the account
+    // falls back to Free, these users (creator comps) are never forced into
+    // the paywall by exhausting the one-off allowance — their Free usage
+    // stays on the monthly-refreshing caps instead. Compared against the
+    // last-redeemed code stored on the subscription doc (state.promoCode),
+    // which persists past expiry.
+    static let freeLockoutExemptCodes: Set<String> = ["TONGUESVIP", "TONGUESCREATOR"]
+
+    // True when a previously-redeemed code grants permanent exemption from
+    // the Free one-off lockout. Nil / unknown codes are not exempt.
+    static func grantsFreeLockoutExemption(_ code: String?) -> Bool {
+        guard let code else { return false }
+        return freeLockoutExemptCodes.contains(code.uppercased())
+    }
+
     // Resolves a user-typed string to a defined code, or nil if none match.
     // Strips ALL whitespace (not just the edges) and uppercases before
     // comparing, so codes shared with a space — "TONGUES VIP",

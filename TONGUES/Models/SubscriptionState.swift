@@ -119,4 +119,18 @@ struct UserSubscriptionState: Codable, Hashable {
         case .audioSessions: return audioSessionsByMonthKey[monthKey, default: 0]
         }
     }
+
+    // Cumulative all-time consumption in the given bucket, summed across
+    // every recorded month. Old months are never pruned from the maps, so
+    // this is the account's true lifetime total. Drives the Free tier's
+    // one-time (non-resetting) allowance — both the cap enforcement in
+    // SubscriptionService and the one-off usage graph in ProfileView.
+    func lifetimeUsage(in bucket: SubscriptionBucket) -> Int {
+        switch bucket {
+        case .words:         return wordsByMonthKey.values.reduce(0, +)
+        case .sentences:     return sentencesByMonthKey.values.reduce(0, +)
+        case .artifacts:     return artifactsByMonthKey.values.reduce(0, +)
+        case .audioSessions: return audioSessionsByMonthKey.values.reduce(0, +)
+        }
+    }
 }

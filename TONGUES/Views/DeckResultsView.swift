@@ -713,11 +713,11 @@ struct SpeechStatusToast: View {
     var body: some View {
         Text(message)
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(.white)
+            .foregroundStyle(.black)
             .multilineTextAlignment(.center)
             .padding(.horizontal, 14)
             .padding(.vertical, 9)
-            .background(Color.black.opacity(0.88), in: Capsule())
+            .background(Color.toastBackground, in: Capsule())
             .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 3)
     }
 }

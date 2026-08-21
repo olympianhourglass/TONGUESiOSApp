@@ -59,6 +59,9 @@ final class LibraryViewModel {
     // Total XP across every award source. Read from the XPService doc on
     // every loadDecks so the Library card reflects the latest awards.
     var totalXP: Int = 0
+    // Full XP/achievement state, snapshot at load, handed to the Statistics
+    // tab's Achievements segment (each achievement is a predicate over it).
+    var xpState = UserXPState()
     // Lifetime per-method session counters from XPService, snapshot at load
     // time. Drive the Statistics tab's "Preferred Learning Method" distribution.
     var flashcardSessionCount: Int = 0
@@ -210,6 +213,11 @@ final class LibraryViewModel {
             flashcardSecondsByLanguage = flashcardSeconds
             itemsByLanguage = itemsByLang
             practiceCountsByDay = counts
+            // Keep the streak-reminder scheduler in sync with the
+            // authoritative practice history (covers reinstall / another
+            // device studying today), so it never fires a redundant reminder.
+            let studiedToday = counts[Calendar.current.startOfDay(for: Date())] != nil
+            Task { await StreakReminderService.shared.syncStudiedToday(studiedToday) }
             reviewsByDeck = byDeck
             longestSessionSeconds = Self.computeLongestMetaSession(
                 studySessions: sessions,
@@ -497,6 +505,7 @@ final class LibraryViewModel {
     // the weekly trend chart can index by `Calendar.startOfDay(...)`
     // without re-parsing strings per lookup.
     private func applyXPState(_ state: UserXPState) {
+        xpState = state
         totalXP = state.total
         flashcardSessionCount = state.flashcardSessionCount
         audioSessionCount = state.audioSessionCount

@@ -29,6 +29,7 @@ struct ContentView: View {
             }
         )
     }
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasCompletedOnboardingQuestions") private var hasCompletedOnboardingQuestions = false
     // Latches true the first time the startup chime finishes so subsequent
     // launches fall back to the silent splash + timer behavior.
@@ -184,6 +185,24 @@ struct ContentView: View {
             tabRouter.applyStatusBarStyle()
         }
         .onAppear { tabRouter.applyStatusBarStyle() }
+        // Streak reminders. On foreground we (re)request permission the first
+        // time and always reschedule so a day rollover or an out-of-app change
+        // is reflected; on background we reschedule to capture the latest
+        // "studied today" state. We only prompt for permission once the user
+        // is past onboarding so the system alert never lands on the splash /
+        // language picker.
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                if auth.isAuthenticated && hasCompletedOnboardingQuestions {
+                    Task { await StreakReminderService.shared.requestAuthorizationIfNeeded() }
+                }
+            case .background:
+                Task { await StreakReminderService.shared.reschedule() }
+            default:
+                break
+            }
+        }
     }
 
     // Converts the Study tab's globally-measured button frame into this

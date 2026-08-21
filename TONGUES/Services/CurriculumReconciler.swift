@@ -43,23 +43,73 @@ enum CurriculumReconciler {
         return Double(mature) / Double(items.count)
     }
 
-    /// Whether the unit's mastery gate passes. The conversationCheck
-    /// half of the gate is satisfied by any completed "conversation"
-    /// activity (the chat view model stamps those).
+    // MARK: - Weighted progress
+
+    // Every unit is a set of components that each fill 0…1:
+    //   • one *vocab* component (present when the unit has decks or a deck
+    //     activity), filled by FSRS maturity relative to the unit's gate;
+    //   • one component per NON-deck activity (conversation / pronunciation /
+    //     content), filled 1 when that activity has been completed.
+    // Unit progress is the mean of its components, so every activity type moves
+    // the bar — not just vocabulary — and a unit with no decks can still finish.
+    static func unitComponents(
+        _ unit: CurriculumUnit,
+        decks: [DeckDocument],
+        schedules: [String: CardSchedule]
+    ) -> (filled: Double, total: Int) {
+        let hasVocab = !unit.deckIds.isEmpty
+            || unit.plannedActivities.contains { $0.type == "deck" }
+        let nonDeckActivities = unit.plannedActivities.filter { $0.type != "deck" }
+
+        var filled = 0.0
+        var total = 0
+
+        if hasVocab {
+            let gate = max(unit.masteryGate.matureFraction, 0.01)
+            let mastery = unitMastery(unit, decks: decks, schedules: schedules)
+            filled += min(1, mastery / gate)
+            total += 1
+        }
+        for activity in nonDeckActivities {
+            filled += activity.completedAt != nil ? 1 : 0
+            total += 1
+        }
+        return (filled, total)
+    }
+
+    /// 0…1 progress toward completing the unit — the value the progress bar
+    /// and percentage in Plan render.
+    static func unitProgress(
+        _ unit: CurriculumUnit,
+        decks: [DeckDocument],
+        schedules: [String: CardSchedule]
+    ) -> Double {
+        let (filled, total) = unitComponents(unit, decks: decks, schedules: schedules)
+        guard total > 0 else { return 0 }
+        return min(1, filled / Double(total))
+    }
+
+    /// Whether the unit's gate passes: every component filled. The
+    /// conversation half is only enforced when the unit actually carries a
+    /// conversation activity, so a unit that sets `conversationCheck` without
+    /// one is never left with an unsatisfiable gate.
     static func gatePasses(
         _ unit: CurriculumUnit,
         decks: [DeckDocument],
         schedules: [String: CardSchedule]
     ) -> Bool {
-        // A unit that never generated any decks can't pass on vocab alone.
-        guard !unit.deckIds.isEmpty else { return false }
-        let mastery = unitMastery(unit, decks: decks, schedules: schedules)
-        guard mastery >= unit.masteryGate.matureFraction else { return false }
+        let (filled, total) = unitComponents(unit, decks: decks, schedules: schedules)
+        // A unit with nothing to do (no decks, no activities) can't complete.
+        guard total > 0 else { return false }
+        guard filled >= Double(total) - 0.001 else { return false }
         if unit.masteryGate.conversationCheck {
+            let hasConversationActivity = unit.plannedActivities.contains { $0.type == "conversation" }
             let conversationDone = unit.plannedActivities.contains {
                 $0.type == "conversation" && $0.completedAt != nil
             }
-            guard conversationDone else { return false }
+            // Only block on the conversation checkpoint if there's actually a
+            // conversation activity to satisfy it.
+            if hasConversationActivity, !conversationDone { return false }
         }
         return true
     }
@@ -67,13 +117,22 @@ enum CurriculumReconciler {
     // MARK: - Deterministic reconcile (free, on app open)
 
     /// Completes gated units, unlocks the next one, and persists if
-    /// anything moved. Pure bookkeeping — no AI calls.
+    /// anything moved. Pure bookkeeping — no AI calls. Fetches the deck +
+    /// schedule state itself; callers that already hold it should use the
+    /// `decks:schedules:` overload to avoid a second round-trip.
     static func reconcile(plan: CurriculumPlan) async -> Outcome {
-        var outcome = Outcome(plan: plan)
-        guard plan.status == "active" else { return outcome }
-
         let decks = (try? await FirebaseDeckService.fetchDecks()) ?? []
         let schedules = (try? await FirebaseDeckService.fetchAllSchedules()) ?? [:]
+        return await reconcile(plan: plan, decks: decks, schedules: schedules)
+    }
+
+    static func reconcile(
+        plan: CurriculumPlan,
+        decks: [DeckDocument],
+        schedules: [String: CardSchedule]
+    ) async -> Outcome {
+        var outcome = Outcome(plan: plan)
+        guard plan.status == "active" else { return outcome }
 
         var units = plan.units.sorted { $0.order < $1.order }
         var changed = false
@@ -133,7 +192,10 @@ enum CurriculumReconciler {
         outcome.plan.lastReviewedAt = Date()
         try? await FirebaseCurriculumService.save(outcome.plan)
 
-        guard await detectDrift(plan: outcome.plan) else { return }
+        // Fetch once and hand into the drift check (no second round-trip).
+        let decks = (try? await FirebaseDeckService.fetchDecks()) ?? []
+        let schedules = (try? await FirebaseDeckService.fetchAllSchedules()) ?? [:]
+        guard await detectDrift(plan: outcome.plan, decks: decks, schedules: schedules) else { return }
 
         do {
             let model = try await LearnerModelService.loadOrRebuild(
@@ -157,31 +219,42 @@ enum CurriculumReconciler {
         }
     }
 
-    /// Cheap drift heuristics deciding whether a replan call is worth
-    /// the tokens: stale active unit, due-card pileup, or pace far off
-    /// the unit sizing.
-    private static func detectDrift(plan: CurriculumPlan) async -> Bool {
+    /// Cheap drift heuristics deciding whether a replan call is worth the
+    /// tokens: stalled mastery, over-performance, a genuinely diverged
+    /// (started-but-abandoned) unit, or a due-card pileup. Decks + schedules
+    /// are passed in — the caller already fetched them.
+    private static func detectDrift(
+        plan: CurriculumPlan,
+        decks: [DeckDocument],
+        schedules: [String: CardSchedule]
+    ) async -> Bool {
         guard let active = plan.activeUnit else { return false }
+        let language = plan.language
 
-        let decks = (try? await FirebaseDeckService.fetchDecks()) ?? []
-        let schedules = (try? await FirebaseDeckService.fetchAllSchedules()) ?? [:]
+        // Whether the learner has actually studied this language at all —
+        // used to distinguish "started but stuck" from "just hasn't begun".
+        let hasStudiedLanguage = schedules.values.contains {
+            $0.language == language && $0.intervalDays > 0
+        }
 
-        // 1. Active unit has decks but mastery has stalled low for a full
-        //    cadence window (the user is grinding without progressing, or
-        //    ignoring the unit entirely).
         if !active.deckIds.isEmpty {
             let mastery = unitMastery(active, decks: decks, schedules: schedules)
+            // 1a. Grinding without progressing — mastery stuck well below gate.
             if mastery < active.masteryGate.matureFraction * 0.5 { return true }
-        } else {
-            // Unit active for a week+ and the user never even generated
-            // its decks — plan and behavior have diverged.
+            // 1b. Over-performing — already past the gate a full cadence before
+            //     schedule, so the plan can safely deepen / accelerate.
+            if mastery >= active.masteryGate.matureFraction { return true }
+        } else if hasStudiedLanguage {
+            // Unit active with no decks generated, yet the learner is studying
+            // the language elsewhere — plan and behavior have diverged. (A user
+            // who simply hasn't started their fresh plan is NOT drift, which is
+            // why this is gated on real activity.)
             return true
         }
 
-        // 2. Review debt: a large overdue pile means the plan's pace is
-        //    wrong for this learner right now.
+        // 2. Review debt: a large overdue pile means the plan's pace is wrong
+        //    for this learner right now.
         let now = Date()
-        let language = plan.language
         let dueCount = schedules.values.filter {
             $0.language == language && $0.nextReviewAt <= now
         }.count

@@ -27,6 +27,10 @@ struct PronunciationDrillSheet: View {
     let transliteration: String?
     let language: String
     let dialect: String
+    // Fires after a successful graded attempt. A curriculum "pronunciation"
+    // activity uses this to stamp itself complete. Default nil — the standalone
+    // chat-launched drill is unaffected.
+    var onGraded: (() -> Void)? = nil
 
     @State private var speech = SpeechRecognitionService.shared
     @State private var grade: ConversationClient.PronunciationGrade?
@@ -425,6 +429,7 @@ struct PronunciationDrillSheet: View {
             Haptics.success()
             grade = result
             attempts.append(result)
+            onGraded?()
             await persistAttempt(transcript: attempt, grade: result)
         } catch {
             Haptics.error()

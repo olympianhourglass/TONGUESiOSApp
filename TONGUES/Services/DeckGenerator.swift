@@ -864,6 +864,105 @@ enum DeckGenerator {
         """
     }
 
+    // MARK: - Prequel / sequel continuations
+
+    // Which direction a continuation extends the source passage.
+    enum ContinuationRelation {
+        case prequel
+        case sequel
+    }
+
+    // Generates a prequel or sequel to an already-generated artifact. Same
+    // shape as `generateContent` (paired foreign/native output, same schema
+    // and cap gating) so the result can be saved as — and behaves exactly
+    // like — any other artifact. The difference is purely in the prompt: the
+    // source passage is fed in and the model is asked to write what comes
+    // before / after it in the same kind, style, and register.
+    static func generateContinuation(
+        relation: ContinuationRelation,
+        kind: ContentGenerationKind,
+        deck: DeckDocument,
+        source: [SentencePair]
+    ) async throws -> GeneratedContent {
+        // Same pre-check as generateContent — gate on remaining artifact quota
+        // before spending Claude tokens; the actual consume() lands on save.
+        await SubscriptionService.shared.refresh()
+        try await SubscriptionService.shared.ensureCapacity(in: .artifacts, requested: 1)
+        let model = SubscriptionService.shared.currentTier.generationModel
+
+        let prompt = buildContinuationPrompt(
+            relation: relation,
+            kind: kind,
+            deck: deck,
+            source: source
+        )
+        struct Response: Codable { let pairs: [SentencePair] }
+        let decoded: Response = try await AnthropicClient.sendStructured(
+            toolName: "submit_paired_content",
+            toolDescription: "Submit paired foreign/English sentence content for the learner.",
+            schema: contentSchema(deck: deck),
+            userPrompt: prompt,
+            system: systemPolicy(for: deck.language),
+            model: model,
+            as: Response.self
+        )
+        return GeneratedContent.from(pairs: decoded.pairs)
+    }
+
+    private static func buildContinuationPrompt(
+        relation: ContinuationRelation,
+        kind: ContentGenerationKind,
+        deck: DeckDocument,
+        source: [SentencePair]
+    ) -> String {
+        let native = AppLanguage.currentNative.promptName
+        let needsPronunciation = needsPronunciationAid(deck.language)
+        // The source passage, each foreign line with its native translation
+        // beneath, mirroring how buildComprehensionPrompt grounds the model.
+        let passage = source
+            .map { "\($0.foreign)\n  (\($0.english))" }
+            .joined(separator: "\n")
+
+        let vocabLines = deck.items.prefix(40).map { item -> String in
+            let translit = item.transliteration.map { " (\($0))" } ?? ""
+            return "• \(item.word)\(translit) — \(item.translation)"
+        }.joined(separator: "\n")
+
+        let pronunciationRule = needsPronunciation
+            ? "\n        • \"transliteration\" must be the Latin-script pronunciation of THAT foreign sentence/line (pinyin with tone marks for Chinese, romaji for Japanese, Revised Romanization for Korean, vocalized romanization for Arabic), aligned 1:1 with the foreign text. For Chinese, separate every syllable with a single space (one syllable per character)."
+            : ""
+
+        let directionInstruction: String
+        switch relation {
+        case .prequel:
+            directionInstruction = "Write a PREQUEL: new \(kind.promptDescription) that takes place BEFORE the passage above and leads naturally into it. Establish the characters, situation, or events that set up and precede the original, so that the original passage would read as the direct continuation of what you write."
+        case .sequel:
+            directionInstruction = "Write a SEQUEL: new \(kind.promptDescription) that continues directly AFTER the passage above, picking up where it leaves off. Carry the same characters, tone, and situation forward into what happens next."
+        }
+
+        return """
+        Below is \(kind.promptDescription) written in \(deck.dialect) \(deck.language). Each line is followed by its \(native) translation in parentheses.
+
+        \(passage)
+
+        \(directionInstruction)
+
+        Keep the SAME target language (\(deck.dialect) \(deck.language)), the same overall style and register, and calibrate for a \(deck.level) learner. Naturally incorporate as many of these deck vocabulary entries as fit the continuation:
+        \(vocabLines)
+
+        Submit your output by calling the `submit_paired_content` tool.
+
+        Content rules:
+        • 6 to 15 pairs total. Roughly equivalent to 1–3 short paragraphs of prose, split sentence-by-sentence.
+        • Each pair is exactly ONE foreign sentence (or one line for songs/poems) and its \(native) translation. Translations align 1:1 with sentences.
+        • For songs/poems: each verse line becomes its own pair so line breaks are preserved.
+        • "foreign" field must be in \(deck.language) using its native script.
+        • "english" field must be natural \(native) (not a literal word-for-word gloss).\(pronunciationRule)
+        • Don't include the \(native) text inside the foreign field, or vice versa.
+        • Do NOT repeat the passage above — write only the new continuation.
+        """
+    }
+
     static func generateRelated(
         relation: RelationKind,
         source: GeneratedItem,

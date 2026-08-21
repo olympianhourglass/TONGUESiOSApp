@@ -192,7 +192,12 @@ struct LibraryView: View {
             .adaptiveFullScreenOrSheet(item: $selectedArtifact) { artifact in
                 ArtifactReaderSheet(
                     artifact: artifact,
-                    deckLanguage: decksById[artifact.deckId]?.language ?? ""
+                    deckLanguage: decksById[artifact.deckId]?.language ?? "",
+                    deck: decksById[artifact.deckId],
+                    onArtifactCreated: {
+                        artifactsLoaded = false
+                        Task { await loadArtifactsIfNeeded() }
+                    }
                 )
             }
             // Two triggers: the deckID arriving (warm app) and the deck
@@ -384,7 +389,8 @@ struct LibraryView: View {
                         longestSessionLanguage: vm.longestSessionLanguage,
                         bestLearningTimeLabel: vm.bestLearningTimeLabel,
                         optimalLearningTimeLabel: vm.optimalLearningTimeLabel,
-                        dailyStreak: vm.dailyStreak
+                        dailyStreak: vm.dailyStreak,
+                        xpState: vm.xpState
                     )
                 } label: {
                     HStack(spacing: 8) {

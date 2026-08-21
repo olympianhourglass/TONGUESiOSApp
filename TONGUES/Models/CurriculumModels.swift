@@ -95,6 +95,34 @@ struct PlannedActivity: Codable, Hashable, Identifiable {
     }
 }
 
+// MARK: - Today queue
+//
+// One ranked, per-language list of the single next best actions, built fresh
+// each load by `CurriculumToday`. Not persisted — it's a derived view over the
+// plan + FSRS state. Each item knows exactly which surface its CTA launches.
+struct CurriculumTodayItem: Identifiable, Hashable {
+    enum Kind: String {
+        case review          // clear FSRS-due cards (→ Study tab)
+        case deck            // generate a unit's deck
+        case conversation    // roleplay scenario in chat
+        case pronunciation   // pronunciation drill
+        case content         // reading content from the unit's deck
+    }
+
+    let id: String
+    let kind: Kind
+    let title: String        // e.g. "Review 12 cards" or the activity label
+    let subtitle: String     // one-line why / how
+    let systemImage: String
+    // Which unit / activity this drives, so the executor can stamp completion.
+    // Nil for `.review`, which isn't tied to a single unit.
+    var unitId: String? = nil
+    var activityId: String? = nil
+    // The activity's spec, carried through so the CTA can execute without
+    // re-deriving it (topic/kind/scenario/focus, etc.).
+    var spec: [String: String] = [:]
+}
+
 struct MasteryGate: Codable, Hashable {
     /// Fraction of the unit's deck cards that must be FSRS-mature
     /// (stability ≥ LearnerModelService.matureStabilityDays) to pass.

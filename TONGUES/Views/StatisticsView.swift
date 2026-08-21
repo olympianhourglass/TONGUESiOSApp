@@ -264,10 +264,84 @@ struct StatisticsView: View {
 
     private var achievementsSection: some View {
         VStack(alignment: .leading, spacing: 20) {
+            personalBestsGroup
             ForEach(Achievement.Category.allCases) { category in
                 achievementGroup(category)
             }
         }
+    }
+
+    // Lifetime personal bests, shown above the unlockable achievements. These
+    // are stat readouts (a value, not something to unlock): the highest streak
+    // ever held and the most XP earned in a single day.
+    private var personalBestsGroup: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L("Personal Achievements"))
+                .font(.custom("NeueHaasDisplay-Light", size: 11))
+                .foregroundStyle(.white.opacity(0.6))
+                .textCase(.uppercase)
+                .tracking(0.8)
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 12),
+                    GridItem(.flexible(), spacing: 12)
+                ],
+                spacing: 12
+            ) {
+                personalBestCard(
+                    title: L("Longest streak"),
+                    value: personalLongestStreakValue,
+                    systemImage: "flame.fill"
+                )
+                personalBestCard(
+                    title: L("Most XP"),
+                    value: personalMostXPValue,
+                    systemImage: "bolt.fill"
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // Highest daily streak ever reached (tracked in UserXPState.bestStreak).
+    private var personalLongestStreakValue: String {
+        let days = xpState.bestStreak
+        return days == 1 ? L("1 day") : L("%d days", days)
+    }
+
+    // Most XP earned in any single calendar day, from the per-day XP map.
+    private var personalMostXPValue: String {
+        let xp = xpState.xpByDayKey.values.max() ?? 0
+        return L("%d XP", xp)
+    }
+
+    private func personalBestCard(title: String, value: String, systemImage: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 20, weight: .medium))
+                .foregroundStyle(.white)
+            Text(title)
+                .font(.custom("NeueHaasDisplay-Bold", size: 15))
+                .foregroundStyle(.white)
+                // Match the achievement cards' icon-to-title spacing.
+                .padding(.top, 8)
+            Spacer(minLength: 6)
+            Text(value)
+                .font(.custom("NeueHaasDisplay-Light", size: 28))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, minHeight: 158, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(white: 0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
+        )
     }
 
     private func achievementGroup(_ category: Achievement.Category) -> some View {
@@ -299,12 +373,12 @@ struct StatisticsView: View {
             HStack(alignment: .top) {
                 Image(systemName: achievement.systemImage)
                     .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(unlocked ? Color.toastBackground : .white.opacity(0.35))
+                    .foregroundStyle(unlocked ? .white : .white.opacity(0.35))
                 Spacer()
                 if unlocked {
                     Image(systemName: "checkmark.seal.fill")
                         .font(.system(size: 14))
-                        .foregroundStyle(Color.toastBackground)
+                        .foregroundStyle(.white)
                 }
             }
             Text(L(achievement.title))
@@ -318,9 +392,9 @@ struct StatisticsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 6)
             if unlocked {
-                Text(L("Unlocked"))
+                Text(achievementUnlockedLabel(achievement))
                     .font(.custom("NeueHaasDisplay-Mediu", size: 11))
-                    .foregroundStyle(Color.toastBackground)
+                    .foregroundStyle(.white.opacity(0.7))
             } else {
                 achievementProgressBar(current: current, target: achievement.target)
                 Text("\(current)/\(achievement.target)\(achievement.unitSuffix)")
@@ -337,10 +411,20 @@ struct StatisticsView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(
-                    unlocked ? Color.toastBackground.opacity(0.4) : Color.white.opacity(0.08),
+                    unlocked ? Color.white.opacity(0.3) : Color.white.opacity(0.08),
                     lineWidth: unlocked ? 1 : 0.5
                 )
         )
+    }
+
+    // Footer label for an unlocked card: "Unlocked <date>" when we have a
+    // stamped date, otherwise a plain "Unlocked" (for achievements earned
+    // before unlock dates were recorded).
+    private func achievementUnlockedLabel(_ achievement: Achievement) -> String {
+        if let date = xpState.unlockedAchievementDates[achievement.id] {
+            return L("Unlocked %@", date.formatted(date: .abbreviated, time: .omitted))
+        }
+        return L("Unlocked")
     }
 
     private func achievementProgressBar(current: Int, target: Int) -> some View {

@@ -218,6 +218,7 @@ extension Achievement {
         for achievement in all where !state.unlockedAchievements.contains(achievement.id) {
             if achievement.isUnlocked(state) {
                 state.unlockedAchievements.append(achievement.id)
+                state.unlockedAchievementDates[achievement.id] = Date()
                 newlyUnlocked.append(achievement)
             }
         }

@@ -74,6 +74,9 @@ struct UserXPState: Codable, Hashable {
     // Ids of achievements already unlocked, deduped the same way as
     // `awardedStreakMilestones`.
     var unlockedAchievements: [String] = []
+    // Unlock timestamp per achievement id, stamped when it first unlocks.
+    // Achievements unlocked before this field existed simply have no date.
+    var unlockedAchievementDates: [String: Date] = [:]
 
     enum CodingKeys: String, CodingKey {
         case total
@@ -101,6 +104,7 @@ struct UserXPState: Codable, Hashable {
         case correctComprehensionCount
         case bestStreak
         case unlockedAchievements
+        case unlockedAchievementDates
     }
 
     init() {}
@@ -139,6 +143,7 @@ struct UserXPState: Codable, Hashable {
         self.correctComprehensionCount   = (try? c.decodeIfPresent(Int.self, forKey: .correctComprehensionCount)) ?? 0
         self.bestStreak                  = (try? c.decodeIfPresent(Int.self, forKey: .bestStreak)) ?? 0
         self.unlockedAchievements        = (try? c.decodeIfPresent([String].self, forKey: .unlockedAchievements)) ?? []
+        self.unlockedAchievementDates    = (try? c.decodeIfPresent([String: Date].self, forKey: .unlockedAchievementDates)) ?? [:]
     }
 }
 

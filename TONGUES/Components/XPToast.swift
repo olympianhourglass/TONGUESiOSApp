@@ -140,7 +140,11 @@ private struct XPToastOverlayModifier: ViewModifier {
                 if let toast = center.currentToast {
                     XPToastView(toast: toast)
                         .padding(.bottom, 110)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                        // Pure slide (no opacity fade): the opaque pill carries
+                        // the text up as one unit. A fade made the translucent
+                        // pill blend into the background so the high-contrast
+                        // text read as arriving ahead of it.
+                        .transition(.move(edge: .bottom))
                 }
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.78), value: center.currentToast)

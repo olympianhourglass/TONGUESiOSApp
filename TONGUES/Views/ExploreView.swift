@@ -165,6 +165,11 @@ struct ExploreView: View {
             .onChange(of: locationManager.coordinate?.latitude) { _, _ in
                 Task { await loadNearbyLanguages() }
             }
+            // Re-point the guided-plan strip when the language filter changes so
+            // it tracks the language the user is browsing.
+            .onChange(of: languageFilter) { _, _ in
+                Task { await loadCurriculum() }
+            }
             // Re-check destinations every time the Explore tab becomes
             // visible. If the user edited destinations from the Profile
             // page (or finished onboarding mid-session), the key changes
@@ -194,9 +199,10 @@ struct ExploreView: View {
 
     // MARK: Guided plan strip
 
-    // Count of FSRS-due cards across the library, shown in the strip's
-    // subtitle. Loaded alongside the plan (one indexed range query).
+    // Count of FSRS-due cards for the strip's language, shown in the subtitle.
     @State private var dueCardCount = 0
+    // Top of the selected language's Today queue, previewed in the strip.
+    @State private var todayItems: [CurriculumTodayItem] = []
     // True until the first curriculum fetch resolves, so the strip shows a
     // skeleton instead of flashing the "Get a guided plan" empty state
     // before we actually know whether a plan exists.
@@ -219,25 +225,41 @@ struct ExploreView: View {
     private func loadCurriculum() async {
         lastCurriculumLoadAt = Date()
         defer { isLoadingCurriculum = false }
-        async let dueTask: [CardSchedule]? = try? await FirebaseDeckService.fetchDueSchedules()
         let plans = (try? await FirebaseCurriculumService.fetchAll()) ?? []
-        dueCardCount = (await dueTask)?.count ?? 0
-        let candidate = plans
-            .filter { $0.status == "active" }
-            .sorted { $0.updatedAt > $1.updatedAt }
-            .first
-        if let candidate {
-            // Deterministic gate check now; the (gated, at-most-weekly)
-            // replan runs in the background so the strip never waits on
-            // a model call.
-            let outcome = await CurriculumReconciler.reconcile(plan: candidate)
-            activePlan = outcome.plan
-            let languageID = candidate.languageID
-            Task.detached {
-                await CurriculumReconciler.reconcileAndMaybeReplan(languageID: languageID)
-            }
+        let decks = (try? await FirebaseDeckService.fetchDecks()) ?? []
+        let schedules = (try? await FirebaseDeckService.fetchAllSchedules()) ?? [:]
+
+        // Follow the Explore language filter when it names exactly one
+        // language; otherwise fall back to the most-recently-updated plan.
+        let candidate: CurriculumPlan?
+        if languageFilter.count == 1, let only = languageFilter.first {
+            candidate = plans.first { $0.language == only && $0.status == "active" }
+                ?? plans.first { $0.language == only }
         } else {
-            activePlan = plans.sorted { $0.updatedAt > $1.updatedAt }.first
+            candidate = plans.filter { $0.status == "active" }.sorted { $0.updatedAt > $1.updatedAt }.first
+                ?? plans.sorted { $0.updatedAt > $1.updatedAt }.first
+        }
+
+        guard let candidate else {
+            activePlan = nil
+            todayItems = []
+            dueCardCount = 0
+            return
+        }
+
+        let now = Date()
+        dueCardCount = schedules.values.filter { $0.language == candidate.language && $0.nextReviewAt <= now }.count
+
+        if candidate.status == "active" {
+            // Deterministic gate check only — the paid weekly replan is
+            // intentionally NOT kicked from this browse tab (Plan/Study own it),
+            // so glancing at Explore never spends tokens.
+            let outcome = await CurriculumReconciler.reconcile(plan: candidate, decks: decks, schedules: schedules)
+            activePlan = outcome.plan
+            todayItems = CurriculumToday.build(plan: outcome.plan, decks: decks, schedules: schedules, dueCount: dueCardCount)
+        } else {
+            activePlan = candidate
+            todayItems = []
         }
     }
 
@@ -252,10 +274,10 @@ struct ExploreView: View {
                     curriculumSkeleton
                 } else {
                 HStack(spacing: 6) {
-                    Text(L(activePlan == nil ? "GUIDED PLAN" : "TODAY"))
+                    // "TODAY · <language>" once a plan is loaded; the empty
+                    // state keeps the wider-tracked "GUIDED PLAN" label.
+                    Text(activePlan.map { L("TODAY · %@", $0.language) } ?? L("GUIDED PLAN"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(11)))
-                        // "TODAY" reads with normal tracking; the empty-state
-                        // "GUIDED PLAN" label keeps its wider letter-spacing.
                         .tracking(activePlan == nil ? 1.2 : 0)
                     Spacer()
                     Image(systemName: "chevron.right")
@@ -265,7 +287,17 @@ struct ExploreView: View {
 
                 if let plan = activePlan {
                     VStack(alignment: .leading, spacing: 4) {
-                        if let unit = plan.activeUnit {
+                        if let top = todayItems.first {
+                            // Preview the top of the Today queue; the full,
+                            // actionable list lives in PlanView on tap.
+                            Text(top.title)
+                                .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(17)))
+                                .foregroundStyle(.black)
+                            Text(todayPreviewSubtitle(top))
+                                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(13)))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else if let unit = plan.activeUnit {
                             Text(unit.title)
                                 .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(17)))
                                 .foregroundStyle(.black)
@@ -336,6 +368,15 @@ struct ExploreView: View {
             .frame(maxWidth: width ?? .infinity, alignment: .leading)
             .frame(height: height)
             .modifier(ShimmerEffect())
+    }
+
+    // Subtitle under the strip's top Today item: the next action after it when
+    // there is one ("Then: …"), otherwise the item's own one-liner.
+    private func todayPreviewSubtitle(_ top: CurriculumTodayItem) -> String {
+        if let second = todayItems.dropFirst().first {
+            return L("Then: %@", second.title)
+        }
+        return top.subtitle
     }
 
     private func todaySubtitle(plan: CurriculumPlan, unit: CurriculumUnit) -> String {

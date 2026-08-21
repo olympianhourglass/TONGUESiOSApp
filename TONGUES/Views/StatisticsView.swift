@@ -78,6 +78,19 @@ struct StatisticsView: View {
     // Streak — passed in for the Overall Summary card's LLM context.
     let dailyStreak: Int
 
+    // Persisted XP/achievement counters, snapshot at load. Drives the
+    // Achievements tab (every achievement is a pure predicate over this).
+    let xpState: UserXPState
+
+    // Which segment of the screen is showing.
+    private enum StatsTab: String, CaseIterable, Identifiable {
+        case stats
+        case achievements
+        var id: String { rawValue }
+        var title: String { self == .stats ? "Stats" : "Achievements" }
+    }
+    @State private var selectedTab: StatsTab = .stats
+
     @State private var favoriteTopic: String = ""
     @AppStorage("favoriteTopicSignature") private var cachedFavoriteTopicSignature: String = ""
     @AppStorage("favoriteTopicLabel") private var cachedFavoriteTopicLabel: String = ""
@@ -142,16 +155,22 @@ struct StatisticsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
-                overallSummaryCard
-                preferredLanguageCard
-                wordsLearnedCard
-                sessionLengthCard
-                weeklyTrendCard
-                yearlyHeatmapCard
-                dayStatisticsCard
-                topicsCard
-                learningExperienceCard
-                sourcingMethodCard
+                tabPicker
+                switch selectedTab {
+                case .stats:
+                    overallSummaryCard
+                    preferredLanguageCard
+                    wordsLearnedCard
+                    sessionLengthCard
+                    weeklyTrendCard
+                    yearlyHeatmapCard
+                    dayStatisticsCard
+                    topicsCard
+                    learningExperienceCard
+                    sourcingMethodCard
+                case .achievements:
+                    achievementsSection
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 12)
@@ -207,6 +226,134 @@ struct StatisticsView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Stats / Achievements switcher
+
+    // Underline-on-active tab bar matching the Library tab's section bar
+    // (Decks | Content | Artifacts), inverted for this screen's black
+    // background: active segment is white text with a white underline, the
+    // rest are dimmed with no underline.
+    private var tabPicker: some View {
+        HStack(spacing: 0) {
+            ForEach(StatsTab.allCases) { tab in
+                Button {
+                    Haptics.light()
+                    withAnimation(.easeInOut(duration: 0.25)) { selectedTab = tab }
+                } label: {
+                    VStack(spacing: 6) {
+                        Text(L(tab.title))
+                            .font(.system(size: 15, weight: .medium))
+                            .textCase(.uppercase)
+                            .foregroundStyle(selectedTab == tab ? .white : .white.opacity(0.5))
+                        Rectangle()
+                            .fill(selectedTab == tab ? Color.white : Color.clear)
+                            .frame(height: 2)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 4)
+        .padding(.bottom, 4)
+    }
+
+    // MARK: - Achievements tab
+
+    private var achievementsSection: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            ForEach(Achievement.Category.allCases) { category in
+                achievementGroup(category)
+            }
+        }
+    }
+
+    private func achievementGroup(_ category: Achievement.Category) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(L(category.title))
+                .font(.custom("NeueHaasDisplay-Light", size: 11))
+                .foregroundStyle(.white.opacity(0.6))
+                .textCase(.uppercase)
+                .tracking(0.8)
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 12),
+                    GridItem(.flexible(), spacing: 12)
+                ],
+                spacing: 12
+            ) {
+                ForEach(Achievement.inCategory(category)) { achievement in
+                    achievementCard(achievement)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func achievementCard(_ achievement: Achievement) -> some View {
+        let unlocked = achievement.isUnlocked(xpState)
+        let current = achievement.displayCurrent(xpState)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                Image(systemName: achievement.systemImage)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(unlocked ? Color.toastBackground : .white.opacity(0.35))
+                Spacer()
+                if unlocked {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.toastBackground)
+                }
+            }
+            Text(L(achievement.title))
+                .font(.custom("NeueHaasDisplay-Bold", size: 15))
+                .foregroundStyle(unlocked ? .white : .white.opacity(0.85))
+                // Extra breathing room between the icon row and the title.
+                .padding(.top, 8)
+            Text(L(achievement.detail))
+                .font(.custom("NeueHaasDisplay-Light", size: 12))
+                .foregroundStyle(.white.opacity(0.55))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 6)
+            if unlocked {
+                Text(L("Unlocked"))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 11))
+                    .foregroundStyle(Color.toastBackground)
+            } else {
+                achievementProgressBar(current: current, target: achievement.target)
+                Text("\(current)/\(achievement.target)\(achievement.unitSuffix)")
+                    .font(.custom("NeueHaasDisplay-Light", size: 11))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 158, alignment: .leading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color(white: 0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    unlocked ? Color.toastBackground.opacity(0.4) : Color.white.opacity(0.08),
+                    lineWidth: unlocked ? 1 : 0.5
+                )
+        )
+    }
+
+    private func achievementProgressBar(current: Int, target: Int) -> some View {
+        let fraction = target > 0 ? min(1, Double(current) / Double(target)) : 0
+        return GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.12))
+                Capsule()
+                    .fill(Color.white.opacity(0.6))
+                    .frame(width: geo.size.width * fraction)
+            }
+        }
+        .frame(height: 4)
     }
 
     // MARK: - Card chrome

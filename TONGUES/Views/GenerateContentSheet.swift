@@ -11,6 +11,11 @@ struct GenerateContentSheet: View {
     // saved to Firestore but the deck's in-memory items array stays
     // stale and the new card doesn't show up until a full reload.
     var onItemAdded: (GeneratedItem) -> Void = { _ in }
+    // Fires once the sheet produces a finished result (content on screen,
+    // artifact auto-saved). A curriculum "content" activity uses this to
+    // stamp itself complete. Default nil — every existing call site is
+    // unaffected.
+    var onComplete: (() -> Void)? = nil
 
     @State private var additionalDetails: String = ""
     // Last-second "flavor" dials (vibe, voice, register, …) chosen on the input
@@ -191,8 +196,10 @@ struct GenerateContentSheet: View {
             // only if a generation actually happened.
             if phase == .result, !awardedGenerationXP {
                 awardedGenerationXP = true
+                let artifactKind = kind.rawValue
+                let artifactVibe = flavor.option(for: .vibe)
                 Task {
-                    if let grants = try? await XPService.awardArtifactGenerated(),
+                    if let grants = try? await XPService.awardArtifactGenerated(kind: artifactKind, vibe: artifactVibe),
                        !grants.isEmpty {
                         await MainActor.run { XPToastCenter.shared.enqueue(grants) }
                     }
@@ -1454,6 +1461,9 @@ struct GenerateContentSheet: View {
             generatedContent = result.prose
             generatedPairs = result.pairs
             phase = .result
+            // Signal any curriculum "content" activity that this counts as done
+            // (content is on screen; the auto-save below persists it).
+            onComplete?()
             // Artifact is done — chime + success haptic, matching the deck
             // generation's completion beat.
             playCompletionFeedback()

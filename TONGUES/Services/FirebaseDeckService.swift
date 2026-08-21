@@ -485,6 +485,12 @@ enum FirebaseDeckService {
         let collection = try userStudySessions()
         let ref = collection.document()
         try await ref.setData(from: session)
+        // Every streak-eligible activity funnels through here, so this is the
+        // single place to tell the reminder scheduler the streak was extended
+        // today — which cancels any remaining same-day reminders.
+        Task { @MainActor in
+            await StreakReminderService.shared.recordActivityToday()
+        }
         return ref.documentID
     }
 

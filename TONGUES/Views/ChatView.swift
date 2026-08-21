@@ -241,10 +241,10 @@ struct ChatView: View {
                 if let toast = savedToast {
                     Text(toast)
                         .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(14)))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.black)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 9)
-                        .background(Color.black.opacity(0.88), in: Capsule())
+                        .background(Color.toastBackground, in: Capsule())
                         .padding(.top, 8)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }

@@ -973,10 +973,10 @@ struct SessionCompleteToast: View {
     var body: some View {
         Text(L("Session complete!"))
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.white)
+            .foregroundStyle(.black)
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
-            .background(.black, in: Capsule())
+            .background(Color.toastBackground, in: Capsule())
             .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 4)
     }
 }

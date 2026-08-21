@@ -59,10 +59,10 @@ struct ListenSessionView: View {
     @AppStorage("listenAmbientSound") private var ambientSoundId: String = ""
     @AppStorage("listenAmbientMusic") private var ambientMusicId: String = ""
     // Chosen background gradient for the session backdrop.
-    @AppStorage("listenGradientTheme") private var gradientThemeRaw = ListenGradientTheme.original.rawValue
+    @AppStorage("listenGradientTheme") private var gradientThemeRaw = ListenGradientTheme.aura.rawValue
 
     private var selectedGradientTheme: ListenGradientTheme {
-        ListenGradientTheme(rawValue: gradientThemeRaw) ?? .original
+        ListenGradientTheme(rawValue: gradientThemeRaw) ?? .aura
     }
 
     // Looping ambient players layered under the study audio. Held as a
@@ -805,7 +805,8 @@ struct ListenSessionView: View {
                     language: deck.language,
                     secondsListened: elapsed,
                     cardsAdvanced: advanced,
-                    playlistCompleted: completed
+                    playlistCompleted: completed,
+                    ambientActive: !ambientMusicId.isEmpty || !ambientSoundId.isEmpty
                 )
                 if didListen {
                     _ = try? await FirebaseDeckService.recordStreakActivity(
@@ -1188,21 +1189,23 @@ private struct StatusBarRefresher: UIViewControllerRepresentable {
 // top → bottom, mapped onto the radial gradient's 0.0 / 0.167 / 0.5 locations
 // (the same layout the original uses).
 enum ListenGradientTheme: String, CaseIterable, Identifiable {
-    case original
+    case aura
     case arctic
     case peach
     case myst
-    case aura
+    // Formerly "Original". Renamed to "Night" but keeps its "original" raw
+    // value so a user who had it selected before the rename still resolves.
+    case night = "original"
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .original: return "Original"
+        case .aura:     return "Aura"
         case .arctic:   return "Arctic"
         case .peach:    return "Peach"
         case .myst:     return "Myst"
-        case .aura:     return "Aura"
+        case .night:    return "Night"
         }
     }
 
@@ -1210,13 +1213,13 @@ enum ListenGradientTheme: String, CaseIterable, Identifiable {
     var usesDarkText: Bool {
         switch self {
         case .arctic, .aura: return true
-        case .original, .peach, .myst: return false
+        case .night, .peach, .myst: return false
         }
     }
 
     var colors: [Color] {
         switch self {
-        case .original:
+        case .night:
             return [
                 Color(red: 10/255, green: 10/255, blue: 10/255),
                 Color(red: 83/255, green: 104/255, blue: 120/255),

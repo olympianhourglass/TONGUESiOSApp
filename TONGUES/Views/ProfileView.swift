@@ -23,6 +23,14 @@ struct ProfileView: View {
     // App (native) language control.
     @State private var localizer = Localizer.shared
     @State private var showNativeLanguagePicker = false
+    // Streak reminders master switch. Shares the exact UserDefaults key
+    // StreakReminderService reads, so this toggle is the single source of
+    // truth; its onChange re-runs scheduling.
+    @AppStorage("streakRemindersEnabled") private var streakRemindersEnabled = true
+    // User-chosen fire times, minutes since midnight, on the same UserDefaults
+    // keys the service reads. Defaults match the service's 09:00 / 19:00.
+    @AppStorage("streakMorningMinutes") private var streakMorningMinutes = StreakReminderService.defaultMorningMinutes
+    @AppStorage("streakEveningMinutes") private var streakEveningMinutes = StreakReminderService.defaultEveningMinutes
 
     var body: some View {
         NavigationStack {
@@ -64,6 +72,12 @@ struct ProfileView: View {
                         title: L("Widgets"),
                         summary: nil
                     ) { widgetsDetail }
+
+                    settingsLinkRow(
+                        icon: "bell",
+                        title: L("Streak Reminders"),
+                        summary: streakRemindersEnabled ? L("On") : L("Off")
+                    ) { remindersDetail }
 
                     // App language is independent of onboarding, so it shows
                     // even before the profile loads.
@@ -631,6 +645,89 @@ struct ProfileView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    // Streak reminders on/off plus the two fire times. Enabling requests
+    // notification permission the first time; toggling or changing a time
+    // reschedules so the change takes effect immediately. When on, two time
+    // pickers let the user move the morning nudge and the evening streak
+    // warning off their 09:00 / 19:00 defaults.
+    private var remindersDetail: some View {
+        settingsDetail(title: L("Streak Reminders")) {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $streakRemindersEnabled) {
+                    Text(L("Streak reminders"))
+                        .font(.system(size: 15))
+                        .foregroundStyle(.black)
+                }
+                .tint(.black)
+                .onChange(of: streakRemindersEnabled) { _, on in
+                    Task {
+                        if on {
+                            await StreakReminderService.shared.requestAuthorizationIfNeeded()
+                        } else {
+                            await StreakReminderService.shared.reschedule()
+                        }
+                    }
+                }
+
+                if streakRemindersEnabled {
+                    Divider()
+                    reminderTimeRow(L("Morning nudge"), minutes: $streakMorningMinutes)
+                    reminderTimeRow(L("Evening reminder"), minutes: $streakEveningMinutes)
+                }
+
+                Text(L("A morning nudge to practice, plus an evening reminder if you haven't kept your streak going that day."))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    // A single reminder-time row: a label and a compact time picker bound to
+    // minutes-since-midnight. Changing the time reschedules immediately so the
+    // service's pending notifications reflect the new hour right away.
+    @ViewBuilder
+    private func reminderTimeRow(_ title: String, minutes: Binding<Int>) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 15))
+                .foregroundStyle(.black)
+            Spacer()
+            DatePicker(
+                "",
+                selection: reminderTimeBinding(minutes),
+                displayedComponents: .hourAndMinute
+            )
+            .labelsHidden()
+            .tint(.black)
+        }
+        .onChange(of: minutes.wrappedValue) { _, _ in
+            Task { await StreakReminderService.shared.reschedule() }
+        }
+    }
+
+    // Bridges a minutes-since-midnight Int store to the Date binding a
+    // DatePicker needs, reading/writing only the hour and minute.
+    private func reminderTimeBinding(_ minutes: Binding<Int>) -> Binding<Date> {
+        Binding<Date>(
+            get: {
+                let cal = Calendar.current
+                return cal.date(
+                    bySettingHour: minutes.wrappedValue / 60,
+                    minute: minutes.wrappedValue % 60,
+                    second: 0,
+                    of: cal.startOfDay(for: Date())
+                ) ?? Date()
+            },
+            set: { newValue in
+                let comps = Calendar.current.dateComponents([.hour, .minute], from: newValue)
+                minutes.wrappedValue = (comps.hour ?? 0) * 60 + (comps.minute ?? 0)
+            }
+        )
     }
 
     // Both home-screen and lock-screen widget configurators, tucked behind a

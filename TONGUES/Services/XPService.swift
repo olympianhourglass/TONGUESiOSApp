@@ -48,6 +48,33 @@ struct UserXPState: Codable, Hashable {
     // Firestore. Source for the Statistics tab's weekly trend chart.
     var xpByDayKey: [String: Int] = [:]
 
+    // MARK: Achievement signals
+    //
+    // Raw counters the Achievement catalog evaluates as pure predicates.
+    // Kept here (rather than a separate doc) so unlocks reconcile inside the
+    // same commit that already persists XP — one read, one write.
+
+    // Total seconds listened across every audio session (Deep Listener) and
+    // the single longest listening session (Night Owl).
+    var listenSecondsTotal: Double = 0
+    var longestListenSeconds: Double = 0
+    // Set once the learner completes a listen with an ambient track playing
+    // (Ambient Soul) and once they study before 8 AM (Dawn Patrol).
+    var listenedWithAmbient: Bool = false
+    var studiedBefore8AM: Bool = false
+    // Distinct artifact kinds generated (Full Anthology) and distinct artifact
+    // vibes chosen (Genre-Hopper).
+    var generatedArtifactKinds: [String] = []
+    var generatedArtifactVibes: [String] = []
+    // Correct first-try artifact comprehension answers (Close Reader).
+    var correctComprehensionCount: Int = 0
+    // Highest daily streak ever reached, so streak achievements survive a
+    // broken streak (First Flame / Kept the Fire / Year of Tongues).
+    var bestStreak: Int = 0
+    // Ids of achievements already unlocked, deduped the same way as
+    // `awardedStreakMilestones`.
+    var unlockedAchievements: [String] = []
+
     enum CodingKeys: String, CodingKey {
         case total
         case lastDailyAwardedOn
@@ -65,6 +92,15 @@ struct UserXPState: Codable, Hashable {
         case conversedConversationIds
         case learningSecondsByLanguage
         case xpByDayKey
+        case listenSecondsTotal
+        case longestListenSeconds
+        case listenedWithAmbient
+        case studiedBefore8AM
+        case generatedArtifactKinds
+        case generatedArtifactVibes
+        case correctComprehensionCount
+        case bestStreak
+        case unlockedAchievements
     }
 
     init() {}
@@ -94,6 +130,15 @@ struct UserXPState: Codable, Hashable {
         self.conversedConversationIds    = (try? c.decodeIfPresent([String].self, forKey: .conversedConversationIds)) ?? []
         self.learningSecondsByLanguage   = (try? c.decodeIfPresent([String: Double].self, forKey: .learningSecondsByLanguage)) ?? [:]
         self.xpByDayKey                  = (try? c.decodeIfPresent([String: Int].self, forKey: .xpByDayKey)) ?? [:]
+        self.listenSecondsTotal          = (try? c.decodeIfPresent(Double.self, forKey: .listenSecondsTotal)) ?? 0
+        self.longestListenSeconds        = (try? c.decodeIfPresent(Double.self, forKey: .longestListenSeconds)) ?? 0
+        self.listenedWithAmbient         = (try? c.decodeIfPresent(Bool.self, forKey: .listenedWithAmbient)) ?? false
+        self.studiedBefore8AM            = (try? c.decodeIfPresent(Bool.self, forKey: .studiedBefore8AM)) ?? false
+        self.generatedArtifactKinds      = (try? c.decodeIfPresent([String].self, forKey: .generatedArtifactKinds)) ?? []
+        self.generatedArtifactVibes      = (try? c.decodeIfPresent([String].self, forKey: .generatedArtifactVibes)) ?? []
+        self.correctComprehensionCount   = (try? c.decodeIfPresent(Int.self, forKey: .correctComprehensionCount)) ?? 0
+        self.bestStreak                  = (try? c.decodeIfPresent(Int.self, forKey: .bestStreak)) ?? 0
+        self.unlockedAchievements        = (try? c.decodeIfPresent([String].self, forKey: .unlockedAchievements)) ?? []
     }
 }
 
@@ -225,6 +270,7 @@ enum XPService {
             state.studiedDeckIds.append(deckId)
         }
         state.flashcardSessionCount += 1
+        if isEarlyMorning { state.studiedBefore8AM = true }
         if let multimodal = multimodalGrantIfNeeded(deckId: deckId, state: &state) {
             grants.append(multimodal)
         }
@@ -245,7 +291,8 @@ enum XPService {
         language: String,
         secondsListened: TimeInterval,
         cardsAdvanced: Int,
-        playlistCompleted: Bool
+        playlistCompleted: Bool,
+        ambientActive: Bool = false
     ) async throws -> [XPGrant] {
         var state = try await fetchState()
         var grants: [XPGrant] = []
@@ -280,6 +327,12 @@ enum XPService {
             if secondsListened > 0, !language.isEmpty {
                 state.learningSecondsByLanguage[language, default: 0] += secondsListened
             }
+            // Achievement signals: total + peak listening time, ambient, and
+            // early-morning listening all count on a genuine listen.
+            state.listenSecondsTotal += secondsListened
+            state.longestListenSeconds = max(state.longestListenSeconds, secondsListened)
+            if ambientActive { state.listenedWithAmbient = true }
+            if isEarlyMorning { state.studiedBefore8AM = true }
             if let multimodal = multimodalGrantIfNeeded(deckId: deckId, state: &state) {
                 grants.append(multimodal)
             }
@@ -356,6 +409,8 @@ enum XPService {
     static func awardComprehensionFirstTryCorrect() async throws -> [XPGrant] {
         var state = try await fetchState()
         let grants = [XPGrant(amount: 10, reason: "Reading comprehension")]
+        // Correct first-try artifact comprehension answer (Close Reader).
+        state.correctComprehensionCount += 1
         try await commit(grants: grants, into: &state)
         return grants
     }
@@ -374,10 +429,17 @@ enum XPService {
     // deck (story / conversation / news, etc.) — crediting the act of
     // generating and reading it. The call site guards against re-awarding.
     @discardableResult
-    static func awardArtifactGenerated() async throws -> [XPGrant] {
+    static func awardArtifactGenerated(kind: String = "", vibe: String? = nil) async throws -> [XPGrant] {
         var state = try await fetchState()
         let grants = [XPGrant(amount: 5, reason: "Artifact generated")]
         state.artifactSessionCount += 1
+        // Track distinct kinds (Full Anthology) and vibes (Genre-Hopper).
+        if !kind.isEmpty, !state.generatedArtifactKinds.contains(kind) {
+            state.generatedArtifactKinds.append(kind)
+        }
+        if let vibe, !vibe.isEmpty, !state.generatedArtifactVibes.contains(vibe) {
+            state.generatedArtifactVibes.append(vibe)
+        }
         try await commit(grants: grants, into: &state)
         return grants
     }
@@ -462,12 +524,24 @@ enum XPService {
             state.awardedStreakMilestones.append(milestone.days)
             grants.append(XPGrant(amount: milestone.reward, reason: "\(milestone.days)-day streak"))
         }
-        guard !grants.isEmpty else { return [] }
+        // Record the high-water streak so streak achievements (which sit below
+        // the XP milestones, e.g. 3-day) reconcile on the next commit.
+        let newBest = max(state.bestStreak, currentStreak)
+        let streakGrew = newBest != state.bestStreak
+        state.bestStreak = newBest
+        // Commit when there's an XP grant OR the streak high-water moved (so a
+        // new achievement can unlock); otherwise skip the needless write.
+        guard !grants.isEmpty || streakGrew else { return [] }
         try await commit(grants: grants, into: &state)
         return grants
     }
 
     // MARK: - Internal helpers
+
+    // True when the current wall-clock hour is before 8 AM (Dawn Patrol).
+    private static var isEarlyMorning: Bool {
+        Calendar.current.component(.hour, from: Date()) < 8
+    }
 
     private static func multimodalGrantIfNeeded(
         deckId: String,
@@ -492,8 +566,16 @@ enum XPService {
             let key = UserXPState.dayKey(for: Date())
             state.xpByDayKey[key, default: 0] += added
         }
+        // Unlock any achievement whose predicate is now satisfied, in the same
+        // write that persists the XP/counter changes above.
+        let unlocked = Achievement.reconcile(into: &state)
         let ref = try docRef()
         try await ref.setData(from: state, merge: true)
         print("XPService.commit → +\(added) XP, total now \(state.total) (flashcards: \(state.flashcardSessionCount), audio: \(state.audioSessionCount))")
+        // Only after the write succeeds do we surface the unlock — so a failed
+        // save never shows a toast for an achievement that didn't persist.
+        if !unlocked.isEmpty {
+            await MainActor.run { XPToastCenter.shared.enqueueAchievements(unlocked) }
+        }
     }
 }

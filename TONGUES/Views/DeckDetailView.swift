@@ -240,7 +240,12 @@ struct DeckDetailView: View {
         }
         // Full-screen on Mac + iPad (a proper detail view), a sheet on iPhone.
         .adaptiveFullScreenOrSheet(item: $selectedArtifact) { artifact in
-            ArtifactReaderSheet(artifact: artifact, deckLanguage: deck.language)
+            ArtifactReaderSheet(
+                artifact: artifact,
+                deckLanguage: deck.language,
+                deck: deck,
+                onArtifactCreated: { Task { await loadArtifacts() } }
+            )
         }
         .confirmationDialog(
             L("Delete this artifact?"),
@@ -1869,7 +1874,28 @@ struct ArtifactReaderSheet: View {
     // The deck's language, threaded from the presenting view so a streak
     // session recorded here is attributed to the right language in stats.
     var deckLanguage: String = ""
+    // The full deck this artifact belongs to. Needed to generate a prequel /
+    // sequel (the generator prompt draws on the deck's vocabulary, level, and
+    // dialect). Optional so a caller that can't resolve the deck simply hides
+    // the continuation buttons.
+    var deck: DeckDocument? = nil
+    // Called after a prequel / sequel is generated and saved, so the presenting
+    // view can refresh its artifacts list to include the new keepsake.
+    var onArtifactCreated: (() -> Void)? = nil
     @State private var isInterleaved = false
+    // When a prequel / sequel is generated it is saved and then shown right
+    // here in place of the original — this holds that freshly generated
+    // artifact so the reader (and any further continuations) operate on it.
+    @State private var activeArtifact: Artifact?
+    // Non-nil while a continuation is generating, driving the skeleton loader
+    // and disabling the continuation buttons. Mirrors GenerateContentSheet's
+    // .generating phase.
+    @State private var continuationInFlight: DeckGenerator.ContinuationRelation?
+    @State private var generatingHapticTimer: Timer?
+    // Surfaced by `.subscriptionCapAlert` / an error alert when a continuation
+    // generation or save fails.
+    @State private var capError: SubscriptionError?
+    @State private var errorText: String?
     // Drives the "Read aloud" button, mirroring the fresh-generation flow in
     // GenerateContentSheet so a revisited artifact can be played back too.
     @State private var speech = SpeechClient.shared
@@ -1885,108 +1911,296 @@ struct ArtifactReaderSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Picker(L("View"), selection: $isInterleaved) {
-                        Text(L("Story")).tag(false)
-                        Text(L("Line by line")).tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal)
-
-                    contentBody
+                    if let relation = continuationInFlight {
+                        // A prequel / sequel is generating — show the same
+                        // skeleton-loader beat GenerateContentSheet uses so the
+                        // wait reads as "new content is materializing here."
+                        continuationGeneratingView(relation)
+                    } else {
+                        Picker(L("View"), selection: $isInterleaved) {
+                            Text(L("Story")).tag(false)
+                            Text(L("Line by line")).tag(true)
+                        }
+                        .pickerStyle(.segmented)
                         .padding(.horizontal)
 
-                    Button {
-                        Haptics.light()
-                        // Toggle play/stop, matching GenerateContentSheet's
-                        // read-aloud behavior (SpeechClient has no true
-                        // pause/resume, so tapping while playing stops).
-                        if speech.isSpeaking {
-                            SpeechClient.shared.stop()
-                        } else {
-                            readAloudPlayCount += 1
-                            SpeechClient.shared.speak(
-                                foreignText,
-                                language: deckLanguage,
-                                highlightPassage: true
-                            )
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: speech.isSpeaking ? "stop.fill" : "waveform")
-                                .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: readAloudPlayCount)
-                            Text(speech.isSpeaking ? L("Stop") : L("Read aloud"))
-                        }
-                        .font(.system(size: 14, weight: .medium))
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .foregroundStyle(.black)
-                        .overlay(Capsule().stroke(Color(white: 0.85)))
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(foreignText.isEmpty)
-                    .padding(.horizontal)
+                        contentBody
+                            .padding(.horizontal)
 
-                    if let prompt = artifact.userPrompt, !prompt.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(L("You asked for"))
-                                .font(.system(size: 11, weight: .semibold))
-                                .tracking(0.8)
-                                .foregroundStyle(.secondary)
-                            Text(prompt)
-                                .font(.custom("NeueHaasDisplay-Light", size: 14))
+                        actionButtonRow
+
+                        if let prompt = current.userPrompt, !prompt.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(L("You asked for"))
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .tracking(0.8)
+                                    .foregroundStyle(.secondary)
+                                Text(prompt)
+                                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                                    .foregroundStyle(.black)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(Color(white: 0.96))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .padding(.horizontal)
+                        }
+
+                        // The comprehension questions saved with the artifact.
+                        // Interactive (the learner can re-test) but no XP is
+                        // awarded for revisiting a kept artifact.
+                        if !current.resolvedQuestions.isEmpty {
+                            VStack(alignment: .leading, spacing: 16) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "checklist")
+                                    Text(L("Check your understanding"))
+                                        .font(.system(size: 16, weight: .semibold))
+                                }
                                 .foregroundStyle(.black)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(Color(white: 0.96))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .padding(.horizontal)
-                    }
 
-                    // The comprehension questions saved with the artifact.
-                    // Interactive (the learner can re-test) but no XP is
-                    // awarded for revisiting a kept artifact.
-                    if !artifact.resolvedQuestions.isEmpty {
-                        VStack(alignment: .leading, spacing: 16) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "checklist")
-                                Text(L("Check your understanding"))
-                                    .font(.system(size: 16, weight: .semibold))
-                            }
-                            .foregroundStyle(.black)
-
-                            ForEach(Array(artifact.resolvedQuestions.enumerated()), id: \.element.id) { index, question in
-                                ComprehensionQuestionCard(
-                                    index: index,
-                                    question: question,
-                                    onFirstAttempt: { _ in
-                                        if !didCountComprehension {
-                                            didCountComprehension = true
-                                            Task { try? await XPService.recordComprehensionSession() }
+                                ForEach(Array(current.resolvedQuestions.enumerated()), id: \.element.id) { index, question in
+                                    ComprehensionQuestionCard(
+                                        index: index,
+                                        question: question,
+                                        onFirstAttempt: { _ in
+                                            if !didCountComprehension {
+                                                didCountComprehension = true
+                                                Task { try? await XPService.recordComprehensionSession() }
+                                            }
+                                        },
+                                        onSolved: {
+                                            Task { await registerArtifactStreakIfNeeded() }
                                         }
-                                    },
-                                    onSolved: {
-                                        Task { await registerArtifactStreakIfNeeded() }
-                                    }
-                                )
+                                    )
+                                }
                             }
+                            .padding(.horizontal)
+                            .padding(.top, 4)
                         }
-                        .padding(.horizontal)
-                        .padding(.top, 4)
                     }
                 }
                 .padding(.vertical, 16)
             }
-            .navigationTitle(L(artifact.resolvedKind.rawValue))
+            .navigationTitle(L(current.resolvedKind.rawValue))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button(L("Done")) { dismiss() }
+                        .disabled(continuationInFlight != nil)
                 }
             }
         }
-        .onDisappear { SpeechClient.shared.stop() }
+        .subscriptionCapAlert($capError)
+        .alert(
+            L("Couldn't generate"),
+            isPresented: Binding(
+                get: { errorText != nil },
+                set: { if !$0 { errorText = nil } }
+            )
+        ) {
+            Button(L("OK"), role: .cancel) { errorText = nil }
+        } message: {
+            Text(errorText ?? "")
+        }
+        .onDisappear {
+            SpeechClient.shared.stop()
+            stopGeneratingHaptics()
+        }
+    }
+
+    // The artifact currently on screen: the freshly generated prequel / sequel
+    // once one has been made, otherwise the artifact this reader opened with.
+    // Everything the reader renders (content, questions, read-aloud, title)
+    // flows through this so generating a continuation swaps the whole view over
+    // to it in place.
+    private var current: Artifact {
+        activeArtifact ?? artifact
+    }
+
+    // The row beneath the passage: "Read aloud" plus, when a deck is available
+    // to generate from, "Generate Prequel" / "Generate Sequel". Wrapped in a
+    // horizontal scroll so the three capsules never clip on a narrow device or
+    // in a longer-worded locale.
+    private var actionButtonRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                readAloudButton
+                if deck != nil {
+                    continuationButton(.prequel)
+                    continuationButton(.sequel)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private var readAloudButton: some View {
+        Button {
+            Haptics.light()
+            // Toggle play/stop, matching GenerateContentSheet's read-aloud
+            // behavior (SpeechClient has no true pause/resume, so tapping
+            // while playing stops).
+            if speech.isSpeaking {
+                SpeechClient.shared.stop()
+            } else {
+                readAloudPlayCount += 1
+                SpeechClient.shared.speak(
+                    foreignText,
+                    language: deckLanguage,
+                    highlightPassage: true
+                )
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: speech.isSpeaking ? "stop.fill" : "waveform")
+                    .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: readAloudPlayCount)
+                Text(speech.isSpeaking ? L("Stop") : L("Read aloud"))
+            }
+            .font(.system(size: 14, weight: .medium))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .foregroundStyle(.black)
+            .overlay(Capsule().stroke(Color(white: 0.85)))
+        }
+        .buttonStyle(.plain)
+        .disabled(foreignText.isEmpty)
+    }
+
+    private func continuationButton(_ relation: DeckGenerator.ContinuationRelation) -> some View {
+        Button {
+            Haptics.light()
+            Task { await generateContinuation(relation) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: relation == .prequel ? "arrow.turn.up.left" : "arrow.turn.down.right")
+                Text(relation == .prequel ? L("Generate Prequel") : L("Generate Sequel"))
+            }
+            .font(.system(size: 14, weight: .medium))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .foregroundStyle(.black)
+            .overlay(Capsule().stroke(Color(white: 0.85)))
+        }
+        .buttonStyle(.plain)
+        .disabled(continuationInFlight != nil)
+    }
+
+    // Skeleton stand-in shown while a prequel / sequel generates, mirroring
+    // GenerateContentSheet.generatingView.
+    private func continuationGeneratingView(_ relation: DeckGenerator.ContinuationRelation) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Text(relation == .prequel ? L("Generating prequel…") : L("Generating sequel…"))
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            ForEach(0..<3, id: \.self) { _ in
+                VStack(alignment: .leading, spacing: 10) {
+                    artifactSkeletonBar(width: nil)
+                    artifactSkeletonBar(width: nil)
+                    artifactSkeletonBar(width: 240)
+                }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .modifier(ArtifactGeneratingShimmer())
+    }
+
+    private func artifactSkeletonBar(width: CGFloat?) -> some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(Color(white: 0.90))
+            .frame(width: width, height: 13)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+    }
+
+    // Generates a prequel / sequel to the on-screen artifact, saves it as a new
+    // artifact (with its own comprehension questions), then swaps the reader
+    // over to it — so it behaves exactly like any other generated artifact.
+    @MainActor
+    private func generateContinuation(_ relation: DeckGenerator.ContinuationRelation) async {
+        guard let deck, continuationInFlight == nil else { return }
+        SpeechClient.shared.stop()
+        continuationInFlight = relation
+        startGeneratingHaptics()
+        defer {
+            stopGeneratingHaptics()
+            continuationInFlight = nil
+        }
+
+        let source = current
+        let kind = source.resolvedKind
+        do {
+            let content = try await DeckGenerator.generateContinuation(
+                relation: relation,
+                kind: kind,
+                deck: deck,
+                source: source.pairs
+            )
+
+            // Follow the same rule as fresh generation: only prose kinds carry
+            // comprehension questions. A failure here shouldn't sink the whole
+            // continuation, so it degrades to no questions.
+            var questions: [ComprehensionQuestion] = []
+            if kind.supportsComprehension {
+                questions = (try? await DeckGenerator.generateComprehensionQuestions(
+                    kind: kind,
+                    deck: deck,
+                    content: content
+                )) ?? []
+            }
+
+            let contextPrompt = relation == .prequel
+                ? L("Prequel to \"%@\"", source.title)
+                : L("Sequel to \"%@\"", source.title)
+            var newArtifact = Artifact(
+                id: nil,
+                deckId: deck.id ?? source.deckId,
+                kind: kind.rawValue,
+                title: Artifact.deriveTitle(fromProse: content.prose),
+                prose: content.prose,
+                pairs: content.pairs,
+                userPrompt: contextPrompt,
+                createdAt: Date(),
+                questions: questions.isEmpty ? nil : questions
+            )
+            let savedId = try await FirebaseDeckArtifactService.save(newArtifact)
+            newArtifact.id = savedId
+
+            // Swap the reader over to the new artifact and reset the
+            // per-artifact comprehension / streak guards so its questions can
+            // be answered and counted fresh.
+            activeArtifact = newArtifact
+            didCountComprehension = false
+            didRegisterArtifactStreak = false
+            isInterleaved = false
+            Haptics.success()
+            onArtifactCreated?()
+        } catch let error as SubscriptionError {
+            capError = error
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    // A soft tap on entry, then a gentle pulse every ~1.2s while the skeleton
+    // animates — the same background feedback GenerateContentSheet uses.
+    private func startGeneratingHaptics() {
+        stopGeneratingHaptics()
+        Haptics.light()
+        generatingHapticTimer = Timer.scheduledTimer(
+            withTimeInterval: 1.2,
+            repeats: true
+        ) { _ in
+            Haptics.light()
+        }
+    }
+
+    private func stopGeneratingHaptics() {
+        generatingHapticTimer?.invalidate()
+        generatingHapticTimer = nil
     }
 
     // The foreign-language text to read aloud. Prefers the pre-aligned
@@ -1994,17 +2208,17 @@ struct ArtifactReaderSheet: View {
     // the prose minus its "English:" block, mirroring how GenerateContentSheet
     // builds `foreignContext`.
     private var foreignText: String {
-        if !artifact.pairs.isEmpty {
-            return artifact.pairs
+        if !current.pairs.isEmpty {
+            return current.pairs
                 .map(\.foreign)
                 .joined(separator: "\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if let range = artifact.prose.range(of: "English:") {
-            return artifact.prose[..<range.lowerBound]
+        if let range = current.prose.range(of: "English:") {
+            return current.prose[..<range.lowerBound]
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return artifact.prose.trimmingCharacters(in: .whitespacesAndNewlines)
+        return current.prose.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // Answering a comprehension question on a saved artifact counts toward
@@ -2015,19 +2229,19 @@ struct ArtifactReaderSheet: View {
         guard !didRegisterArtifactStreak else { return }
         didRegisterArtifactStreak = true
         _ = try? await FirebaseDeckService.recordStreakActivity(
-            deckId: artifact.deckId,
-            deckTitle: artifact.title,
+            deckId: current.deckId,
+            deckTitle: current.title,
             language: deckLanguage
         )
     }
 
     @ViewBuilder
     private var contentBody: some View {
-        if isInterleaved, !artifact.pairs.isEmpty {
+        if isInterleaved, !current.pairs.isEmpty {
             // Pairs from Claude are pre-aligned 1:1, so showing them
             // straight up is the cleanest line-by-line read.
             VStack(alignment: .leading, spacing: 14) {
-                ForEach(Array(artifact.pairs.enumerated()), id: \.offset) { _, pair in
+                ForEach(Array(current.pairs.enumerated()), id: \.offset) { _, pair in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(pair.foreign)
                             .font(.custom("NeueHaasDisplay-Mediu", size: 17))
@@ -2044,11 +2258,39 @@ struct ArtifactReaderSheet: View {
         } else {
             // Story mode (or a legacy artifact without aligned pairs):
             // render the raw prose so paragraph breaks survive.
-            Text(artifact.prose)
+            Text(current.prose)
                 .font(.custom("NeueHaasDisplay-Light", size: 16))
                 .foregroundStyle(.black)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+// Sweeps a soft highlight left-to-right across its content on a loop — the
+// shimmer that signals the prequel / sequel skeleton loader is working.
+// Mirrors GenerateContentSheet's private GeneratingShimmer.
+private struct ArtifactGeneratingShimmer: ViewModifier {
+    @State private var phase: CGFloat = -1
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geo in
+                    LinearGradient(
+                        colors: [.clear, Color.white.opacity(0.7), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geo.size.width)
+                    .offset(x: phase * geo.size.width)
+                }
+            )
+            .clipped()
+            .onAppear {
+                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
+                    phase = 1
+                }
+            }
     }
 }

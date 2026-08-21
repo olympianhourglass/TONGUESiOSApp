@@ -10,6 +10,7 @@ import UIKit
 import FirebaseCore
 import CoreText
 import AVFoundation
+import UserNotifications
 
 #if canImport(GoogleSignIn)
 import GoogleSignIn
@@ -20,11 +21,15 @@ import GoogleSignIn
 // shortcuts are set dynamically so no Info.plist entry is needed; order here
 // is the order shown in the menu, top to bottom: Direct, Conversation,
 // Camera.
-final class AppDelegate: NSObject, UIApplicationDelegate {
+final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        // Receive taps on (and foreground deliveries of) the local streak
+        // reminders scheduled by StreakReminderService.
+        UNUserNotificationCenter.current().delegate = self
+
         application.shortcutItems = [
             UIApplicationShortcutItem(
                 type: "com.tongues.shortcut.direct",
@@ -59,6 +64,26 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         )
         config.delegateClass = QuickActionSceneDelegate.self
         return config
+    }
+
+    // Show streak reminders even while the app is foregrounded — the user may
+    // be on a non-Study tab and still needs the nudge.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        [.banner, .sound]
+    }
+
+    // Tapping a streak reminder drops the user on the Study tab, where they
+    // can start a review right away.
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        await MainActor.run {
+            AppTabRouter.shared.current = .study
+        }
     }
 }
 

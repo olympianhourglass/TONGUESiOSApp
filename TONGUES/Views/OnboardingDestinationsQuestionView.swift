@@ -41,6 +41,12 @@ struct OnboardingDestinationsQuestionView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
 
+            Text(L("We'll use these to suggest languages you might love learning."))
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 24)
+                .padding(.top, 4)
+
             List {
                 ForEach(state.destinations) { dest in
                     DestinationRow(name: dest.name)

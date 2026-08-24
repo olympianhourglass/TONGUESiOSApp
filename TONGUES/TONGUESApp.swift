@@ -8,6 +8,7 @@
 import SwiftUI
 import UIKit
 import FirebaseCore
+import FirebaseAuth
 import CoreText
 import AVFoundation
 import UserNotifications
@@ -51,6 +52,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             )
         ]
         return true
+    }
+
+    // Hand the APNs device token to Firebase so phone-auth can verify via a
+    // silent push. When push isn't available, Firebase falls back to the
+    // reCAPTCHA flow (whose callback is handled in `onOpenURL`).
+    func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        Auth.auth().setAPNSToken(deviceToken, type: .unknown)
+    }
+
+    // Let Firebase consume the silent verification push it sends during phone
+    // auth. Any other remote notification is a no-op (the app has no other
+    // push handling).
+    func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        _ = Auth.auth().canHandleNotification(userInfo)
+        completionHandler(.noData)
     }
 
     func application(
@@ -175,6 +198,11 @@ struct TONGUESApp: App {
                 // active tab without disturbing this preferredColorScheme.
                 .preferredColorScheme(.light)
                 .onOpenURL { url in
+                    // Firebase phone-auth's reCAPTCHA fallback redirects back
+                    // into the app via the reversed-client-id URL scheme. Hand
+                    // the URL to Auth first so phone verification can complete;
+                    // without this the callback is dropped and sign-in hangs.
+                    if Auth.auth().canHandle(url) { return }
                     #if canImport(GoogleSignIn)
                     if GIDSignIn.sharedInstance.handle(url) { return }
                     #endif

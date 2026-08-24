@@ -4,7 +4,11 @@ struct LibraryView: View {
     @State private var vm = LibraryViewModel()
     @State private var showProfile = false
     @State private var headerHeight: CGFloat = 0
-    @State private var onboardingName: String?
+    // Seeded synchronously from the on-device onboarding cache so the header
+    // shows the real name on the very first frame instead of flashing the
+    // "John Doe" placeholder while the Firestore profile loads.
+    @State private var onboardingName: String? = UserService.cachedOnboarding()?.name?
+        .trimmingCharacters(in: .whitespacesAndNewlines)
     @State private var avatarImageData: Data?
     @State private var router = WidgetDeepLinkRouter.shared
     @State private var path = NavigationPath()
@@ -163,8 +167,12 @@ struct LibraryView: View {
                 async let fetched = try? await UserService.fetchProfile()
                 _ = await decks
                 let profile = await fetched
-                onboardingName = profile?.onboarding?.name?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                // Only overwrite the cached-seed name when the fetch actually
+                // returns one, so a slow/failed load never reverts to "John Doe".
+                if let fetchedName = profile?.onboarding?.name?
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !fetchedName.isEmpty {
+                    onboardingName = fetchedName
+                }
                 avatarImageData = profile?.avatarImage
                 resolvePendingWidgetDeepLink()
                 recomputeWords()
@@ -470,8 +478,10 @@ struct LibraryView: View {
     @MainActor
     private func refreshHeaderProfile() async {
         guard let profile = try? await UserService.fetchProfile() else { return }
-        onboardingName = profile.onboarding?.name?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let fetchedName = profile.onboarding?.name?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !fetchedName.isEmpty {
+            onboardingName = fetchedName
+        }
         avatarImageData = profile.avatarImage
     }
 

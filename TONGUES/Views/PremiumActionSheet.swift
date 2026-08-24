@@ -3,9 +3,10 @@ import StoreKit
 
 // Paywall sheet. Layout follows the approved Figma design:
 //
-//   1. Top hero — Mouths cardback video behind the TONGUES wordmark
-//      with an "Unlock the adventure of a lifetime" tagline. Top-right
-//      glass close button + vertical brand label.
+//   1. Top hero — motion-blurred bullet-train image behind the TONGUES
+//      wordmark (intro-screen treatment: NeueHaas Light, no tracking) with the
+//      "A year from now, you'll read things you can't read today."
+//      tagline. Top-right glass close button + vertical brand label.
 //   2. Tier tab selector (Standard / Pro / Max). Tapping switches the
 //      card stack below to that tier's editorial copy + feature rows.
 //   3. Black info card — tier headline + 5 icon-led feature rows
@@ -13,7 +14,7 @@ import StoreKit
 //   4. Pricing card — Monthly / Yearly side-by-side panes; the yearly
 //      pane carries a dynamic "Save X%" pill computed from the two
 //      fallback prices so the math stays accurate when prices change.
-//   5. Red CTA button — "Upgrade to {tier.displayName}". Pumps the
+//   5. Lime-green CTA button — "Upgrade to {tier.displayName}". Pumps the
 //      selected (tier × cycle) into StoreKitClient.purchase.
 //   6. Footer — Terms / Privacy / Restore Purchases.
 struct PremiumActionSheet: View {
@@ -27,7 +28,7 @@ struct PremiumActionSheet: View {
 
     @State private var store = StoreKitClient.shared
     @State private var subscription = SubscriptionService.shared
-    @State private var selectedTier: SubscriptionTier = .beginner
+    @State private var selectedTier: SubscriptionTier = .pro
     @State private var selectedCycle: SubscriptionBillingCycle = .monthly
     @State private var isPurchasing: Bool = false
     @State private var purchaseError: String?
@@ -58,20 +59,35 @@ struct PremiumActionSheet: View {
                     // appear immediately below — and so the visual jump
                     // from "pick a tier" → "tier details" stays tight.
                     tierTabs
-                        .padding(.horizontal, 24)
-                        .padding(.top, 12)
-                    infoCard
+                        // Match the info card's 16pt side margins so the tabs
+                        // are exactly as wide as the card beneath them. The
+                        // negative top pulls the whole tabs+cards group up 24pt
+                        // (was +8), tucking it up against the hero.
                         .padding(.horizontal, 16)
-                        .padding(.top, 8)
-                    pricingCard
-                        .padding(.horizontal, 16)
-                        .padding(.top, 28)
+                        .padding(.top, -16)
+                    // Info + pricing cards live in a single GlassEffectContainer
+                    // so their Liquid Glass actually samples/refracts what's
+                    // behind it and reads as real glass rather than a flat dark
+                    // fill. spacing: 0 keeps the two pricing panes from merging.
+                    GlassEffectContainer(spacing: 0) {
+                        // Same 16pt gap between the info card and the pricing
+                        // panes as between the tabs and the info card, which
+                        // pulls the two pricing rectangles up.
+                        VStack(spacing: 16) {
+                            infoCard
+                            pricingCard
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    // Gap from the tabs down to the cards.
+                    .padding(.top, 16)
                     upgradeButton
                         .padding(.horizontal, 16)
-                        .padding(.top, 14)
-                    footerLinks
+                        // Tightened so the CTA rides up into the default frame.
                         .padding(.top, 18)
-                        .padding(.bottom, 24)
+                    footerLinks
+                        .padding(.top, 14)
+                        .padding(.bottom, 16)
                 }
             }
             .scrollIndicators(.hidden)
@@ -110,9 +126,12 @@ struct PremiumActionSheet: View {
             if store.products.isEmpty {
                 await store.loadProducts()
             }
-            // If the user already has a paid tier, open the sheet on
-            // their current plan rather than the cheapest one.
-            if subscription.currentTier != .free,
+            // In-app (not onboarding): if the user already has a paid tier,
+            // open the sheet on their current plan. During onboarding
+            // (`onFinish` set) we always land on Pro — the promoted default —
+            // regardless of any tier the test/real account already holds.
+            if onFinish == nil,
+               subscription.currentTier != .free,
                displayTiers.contains(subscription.currentTier) {
                 selectedTier = subscription.currentTier
             }
@@ -145,24 +164,33 @@ struct PremiumActionSheet: View {
     // Hero height *below* the safe-area top. The actual rendered
     // height grows by the safe-area inset so the image carries all
     // the way to the very top edge of the sheet without exposing
-    // the black underlay.
-    private let heroHeight: CGFloat = 280
+    // the black underlay. Tall enough to carry the train image down
+    // the sheet, but trimmed back so the CTA sits near the default
+    // (unscrolled) frame instead of below it.
+    private let heroHeight: CGFloat = 300
 
     private var heroSection: some View {
         ZStack(alignment: .top) {
             stretchyBackground
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
-                TonguesWordmark(size: 44)
+                // Wordmark + tagline share the same NeueHaas Light size and
+                // hang left off the 16pt margin the cards below use, so the
+                // hero copy lines up with the rest of the sheet's content.
+                Text("TONGUES")
+                    .font(.custom("NeueHaasDisplay-Light", size: 19))
+                    .tracking(0)
                     .foregroundStyle(.white)
-                Text(L("Unlock the adventure of a lifetime"))
+                Text(L("A year from now, you'll read things you can't read today."))
                     .font(.custom("NeueHaasDisplay-Light", size: 15))
                     .foregroundStyle(.white)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.top, 10)
                 Spacer(minLength: 24)
             }
             .padding(.bottom, 8)
-            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(height: heroHeight)
         // The hero floats up under the safe area so the video reaches
@@ -171,12 +199,12 @@ struct PremiumActionSheet: View {
         .ignoresSafeArea(edges: .top)
     }
 
-    // Pull-down-to-stretch effect: the looping Mouths cardback grows
+    // Pull-down-to-stretch effect: the bullet-train hero image grows
     // taller (and slides up by the same amount, keeping its origin
     // anchored) whenever the scroll view is overscrolled past the
     // top edge. The black gradient overlay is applied *inside* the
     // stretching frame so it travels with the image as a single unit
-    // — without that, the gradient stayed put while the video pulled
+    // — without that, the gradient stayed put while the image pulled
     // out from under it and a thin black gap would peek through on
     // fast scrolls.
     private var stretchyBackground: some View {
@@ -190,13 +218,23 @@ struct PremiumActionSheet: View {
             // black underlay.
             let topBuffer: CGFloat = 200
             ZStack {
-                CardbackVideoView(resourceName: "Mouths1", isPlaying: true)
+                // Motion-blurred bullet-train hero, centered and filling the
+                // stretchy header. `colorMultiply(0.7)` knocks the exposure
+                // down ~30% so the wordmark/tagline read cleanly over it.
+                Image("PaywallHero")
+                    .resizable()
                     .scaledToFill()
+                    .colorMultiply(Color(white: 0.7))
                 LinearGradient(
-                    colors: [
-                        Color.black.opacity(0.15),
-                        Color.black.opacity(0.55),
-                        Color.black
+                    // Pushed down: the image stays clear through the upper
+                    // stretch and only hands off to black near the very bottom,
+                    // so much more of the train shows before the sheet goes dark
+                    // (the bottom black keeps the wordmark/tagline legible).
+                    stops: [
+                        .init(color: .black.opacity(0.0), location: 0.0),
+                        .init(color: .black.opacity(0.0), location: 0.5),
+                        .init(color: .black.opacity(0.35), location: 0.82),
+                        .init(color: .black, location: 1.0)
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -266,12 +304,11 @@ struct PremiumActionSheet: View {
                 ForEach(displayTiers, id: \.self) { tier in
                     Button {
                         Haptics.light()
-                        // Spring drives the matchedGeometryEffect
-                        // slide — the highlight capsule lerps between
-                        // tab frames inside this animation block.
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.78)) {
-                            selectedTier = tier
-                        }
+                        // Just flip the tier. The highlight capsule's slide is
+                        // driven by the `.animation(value:)` on the container
+                        // below, which scopes the animation to the tabs so the
+                        // info card's text simply blips to the new tier.
+                        selectedTier = tier
                     } label: {
                         Text(tier.displayName)
                             .font(.custom("NeueHaasDisplay-Mediu", size: 14))
@@ -281,21 +318,21 @@ struct PremiumActionSheet: View {
                             .background {
                                 // Only the currently-selected tab
                                 // contributes the highlight capsule.
-                                // The capsule carries a light fill +
-                                // an explicitly tinted Liquid Glass
-                                // pass so the pill reads as a raised
-                                // glass surface against the darker
-                                // outer container. A fully-clear fill
-                                // gave the glass nothing to anchor
-                                // to and rendered invisibly.
-                                // matchedGeometryEffect interpolates
-                                // the highlight's frame between
-                                // segments instead of fading in/out.
+                                // The capsule carries a dark fill +
+                                // a black-tinted Liquid Glass pass so
+                                // the selected pill reads as a distinctly
+                                // darker, raised surface against the
+                                // lighter outer glass container — the
+                                // earlier light-on-light treatment didn't
+                                // have enough contrast to show which tier
+                                // was selected. matchedGeometryEffect
+                                // interpolates the highlight's frame
+                                // between segments instead of fading.
                                 if selectedTier == tier {
                                     Capsule()
-                                        .fill(Color.white.opacity(0.08))
+                                        .fill(Color.black.opacity(0.55))
                                         .glassEffect(
-                                            .regular.tint(Color.white.opacity(0.22)),
+                                            .regular.tint(Color.black.opacity(0.6)),
                                             in: .capsule
                                         )
                                         .matchedGeometryEffect(
@@ -316,8 +353,13 @@ struct PremiumActionSheet: View {
             // design system. NOT `.interactive()`: an interactive glass
             // surface here intercepts touches and swallowed the tab
             // buttons' taps, so `selectedTier` never changed and the CTA
-            // kept buying the default (Standard) tier.
-            .glassEffect(.regular, in: .capsule)
+            // kept buying the default (Standard) tier. Tinted ~30% darker so
+            // the track reads as a distinctly darker channel behind the pills.
+            .glassEffect(.regular.tint(Color.black.opacity(0.3)), in: .capsule)
+            // Animate only the tabs (the sliding highlight capsule) on
+            // selection — scoped here so the info card beneath just blips to
+            // the newly-selected tier's text instead of transitioning.
+            .animation(.spring(response: 0.4, dampingFraction: 0.78), value: selectedTier)
         }
     }
 
@@ -325,11 +367,26 @@ struct PremiumActionSheet: View {
 
     private var infoCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(selectedTier.headline)
-                .font(.custom("NeueHaasDisplay-Mediu", size: 26))
-                .tracking(-0.6)
-                .foregroundStyle(.white)
-                .padding(.bottom, 4)
+            // Chip + headline grouped so the badge reads as a label above the
+            // title. The "Popular Plan" chip only shows for the middle (Pro)
+            // tier — the same lime/black treatment as the "Save %" chip. Its
+            // presence nudges the card taller when Pro is selected; the card is
+            // content-sized, so it grows on its own.
+            VStack(alignment: .leading, spacing: 12) {
+                if selectedTier == .pro {
+                    Text(L("Popular Plan"))
+                        .font(.custom("NeueHaasDisplay-Roman", size: 10))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.toastBackground))
+                }
+                Text(selectedTier.headline)
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 26))
+                    .tracking(-0.6)
+                    .foregroundStyle(.white)
+            }
+            .padding(.bottom, 4)
 
             featureRow(
                 icon: "text.alignleft",
@@ -364,9 +421,13 @@ struct PremiumActionSheet: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color(white: 0.08))
+        // Dark Liquid Glass: reads as a raised, glassy surface (soft specular
+        // edges over the black sheet) while a heavy black tint keeps it dark
+        // enough for the white text to hold high contrast. Sits inside a
+        // GlassEffectContainer (see body) so the material renders properly.
+        .glassEffect(
+            .regular.tint(Color.black.opacity(0.62)),
+            in: RoundedRectangle(cornerRadius: 22)
         )
     }
 
@@ -424,6 +485,26 @@ struct PremiumActionSheet: View {
 
     // MARK: - Pricing card (monthly / yearly)
 
+    // The warm, off-centre glow drawn under whichever pane is selected.
+    // Deliberately asymmetric — pushed toward one corner and stretched wide —
+    // so it reads as light rather than a uniform halo, and heavily blurred so
+    // only a faint warmth survives through the dark glass above it.
+    private var selectionGlow: some View {
+        RadialGradient(
+            colors: [
+                Color(red: 1.0, green: 0.58, blue: 0.28).opacity(0.5),
+                Color(red: 1.0, green: 0.42, blue: 0.2).opacity(0.0)
+            ],
+            center: UnitPoint(x: 0.28, y: 0.72),
+            startRadius: 0,
+            endRadius: 110
+        )
+        .scaleEffect(x: 1.35, y: 0.7, anchor: UnitPoint(x: 0.28, y: 0.72))
+        .blur(radius: 22)
+        .opacity(0.55)
+        .allowsHitTesting(false)
+    }
+
     private var pricingCard: some View {
         HStack(spacing: 10) {
             pricingPane(cycle: .monthly)
@@ -440,19 +521,25 @@ struct PremiumActionSheet: View {
             }
         } label: {
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
+                HStack(spacing: 6) {
+                    // Radio-style toggle: a filled check on the active cadence,
+                    // a hollow circle on the other — so the slot is always
+                    // filled (no awkward gap) and both panes stay balanced.
+                    Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 13))
+                        .foregroundStyle(isSelected ? .white : .white.opacity(0.3))
                     Text(L(cycle.label))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(.white.opacity(isSelected ? 1 : 0.7))
                     Spacer()
                     if cycle == .yearly, let savings = yearlySavingsLabel {
                         Text(savings)
-                            .font(.custom("NeueHaasDisplay-Mediu", size: 10))
-                            .foregroundStyle(.white)
+                            .font(.custom("NeueHaasDisplay-Roman", size: 10))
+                            .foregroundStyle(.black)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
-                                Capsule().fill(Color.red)
+                                Capsule().fill(Color.toastBackground)
                             )
                     }
                 }
@@ -477,17 +564,21 @@ struct PremiumActionSheet: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(white: 0.10))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                isSelected ? Color.white : Color.white.opacity(0.10),
-                                lineWidth: isSelected ? 1.2 : 0.5
-                            )
-                    )
+            // Selection reads through Liquid Glass prominence instead of a
+            // border: the active pane sits on lighter (more raised) glass while
+            // the other recedes into a darker tint — paired with the lime check
+            // in the header. `.interactive()` keeps the live touch response.
+            .glassEffect(
+                .regular.tint(Color.black.opacity(isSelected ? 0.42 : 0.64)).interactive(),
+                in: RoundedRectangle(cornerRadius: 16)
             )
+            // A warm bloom sits *behind* the pane and bleeds faintly up through
+            // the translucent glass — an extra, subliminal cue for the active
+            // cadence. Fades with selection (driven by the same spring).
+            .background {
+                selectionGlow
+                    .opacity(isSelected ? 1 : 0)
+            }
         }
         .buttonStyle(.plain)
     }
@@ -582,18 +673,19 @@ struct PremiumActionSheet: View {
             } label: {
                 ZStack {
                     Text(ctaLabel)
-                        .font(.custom("NeueHaasDisplay-Mediu", size: 16))
-                        .foregroundStyle(.white)
+                        .font(.custom("NeueHaasDisplay-Roman", size: 16))
+                        .foregroundStyle(.black)
                         .opacity(isPurchasing ? 0 : 1)
                     if isPurchasing {
                         ProgressView()
-                            .tint(.white)
+                            .tint(.black)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .background(Color.red)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background(Color.toastBackground)
+                // Fully rounded in every state (idle, purchasing, disabled).
+                .clipShape(Capsule())
             }
             .buttonStyle(.plain)
             .disabled(isPurchasing || subscription.currentTier == selectedTier)

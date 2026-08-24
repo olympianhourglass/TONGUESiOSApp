@@ -74,12 +74,16 @@ struct OnboardingFlow: View {
         case question(Int)
         case login
         case signIn
+        case slideshow
         case paywall
+        case welcome
     }
 
     var body: some View {
         NavigationStack(path: $path) {
             OnboardingIntroView(
+                // "Get Started" begins the questions; the swipeable slideshow
+                // now comes later, after sign-up and before the paywall.
                 onContinue: { path.append(.question(1)) },
                 onSignIn: { path.append(.signIn) }
             )
@@ -125,27 +129,56 @@ struct OnboardingFlow: View {
                 case .login:
                     OnboardingLoginView(
                         onboardingAnswers: state.answers,
-                        // New users see the paywall once between finishing
-                        // sign-up and entering the app; the paywall itself
-                        // calls the real onComplete.
-                        onComplete: { path.append(.paywall) },
+                        // After sign-up, everyone sees the slideshow; it then
+                        // routes to the paywall (or straight into the app if the
+                        // account is already paid).
+                        onComplete: { path.append(.slideshow) },
                         sampleDeckTitles: state.sampleDecks
                     )
                 case .signIn:
                     OnboardingLoginView(
                         onboardingAnswers: state.answers,
-                        // Returning users go straight in — no paywall.
-                        onComplete: onComplete,
+                        // Returning users also see the slideshow; it then decides
+                        // the paywall (free) or straight into the app (paid).
+                        onComplete: { path.append(.slideshow) },
                         isSignIn: true
                     )
+                case .slideshow:
+                    // Shown after sign-up. Everyone sees it, regardless of
+                    // subscription. The slideshow manages its own per-slide
+                    // status-bar tint (it mixes light and dark slides). On
+                    // finish: free accounts go to the paywall; already-paid
+                    // accounts skip straight to the welcome finale.
+                    OnboardingSlideshowView(
+                        onFinish: {
+                            if SubscriptionService.shared.currentTier == .free {
+                                path.append(.paywall)
+                            } else {
+                                path.append(.welcome)
+                            }
+                        }
+                    )
+                    .toolbar(.hidden, for: .navigationBar)
+                    .navigationBarBackButtonHidden(true)
                 case .paywall:
-                    PremiumActionSheet(onFinish: onComplete)
+                    // After the paywall (skip or purchase) the welcome finale
+                    // is the last beat before the app.
+                    PremiumActionSheet(onFinish: { path.append(.welcome) })
                         .toolbar(.hidden, for: .navigationBar)
                         .navigationBarBackButtonHidden(true)
                         // The paywall is dark; force light status-bar content
                         // over it (overrides the flow-wide dark setting).
                         .onAppear { AppTabRouter.shared.forceLightStatusBar = true }
                         .onDisappear { AppTabRouter.shared.forceLightStatusBar = false }
+                case .welcome:
+                    // The closing beat, shown to everyone: a personalized
+                    // greeting; swiping on enters the app.
+                    OnboardingWelcomeView(
+                        userName: state.name,
+                        onFinish: onComplete
+                    )
+                    .toolbar(.hidden, for: .navigationBar)
+                    .navigationBarBackButtonHidden(true)
                 }
             }
         }

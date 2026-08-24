@@ -859,7 +859,7 @@ struct ProfileView: View {
                 .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 16)
-                .background(Color.red)
+                .background(Color.black)
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)

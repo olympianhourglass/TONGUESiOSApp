@@ -15,7 +15,7 @@ struct OnboardingIntroView: View {
                     .tracking(0)
                     .foregroundStyle(.white)
 
-                Text(L("The infinite language learning application. Designed and engineered for travel and curiosity."))
+                Text(L("The infinite language learning application.\nDesigned and engineered for travel and curiosity."))
                     .font(.system(size: 12))
                     .foregroundStyle(.white.opacity(0.9))
                     .fixedSize(horizontal: false, vertical: true)

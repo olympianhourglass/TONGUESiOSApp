@@ -31,6 +31,13 @@ struct ContentView: View {
     }
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("hasCompletedOnboardingQuestions") private var hasCompletedOnboardingQuestions = false
+    // Latched true while the onboarding flow is on screen so that signing in
+    // mid-flow (which flips `auth.isAuthenticated` true) doesn't rip the flow
+    // out from under the user before they reach the slideshow/paywall. Only the
+    // flow's own completion clears it. A returning user who's already signed in
+    // at launch never mounts the flow, so this stays false and they go straight
+    // to the app.
+    @State private var onboardingInProgress = false
     // Latches true the first time the startup chime finishes so subsequent
     // launches fall back to the silent splash + timer behavior.
     @AppStorage("hasPlayedStartupChime") private var hasPlayedStartupChime = false
@@ -90,13 +97,18 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            if auth.isAuthenticated && hasCompletedOnboardingQuestions {
+            if auth.isAuthenticated && hasCompletedOnboardingQuestions && !onboardingInProgress {
                 mainTabView
                     .xpToastOverlay()
             } else {
                 OnboardingFlow {
                     hasCompletedOnboardingQuestions = true
+                    onboardingInProgress = false
                 }
+                // Mark the flow as in progress once it mounts, so an auth flip
+                // partway through (Apple sign-in) keeps it on screen through the
+                // slideshow instead of jumping to the app.
+                .onAppear { onboardingInProgress = true }
             }
 
             if coach.isPresented {

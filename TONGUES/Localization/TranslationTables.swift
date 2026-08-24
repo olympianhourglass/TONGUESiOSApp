@@ -2766,6 +2766,7 @@ enum TranslationTables {
             "Current Plan": "Plan actual", "Start %@ Free Trial": "Comienza la prueba gratis de %@", "Upgrade to %@": "Mejora a %@",
             "Then %@/month. Cancel anytime.": "Luego %@/mes. Cancela cuando quieras.",
             "Terms of Service": "Términos del servicio", "Privacy Policy": "Política de privacidad", "Restore Purchases": "Restaurar compras",
+            "A year from now, you'll read things you can't read today.": "Dentro de un año, leerás cosas que hoy no puedes leer.", "Popular Plan": "Plan popular", "We'll use these to suggest languages you might love learning.": "Las usaremos para sugerirte idiomas que quizás te encante aprender.",
         ],
         .fr: [
             "Category": "Catégorie", "Grammatical": "Grammatical", "Cultural": "Culturel",
@@ -2795,6 +2796,7 @@ enum TranslationTables {
             "Current Plan": "Forfait actuel", "Start %@ Free Trial": "Démarrer l'essai gratuit %@", "Upgrade to %@": "Passer à %@",
             "Then %@/month. Cancel anytime.": "Puis %@/mois. Annule à tout moment.",
             "Terms of Service": "Conditions d'utilisation", "Privacy Policy": "Politique de confidentialité", "Restore Purchases": "Restaurer les achats",
+            "A year from now, you'll read things you can't read today.": "Dans un an, tu liras des choses que tu ne peux pas lire aujourd'hui.", "Popular Plan": "Formule populaire", "We'll use these to suggest languages you might love learning.": "On les utilisera pour te suggérer des langues que tu aimerais apprendre.",
         ],
         .de: [
             "Category": "Kategorie", "Grammatical": "Grammatik", "Cultural": "Kultur",
@@ -2824,6 +2826,7 @@ enum TranslationTables {
             "Current Plan": "Aktueller Tarif", "Start %@ Free Trial": "%@ Gratistest starten", "Upgrade to %@": "Auf %@ upgraden",
             "Then %@/month. Cancel anytime.": "Danach %@/Monat. Jederzeit kündbar.",
             "Terms of Service": "Nutzungsbedingungen", "Privacy Policy": "Datenschutzrichtlinie", "Restore Purchases": "Käufe wiederherstellen",
+            "A year from now, you'll read things you can't read today.": "In einem Jahr liest du Dinge, die du heute noch nicht lesen kannst.", "Popular Plan": "Beliebter Plan", "We'll use these to suggest languages you might love learning.": "Damit schlagen wir dir Sprachen vor, die du vielleicht gerne lernst.",
         ],
         .it: [
             "Category": "Categoria", "Grammatical": "Grammaticale", "Cultural": "Culturale",
@@ -2853,6 +2856,7 @@ enum TranslationTables {
             "Current Plan": "Piano attuale", "Start %@ Free Trial": "Inizia la prova gratuita di %@", "Upgrade to %@": "Passa a %@",
             "Then %@/month. Cancel anytime.": "Poi %@/mese. Disdici quando vuoi.",
             "Terms of Service": "Termini di servizio", "Privacy Policy": "Informativa sulla privacy", "Restore Purchases": "Ripristina acquisti",
+            "A year from now, you'll read things you can't read today.": "Tra un anno leggerai cose che oggi non riesci a leggere.", "Popular Plan": "Piano popolare", "We'll use these to suggest languages you might love learning.": "Le useremo per suggerirti lingue che potresti amare imparare.",
         ],
         .ptBR: [
             "Category": "Categoria", "Grammatical": "Gramatical", "Cultural": "Cultural",
@@ -2882,6 +2886,7 @@ enum TranslationTables {
             "Current Plan": "Plano atual", "Start %@ Free Trial": "Iniciar teste grátis %@", "Upgrade to %@": "Fazer upgrade para %@",
             "Then %@/month. Cancel anytime.": "Depois %@/mês. Cancele quando quiser.",
             "Terms of Service": "Termos de Serviço", "Privacy Policy": "Política de Privacidade", "Restore Purchases": "Restaurar compras",
+            "A year from now, you'll read things you can't read today.": "Daqui a um ano, você vai ler coisas que não consegue ler hoje.", "Popular Plan": "Plano popular", "We'll use these to suggest languages you might love learning.": "Vamos usá-las para sugerir idiomas que você pode adorar aprender.",
         ],
         .ja: [
             "Category": "カテゴリ", "Grammatical": "文法", "Cultural": "文化",
@@ -2911,6 +2916,7 @@ enum TranslationTables {
             "Current Plan": "現在のプラン", "Start %@ Free Trial": "%@の無料トライアルを開始", "Upgrade to %@": "%@にアップグレード",
             "Then %@/month. Cancel anytime.": "その後%@/月。いつでも解約できます。",
             "Terms of Service": "利用規約", "Privacy Policy": "プライバシーポリシー", "Restore Purchases": "購入を復元",
+            "A year from now, you'll read things you can't read today.": "1年後には、今は読めないものが読めるようになります。", "Popular Plan": "人気のプラン", "We'll use these to suggest languages you might love learning.": "これをもとに、学びたくなる言語をおすすめします。",
         ],
         .zhHans: [
             "Category": "类别", "Grammatical": "语法", "Cultural": "文化",
@@ -2940,6 +2946,7 @@ enum TranslationTables {
             "Current Plan": "当前套餐", "Start %@ Free Trial": "开始 %@ 免费试用", "Upgrade to %@": "升级到 %@",
             "Then %@/month. Cancel anytime.": "之后 %@/月。可随时取消。",
             "Terms of Service": "服务条款", "Privacy Policy": "隐私政策", "Restore Purchases": "恢复购买",
+            "A year from now, you'll read things you can't read today.": "一年后，你将能读懂今天读不懂的内容。", "Popular Plan": "热门方案", "We'll use these to suggest languages you might love learning.": "我们会据此为你推荐你可能喜欢学习的语言。",
         ],
         .ko: [
             "Category": "카테고리", "Grammatical": "문법", "Cultural": "문화",
@@ -2969,6 +2976,7 @@ enum TranslationTables {
             "Current Plan": "현재 플랜", "Start %@ Free Trial": "%@ 무료 체험 시작", "Upgrade to %@": "%@(으)로 업그레이드",
             "Then %@/month. Cancel anytime.": "이후 %@/월. 언제든지 취소 가능합니다.",
             "Terms of Service": "서비스 약관", "Privacy Policy": "개인정보 처리방침", "Restore Purchases": "구매 복원",
+            "A year from now, you'll read things you can't read today.": "1년 후에는 지금은 읽지 못하는 것들을 읽게 될 거예요.", "Popular Plan": "인기 플랜", "We'll use these to suggest languages you might love learning.": "이를 바탕으로 배우고 싶어질 만한 언어를 추천해 드릴게요.",
         ],
     ]
 

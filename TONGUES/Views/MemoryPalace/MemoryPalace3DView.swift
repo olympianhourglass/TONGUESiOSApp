@@ -359,9 +359,15 @@ struct PalaceSceneView: UIViewRepresentable {
     // Each story is exactly one wall tall, so an upper floor's slab lands right
     // on top of the walls below and doubles as their ceiling.
     private var storyHeight: Float { wallHeight }
-    // Footprint of the stairwell hole + staircase within a room, centred. Well
-    // under a third of the room's width, so most of the floor stays open.
+    // Footprint of the stairwell hole + staircase within a room. Well under a
+    // third of the room's width, so most of the floor stays open.
     private let stairWell: Float = 3.0
+    // Lateral (x) shift of a stair column from room centre. A floor's up-flight
+    // sits on one side and the flight rising from the floor below on the other,
+    // so the two never stack in one shaft and the player has a clear floor band
+    // between them. The two columns (±offset, each stairWell wide) must not
+    // overlap and must clear the walls: 1.5 ≤ offset ≤ roomSize/2 − stairWell/2.
+    private let stairColumnOffset: Float = 2.1
 
     // Muted runner colour for hallway floor slabs so the corridor reads
     // distinctly from the palette-coloured rooms that branch off it.
@@ -434,7 +440,8 @@ struct PalaceSceneView: UIViewRepresentable {
             wallMargin: 0.4,
             eyeHeight: eyeHeight,
             storyHeight: storyHeight,
-            stairWell: stairWell
+            stairWell: stairWell,
+            stairColumnOffset: stairColumnOffset
         )
         coord.playerNode = player
         coord.cameraNode = camera
@@ -517,22 +524,31 @@ struct PalaceSceneView: UIViewRepresentable {
             let roomAbove = !room.isHallway && isRoomCell(GridKey(x: room.x, y: room.y, floor: room.floor + 1))
 
             // Floor slab. When a ROOM sits above another room, its slab is that
-            // room's ceiling — carve a stairwell hole so the two connect.
+            // room's ceiling — carve a stairwell hole so the two connect. The
+            // hole is placed in the column the flight from below rises in
+            // (floor − 1's up-column), which is the OPPOSITE side from this
+            // floor's own up-flight, so up and down stairs never share a shaft.
             // Hallway segments get a muted runner colour; rooms use their swatch.
             addFloorSlab(
                 to: scene,
                 at: base,
                 yBase: yBase,
                 color: room.isHallway ? hallwayFloorColor : MemoryPalace.uiColor(forIndex: room.colorIndex),
-                stairwell: roomBelow
+                holeX: roomBelow ? stairColumnX(onFloor: room.floor - 1) : nil
             )
 
             // A staircase rising from this room up to the ceiling hole when a
-            // room stacks on top. Consecutive floors switch back (reverse
-            // direction) so the climb is continuous instead of stacking flights
-            // the same way and landing you against the next flight's wall.
+            // room stacks on top. It sits in this floor's up-column (opposite
+            // the down-hole). Consecutive floors switch back (reverse z run) so
+            // the climb reads as a continuous zig-zag.
             if roomAbove {
-                addStairs(to: scene, at: base, yBase: yBase, risesNorth: stairRisesNorth(onFloor: room.floor))
+                addStairs(
+                    to: scene,
+                    at: base,
+                    yBase: yBase,
+                    xOffset: stairColumnX(onFloor: room.floor),
+                    risesNorth: stairRisesNorth(onFloor: room.floor)
+                )
             }
 
             // The room title is part of the permanent structure; the deck words
@@ -606,10 +622,18 @@ struct PalaceSceneView: UIViewRepresentable {
         }
     }
 
-    // Floor slab for a room. `stairwell` true builds the slab as four border
-    // panels around a central hole so a staircase from the room below can pass
-    // through; otherwise it's a single solid slab.
-    private func addFloorSlab(to scene: SCNScene, at base: SCNVector3, yBase: Float, color: UIColor, stairwell: Bool) {
+    // Signed x-offset of a floor's stair column from room centre. Alternating
+    // the SIDE by floor parity puts a floor's up-flight and the flight rising
+    // from the floor below in separate columns. Geometry + traversal share this.
+    private func stairColumnX(onFloor floor: Int) -> Float {
+        stairColumnSideEast(onFloor: floor) ? stairColumnOffset : -stairColumnOffset
+    }
+
+    // Floor slab for a room. `holeX` non-nil builds the slab as border panels
+    // around a stairWell × stairWell hole centred at that x-offset (in z it's
+    // centred), so a staircase from the room below can pass through; nil builds
+    // a single solid slab.
+    private func addFloorSlab(to scene: SCNScene, at base: SCNVector3, yBase: Float, color: UIColor, holeX: Float?) {
         let material = SCNMaterial()
         material.diffuse.contents = color
         let y = yBase - 0.05
@@ -622,25 +646,30 @@ struct PalaceSceneView: UIViewRepresentable {
             scene.rootNode.addChildNode(node)
         }
 
-        guard stairwell else {
+        // Fills the axis-aligned rectangle [x0,x1]×[z0,z1] with a floor panel,
+        // skipping degenerate slivers.
+        func rect(_ x0: Float, _ x1: Float, _ z0: Float, _ z1: Float) {
+            let w = x1 - x0, l = z1 - z0
+            guard w > 0.01, l > 0.01 else { return }
+            slab(width: w, length: l, x: (x0 + x1) / 2, z: (z0 + z1) / 2)
+        }
+
+        guard let hx = holeX else {
             slab(width: roomSize, length: roomSize, x: base.x, z: base.z)
             return
         }
 
-        // Four border panels around a centred stairWell × stairWell hole.
-        let border = (roomSize - stairWell) / 2
-        guard border > 0.01 else {
-            slab(width: roomSize, length: roomSize, x: base.x, z: base.z)
-            return
-        }
-        let inner = stairWell
-        let off = stairWell / 2 + border / 2
-        // North & south strips span the full width.
-        slab(width: roomSize, length: border, x: base.x, z: base.z - off)
-        slab(width: roomSize, length: border, x: base.x, z: base.z + off)
-        // East & west strips fill the remaining middle band.
-        slab(width: border, length: inner, x: base.x - off, z: base.z)
-        slab(width: border, length: inner, x: base.x + off, z: base.z)
+        // Room + hole bounds. The hole is offset in x, centred in z.
+        let r = roomSize / 2, s = stairWell / 2
+        let xw = base.x - r, xe = base.x + r, zn = base.z - r, zs = base.z + r
+        let hw = base.x + hx - s, he = base.x + hx + s
+        let hn = base.z - s, hs = base.z + s
+        // North & south strips span the full width; west & east strips fill the
+        // remaining floor beside the hole within its z-band.
+        rect(xw, xe, zn, hn)
+        rect(xw, xe, hs, zs)
+        rect(xw, hw, hn, hs)
+        rect(he, xe, hn, hs)
     }
 
     // A staircase of solid blocks rising from this floor (yBase) up to the
@@ -648,7 +677,7 @@ struct PalaceSceneView: UIViewRepresentable {
     // flips the run so alternating floors switch back: the flight's foot is at
     // the same edge where the flight below deposited the climber, so ascending
     // is one continuous zig-zag instead of a stack of same-facing flights.
-    private func addStairs(to scene: SCNScene, at base: SCNVector3, yBase: Float, risesNorth: Bool) {
+    private func addStairs(to scene: SCNScene, at base: SCNVector3, yBase: Float, xOffset: Float, risesNorth: Bool) {
         let steps = 10
         let rise = storyHeight / Float(steps)
         let run = stairWell / Float(steps)
@@ -669,7 +698,7 @@ struct PalaceSceneView: UIViewRepresentable {
             let z = risesNorth
                 ? base.z + stairWell / 2 - along
                 : base.z - stairWell / 2 + along
-            node.position = SCNVector3(base.x, yBase + height / 2, z)
+            node.position = SCNVector3(base.x + xOffset, yBase + height / 2, z)
             scene.rootNode.addChildNode(node)
         }
     }
@@ -1089,6 +1118,7 @@ struct PalaceSceneView: UIViewRepresentable {
         private var eyeHeight: Float = 1.6
         private var storyHeight: Float = 3.2
         private var stairWell: Float = 2.4
+        private var stairColumnOffset: Float = 2.1
         // Cells that have a room directly above / below — the stair links. A
         // list of all rooms lets floor-switching find the nearest room.
         private var stairUp: Set<GridKey> = []
@@ -1137,7 +1167,8 @@ struct PalaceSceneView: UIViewRepresentable {
             wallMargin: Float,
             eyeHeight: Float,
             storyHeight: Float,
-            stairWell: Float
+            stairWell: Float,
+            stairColumnOffset: Float
         ) {
             self.spacing = spacing
             self.half = roomSize / 2
@@ -1145,6 +1176,7 @@ struct PalaceSceneView: UIViewRepresentable {
             self.eyeHeight = eyeHeight
             self.storyHeight = storyHeight
             self.stairWell = stairWell
+            self.stairColumnOffset = stairColumnOffset
             occupied = Set(rooms.map { GridKey(x: $0.x, y: $0.y, floor: $0.floor) })
             roomsList = rooms.map { ($0.x, $0.y, $0.floor) }
             var byCell: [GridKey: Set<PalaceDirection>] = [:]
@@ -1329,50 +1361,63 @@ struct PalaceSceneView: UIViewRepresentable {
         // below doesn't flip-flop mid-crossing, and the floor index commits at
         // the landing (nudging the player clear of the well so it can't
         // immediately re-trigger). Returns the eye height for `pos`.
+        // Signed x-offset of a floor's stair column (matches the geometry
+        // builder's stairColumnX). Up- and down-flights live in opposite columns.
+        private func stairColX(_ floor: Int) -> Float {
+            stairColumnSideEast(onFloor: floor) ? stairColumnOffset : -stairColumnOffset
+        }
+
         private func updateStairs(pos: inout SCNVector3) -> Float {
             let cx = Float(gx) * spacing
             let cz = Float(gy) * spacing
-            let inWell = max(abs(pos.x - cx), abs(pos.z - cz)) < stairWell / 2
-            guard inWell else {
+            let cell = GridKey(x: gx, y: gy, floor: floor)
+            let hasUp = stairUp.contains(cell)
+            let hasDown = stairDown.contains(cell)
+
+            // Two separate wells: this floor's up-flight sits in one column, the
+            // flight rising from below (this floor's way DOWN) in the opposite
+            // column. Which column the player is standing in decides direction —
+            // so up and down never fight over one shared shaft.
+            let upX = cx + stairColX(floor)
+            let downX = cx + stairColX(floor - 1)
+            let halfWell = stairWell / 2
+            let inUpWell = hasUp && abs(pos.x - upX) < halfWell && abs(pos.z - cz) < halfWell
+            let inDownWell = hasDown && abs(pos.x - downX) < halfWell && abs(pos.z - cz) < halfWell
+
+            guard inUpWell || inDownWell else {
                 stairDir = 0
                 return baseY() + eyeHeight
             }
 
-            let cell = GridKey(x: gx, y: gy, floor: floor)
-            let hasUp = stairUp.contains(cell)
-            let hasDown = stairDown.contains(cell)
             // Progress along the stair axis: 0 at the north edge, 1 at the south.
             let t = min(max((pos.z - cz + stairWell / 2) / stairWell, 0), 1)
-
-            // This floor's up-flight and the floor-below's down-flight switch
-            // back, so their run direction alternates by floor parity.
+            // Flights switch back, so their run direction alternates by parity.
             let upNorth = stairRisesNorth(onFloor: floor)
             let downNorth = stairRisesNorth(onFloor: floor - 1)
-            // Climb progress: 0 at the flight's foot, 1 at its head.
+            // Climb progress: 0 at the up-flight's foot, 1 at its head.
             let u = upNorth ? (1 - t) : t
             // Descend progress on the flight below: 0 at its head (this floor),
-            // 1 at its foot (the floor beneath). The head sits at whichever edge
-            // that flight is tallest.
+            // 1 at its foot (the floor beneath), measured from its tall edge.
             let downHeadT: Float = downNorth ? 0 : 1
             let d = abs(t - downHeadT)
 
-            // Latch a travel direction on entry. Climbing is prioritised — its
-            // foot and the down-flight's head share the switchback landing, and
-            // a continuous ascent is the whole point — so a middle floor climbs;
-            // descend with the minimap's floor control. Guard the `< 0.5` cases
-            // so entering at the far end can't instantly commit a floor change.
+            // Latch a travel direction from the column entered. No priority games
+            // — the columns are physically distinct, so stepping into the up-well
+            // climbs and the down-well descends.
             if stairDir == 0 {
-                if hasUp, u < 0.5 { stairDir = 1 }
-                else if hasDown, d < 0.5 { stairDir = -1 }
-                else if hasUp { stairDir = 1 }
-                else if hasDown { stairDir = -1 }
+                if inUpWell { stairDir = 1 }
+                else if inDownWell { stairDir = -1 }
             }
+            // Stepping out of the latched column mid-crossing drops back to flat.
+            if stairDir == 1, !inUpWell { stairDir = 0; return baseY() + eyeHeight }
+            if stairDir == -1, !inDownWell { stairDir = 0; return baseY() + eyeHeight }
 
-            if stairDir == 1, hasUp {
+            if stairDir == 1 {
                 if u >= 0.98 {                          // reached the upper landing
                     floor += 1
-                    // Step clear of the well at the head edge — which is the foot
-                    // of the next (reversed) flight, so the climb continues.
+                    // Step clear of the well in z onto the landing. The next
+                    // flight is in the OTHER column, so the player walks across
+                    // to continue climbing (a real switchback).
                     pos.z = upNorth ? (cz - stairWell / 2 - 0.05)
                                     : (cz + stairWell / 2 + 0.05)
                     stairDir = 0
@@ -1381,7 +1426,7 @@ struct PalaceSceneView: UIViewRepresentable {
                 }
                 return baseY() + eyeHeight + u * storyHeight
             }
-            if stairDir == -1, hasDown {
+            if stairDir == -1 {
                 if d >= 0.98 {                          // reached the lower landing
                     floor -= 1
                     pos.z = downNorth ? (cz + stairWell / 2 + 0.05)
@@ -1445,4 +1490,12 @@ private struct GridKey: Hashable {
 // geometry builder and the traversal ramp must agree on the same rule.
 private func stairRisesNorth(onFloor floor: Int) -> Bool {
     ((floor % 2) + 2) % 2 == 1
+}
+
+// Which side of the room a floor's stair column sits on: east (+x) for even
+// floors, west (−x) for odd. Alternating by parity puts a floor's up-flight and
+// the flight rising from the floor below in DIFFERENT columns, so the two never
+// stack in one shaft. The geometry builder and the traversal ramp must agree.
+private func stairColumnSideEast(onFloor floor: Int) -> Bool {
+    ((floor % 2) + 2) % 2 == 0
 }

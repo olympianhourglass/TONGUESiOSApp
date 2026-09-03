@@ -32,7 +32,7 @@ struct ChatHistorySheet: View {
                                 .font(.system(size: 22))
                                 .foregroundStyle(.black)
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("New chat")
+                                Text("New Chat")
                                     .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                                     .foregroundStyle(.black)
                                 Text("Start a fresh conversation in \(language).")

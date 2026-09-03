@@ -71,7 +71,7 @@ struct Conversation: Codable, Identifiable, Hashable {
            !firstAssistant.isEmpty {
             return Self.snippet(firstAssistant, limit: 40)
         }
-        return "New chat"
+        return "New Chat"
     }
 
     // Short preview line shown under the title in the history list.

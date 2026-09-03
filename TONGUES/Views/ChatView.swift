@@ -1102,8 +1102,6 @@ struct ChatView: View {
     private var suggestionsStrip: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Image(systemName: "lightbulb")
-                    .font(.system(size: MacLayout.f(11)))
                 Text(vm.isSuggesting
                      ? L("Finding ways to reply…")
                      : L("Not sure what to say? Tap one."))

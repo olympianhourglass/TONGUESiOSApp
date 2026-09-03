@@ -1126,7 +1126,7 @@ struct ChatView: View {
             if vm.isSuggesting {
                 HStack(spacing: 8) {
                     ForEach(0..<2, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 14)
+                        RoundedRectangle(cornerRadius: 4)
                             .fill(Color(libraryHex: "F4F4F4"))
                             .frame(width: MacLayout.s(150), height: MacLayout.s(52))
                     }
@@ -1179,7 +1179,7 @@ struct ChatView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .overlay(
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: 4)
                     .stroke(Color.black.opacity(0.18))
             )
         }

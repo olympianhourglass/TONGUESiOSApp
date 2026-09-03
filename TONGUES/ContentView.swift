@@ -234,14 +234,16 @@ struct ContentView: View {
             .frame(width: 20, height: 20)
     }
 
-    // Maps a tab's base (outline) icon name to its filled counterpart,
-    // shown while that tab is selected.
-    private func filledIcon(_ name: String) -> String {
+    // Maps a tab's base (outline) icon name to the variant shown while that tab
+    // is selected. Explore and Library use bold outline variants; Study and Chat
+    // use their filled variants. (All selected variants are normalized to the
+    // same 32pt artboard as the outline icons so they render at a matching size.)
+    private func selectedIcon(_ name: String) -> String {
         switch name {
-        case "Compass":    return "CompassRose_fill"
+        case "Compass":    return "CompassRoseBold"
         case "PlusSquare": return "PlusSquare_fill"
         case "Chat":       return "Chat_fill"
-        case "Books":      return "Books_fill"
+        case "Books":      return "BooksBold"
         default:           return name
         }
     }
@@ -253,7 +255,7 @@ struct ContentView: View {
     // title next to the icon. The selected tab swaps in the filled icon
     // variant; reading `tabRouter.current` here keeps the swap reactive.
     private func tabItemLabel(icon: String, title: String, tab: AppTab) -> some View {
-        let name = tabRouter.current == tab ? filledIcon(icon) : icon
+        let name = tabRouter.current == tab ? selectedIcon(icon) : icon
         #if targetEnvironment(macCatalyst)
         return Label { Text(title) } icon: { tabIcon(name) }
         #else
@@ -351,7 +353,7 @@ struct ContentView: View {
             tabRouter.current = tab
         } label: {
             HStack(spacing: 10) {
-                tabIcon(selected ? filledIcon(icon) : icon)
+                tabIcon(selected ? selectedIcon(icon) : icon)
                     .foregroundStyle(selected ? Color.white : Color.white.opacity(0.55))
                 Text(title)
                     .font(.custom("NeueHaasDisplay-Mediu", size: 15))

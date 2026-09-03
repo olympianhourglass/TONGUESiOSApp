@@ -659,7 +659,7 @@ struct ActionCard: View {
             .background(background)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(border, lineWidth: 1)
+                    .strokeBorder(border, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }

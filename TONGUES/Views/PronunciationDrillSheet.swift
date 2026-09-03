@@ -185,7 +185,7 @@ struct PronunciationDrillSheet: View {
             .background(tint.opacity(0.28))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(tint.opacity(0.55))
+                    .strokeBorder(tint.opacity(0.55))
             )
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())

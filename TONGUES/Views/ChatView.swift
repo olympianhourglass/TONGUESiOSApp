@@ -22,6 +22,9 @@ struct ChatView: View {
     @State private var savedToast: String?
     @State private var recapSheetPresented = false
     @State private var showClearConfirm = false
+    // The conversation partner's tone, chosen from the overflow menu. Drives the
+    // tutor persona (via ChatViewModel) and the overflow icon's tint.
+    @AppStorage(BedsideManner.storageKey) private var bedsideManner: BedsideManner = .direct
     @State private var userInterests: [String] = []
     // The learner's chosen profile image (JPEG/PNG data), shown as the small
     // avatar beside their own messages. Nil falls back to a neutral glyph.
@@ -132,6 +135,17 @@ struct ChatView: View {
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
+                        // Tone of the AI partner. Reflected live in the chat
+                        // (see ChatViewModel.bedsideManner) and in this icon's tint.
+                        Picker(selection: $bedsideManner) {
+                            ForEach(BedsideManner.allCases) { manner in
+                                Text(L(manner.displayName)).tag(manner)
+                            }
+                        } label: {
+                            Label(L("Bedside Manner"), systemImage: "theatermasks")
+                        }
+                        .onChange(of: bedsideManner) { _, _ in Haptics.light() }
+
                         Button {
                             Haptics.light()
                             Task { await vm.buildRecap() }
@@ -149,7 +163,7 @@ struct ChatView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis")
-                            .foregroundStyle(.black)
+                            .foregroundStyle(bedsideManner.iconColor)
                     }
                 }
             }

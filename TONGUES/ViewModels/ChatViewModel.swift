@@ -151,6 +151,13 @@ final class ChatViewModel {
             && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    // The user's chosen conversational tone, read from the same store the
+    // chat overflow menu writes to. Defaults to .direct.
+    var bedsideManner: BedsideManner {
+        BedsideManner(rawValue: UserDefaults.standard.string(forKey: BedsideManner.storageKey) ?? "")
+            ?? .direct
+    }
+
     func send() async {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, var current = conversation else { return }
@@ -213,7 +220,8 @@ final class ChatViewModel {
                 ? Self.placementScenarioPrompt
                 : pendingScenarioPrompt,
             dueWords: dueWordsCache,
-            goalsSummary: learnerModel?.goalsLine
+            goalsSummary: learnerModel?.goalsLine,
+            tone: bedsideManner
         )
 
         do {
@@ -337,7 +345,8 @@ final class ChatViewModel {
             level: current.level,
             scenarioPrompt: pendingScenarioPrompt,
             dueWords: dueWordsCache,
-            goalsSummary: learnerModel?.goalsLine
+            goalsSummary: learnerModel?.goalsLine,
+            tone: bedsideManner
         )
         do {
             let result = try await ConversationClient.suggestReplies(
@@ -663,7 +672,8 @@ final class ChatViewModel {
             level: current.level,
             scenarioPrompt: scenario.prompt,
             dueWords: dueWordsCache,
-            goalsSummary: learnerModel?.goalsLine
+            goalsSummary: learnerModel?.goalsLine,
+            tone: bedsideManner
         )
 
         isSending = true

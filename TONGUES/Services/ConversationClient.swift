@@ -56,6 +56,9 @@ enum ConversationClient {
         // learner model. Optional with a default so existing call sites
         // construct Context unchanged.
         var goalsSummary: String? = nil
+        // The user-chosen conversational tone. Defaults to .direct so call
+        // sites that don't care (e.g. recap) construct Context unchanged.
+        var tone: BedsideManner = .direct
     }
 
     // MARK: - Wire message building
@@ -538,7 +541,7 @@ enum ConversationClient {
     private static func buildSystemPrompt(context: Context) -> String {
         let native = AppLanguage.currentNative.promptName
         var lines: [String] = []
-        lines.append("You are a warm, patient language-learning conversation partner inside the TONGUES app.")
+        lines.append("You are a language-learning conversation partner inside the TONGUES app.")
         lines.append("")
         lines.append("Target language: \(context.dialect) \(context.language)")
         lines.append("Learner proficiency level: \(context.level)")
@@ -548,7 +551,7 @@ enum ConversationClient {
         lines.append("• ALWAYS reply in \(context.dialect) \(context.language) using its native script unless the learner explicitly switches to \(native) to ask a question about the language itself.")
         lines.append("• Calibrate your vocabulary and grammar to the learner's level: simpler structures and high-frequency vocab at beginner levels, richer constructions at advanced levels.")
         lines.append("• Keep turns short. Beginners: 1 short sentence. Intermediate: 1–2 sentences. Advanced: 2–3.")
-        lines.append("• Maintain a warm, encouraging tone. Use the target language's natural register for friendly conversation.")
+        lines.append("• \(context.tone.promptLine) Use the target language's natural register for friendly conversation.")
         lines.append("• When the learner makes a mistake, include it in the `corrections` array of your JSON reply — don't break the conversational flow to call it out inline.")
         lines.append("• IGNORE punctuation and capitalization entirely when judging the learner's input. They're typing on a phone keyboard where those are awkward; never treat a missing period, comma, question mark, accent on a capital, or initial-letter case as an error. Read past them as if they weren't relevant.")
         lines.append("• Don't lecture. Don't enumerate grammar rules unless the learner explicitly asks.")

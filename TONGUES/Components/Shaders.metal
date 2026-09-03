@@ -173,14 +173,14 @@ static float aiFbm(float2 p) {
     float2 uv = (position - 0.5 * size) / size.y;
     float r = length(uv);
 
-    half3 rimRed  = half3(0.78h, 0.11h, 0.12h);  // red at the edge
-    half3 coreRed = half3(0.97h, 0.34h, 0.40h);  // brighter, almost-pink center
-    half3 white   = half3(1.0h, 1.0h, 1.0h);     // liquid
+    half3 rimBlue  = half3(0.349h, 0.486h, 0.698h);  // #597CB2 base at the edge
+    half3 coreBlue = half3(0.53h, 0.69h, 0.89h);     // brighter blue center
+    half3 white    = half3(1.0h, 1.0h, 1.0h);        // liquid
 
-    // Background is a radial gradient: a bright, near-pink core easing out to
-    // the base red at the rim (no white — the disc stays red edge to edge).
+    // Background is a radial gradient: a bright blue core easing out to the
+    // base blue at the rim (no white — the disc stays blue edge to edge).
     float centerGlow = exp(-r * r * 4.0);
-    half3 col = mix(rimRed, coreRed, half(centerGlow));
+    half3 col = mix(rimBlue, coreBlue, half(centerGlow));
 
     // --- Flowing liquid via domain-warped fBm --------------------------------
     // A single domain warp advected by a steady flow gives a low-viscosity

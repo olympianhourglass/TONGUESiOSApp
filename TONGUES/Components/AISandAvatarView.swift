@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The AI's speaking avatar: a field of soft white "sand" micro-particles
-/// hovering over a red disc, rendered by the `aiSandAvatar` Metal shader. The
+/// hovering over a blue disc, rendered by the `aiSandAvatar` Metal shader. The
 /// particles idle-hover and ripple continuously, and react to the AI's live
 /// speech loudness — louder makes them bounce and spread outward, quieter lets
 /// them settle back into a gentle hover.

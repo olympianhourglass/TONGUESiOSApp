@@ -69,29 +69,10 @@ struct ContentView: View {
         UITabBar.appearance().standardAppearance = appearance
         UITabBar.appearance().scrollEdgeAppearance = appearance
         #else
-        // iPhone/iPad bottom tab bar: dimmed unselected icons, icons-only
-        // (titles hidden via clear color).
-        let appearance = UITabBarAppearance()
-        appearance.configureWithDefaultBackground()
-
-        let itemAppearance = UITabBarItemAppearance()
-        let unselected = UIColor.black.withAlphaComponent(0.3)
-        itemAppearance.normal.iconColor = unselected
-        itemAppearance.selected.iconColor = .black
-
-        // No tab-bar titles — icons only. Hide any residual label the
-        // system might vend so nothing shows beneath the icon and it
-        // sits vertically centered in the bar.
-        let hiddenTitle: [NSAttributedString.Key: Any] = [.foregroundColor: UIColor.clear]
-        itemAppearance.normal.titleTextAttributes = hiddenTitle
-        itemAppearance.selected.titleTextAttributes = hiddenTitle
-
-        appearance.stackedLayoutAppearance = itemAppearance
-        appearance.inlineLayoutAppearance = itemAppearance
-        appearance.compactInlineLayoutAppearance = itemAppearance
-
-        UITabBar.appearance().standardAppearance = appearance
-        UITabBar.appearance().scrollEdgeAppearance = appearance
+        // iPhone/iPad bottom tab bar: light material, dimmed black icons,
+        // icons-only. Owned by TabBarChrome so black-backdrop screens (e.g.
+        // StatisticsView) can swap the live bar to a dark variant on appear.
+        TabBarChrome.installDefault()
         #endif
     }
 

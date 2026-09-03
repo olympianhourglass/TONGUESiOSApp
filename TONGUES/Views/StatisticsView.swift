@@ -190,6 +190,13 @@ struct StatisticsView: View {
         .navigationBarBackButtonHidden(true)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        #if !targetEnvironment(macCatalyst)
+        // This screen's backdrop is solid black, so swap the bottom tab bar to
+        // its dark variant (dark material + white icons) while it's on screen,
+        // then restore the light default when leaving.
+        .onAppear { TabBarChrome.apply(dark: true) }
+        .onDisappear { TabBarChrome.apply(dark: false) }
+        #endif
         // Force the Liquid Glass pills' glyphs to white. Without this, the
         // system picks up the app's default accent color, which read as the
         // tint blue/teal the user flagged as "funky" against our black bg.

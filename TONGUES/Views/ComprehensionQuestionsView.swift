@@ -125,7 +125,7 @@ struct ComprehensionQuestionCard: View {
             .background(background(correct: showAsCorrect, wrong: showAsWrong))
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(border(correct: showAsCorrect, wrong: showAsWrong), lineWidth: 1)
+                    .strokeBorder(border(correct: showAsCorrect, wrong: showAsWrong), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }

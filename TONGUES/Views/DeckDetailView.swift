@@ -1831,7 +1831,7 @@ struct TargetRetentionInfoSheet: View {
                         }
                         .disabled(currentIndex == stops.count - 1)
                     }
-                    .overlay(Capsule().stroke(Color(white: 0.85)))
+                    .overlay(Capsule().strokeBorder(Color(white: 0.85)))
                     .clipShape(Capsule())
                 }
             }

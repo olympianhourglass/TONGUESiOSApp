@@ -75,7 +75,7 @@ struct OnboardingLoginView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
                     .background(Color.white)
-                    .overlay(Capsule().stroke(Color(white: 0.85)))
+                    .overlay(Capsule().strokeBorder(Color(white: 0.85)))
                     .clipShape(Capsule())
                 }
                 .buttonStyle(.plain)
@@ -224,7 +224,7 @@ struct OnboardingLoginView: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
             .background(Color.white)
-            .overlay(Capsule().stroke(Color(white: 0.85)))
+            .overlay(Capsule().strokeBorder(Color(white: 0.85)))
             .clipShape(Capsule())
         }
         .buttonStyle(.plain)

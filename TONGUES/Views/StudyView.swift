@@ -1048,7 +1048,7 @@ struct CreateNewDeckButton: View {
         HStack(spacing: 8) {
             Image(systemName: "plus")
                 .font(.system(size: 18, weight: .semibold))
-            Text(L("Create new deck"))
+            Text(L("Create New Deck"))
                 .font(.custom("NeueHaasDisplay-Light", size: 17))
         }
         .foregroundStyle(.white)

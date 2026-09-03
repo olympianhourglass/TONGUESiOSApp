@@ -47,6 +47,14 @@ final class SpeechClient {
     }
     var lastSpoken: SpokenAudioInfo?
 
+    // Live, normalized (0…1) loudness of the AI's current voice playback.
+    // Drives the speaking avatar's particle animation; 0 whenever nothing is
+    // playing. ElevenLabs/Forvo playback meters the real AVAudioPlayer output;
+    // the Apple TTS fallback (no metering API) drives a soft synthetic
+    // envelope so the avatar still reacts while it speaks.
+    private(set) var playbackLevel: Float = 0
+    private var meteringTask: Task<Void, Never>?
+
     private init() {
         let delegate = AppleSpeechDelegate(
             onWillSpeak: { [weak self] range in self?.currentSpokenWordRange = range },
@@ -101,6 +109,7 @@ final class SpeechClient {
         highlightTask?.cancel()
         player?.stop()
         appleSynth.stopSpeaking(at: .immediate)
+        stopMetering()
         currentSpokenWordRange = nil
         pendingCompletion = onFinish
 
@@ -504,9 +513,77 @@ final class SpeechClient {
             newPlayer.enableRate = true
             newPlayer.rate = rate
         }
+        newPlayer.isMeteringEnabled = true
         newPlayer.prepareToPlay()
         newPlayer.play()
         player = newPlayer
+        startMetering(newPlayer)
+    }
+
+    // MARK: - Playback level metering (speaking-avatar drive)
+
+    // Polls the live AVAudioPlayer output and eases `playbackLevel` toward the
+    // normalized loudness so the avatar's sand reacts to the AI's real voice.
+    private func startMetering(_ p: AVAudioPlayer) {
+        p.isMeteringEnabled = true
+        meteringTask?.cancel()
+        meteringTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let player = self.player, player.isPlaying else { break }
+                player.updateMeters()
+                let norm = Self.normalizedPower(player.averagePower(forChannel: 0))
+                // Ease gently toward the new level so the avatar glides rather
+                // than jitters with the choppy per-word speech envelope.
+                self.playbackLevel += (norm - self.playbackLevel) * 0.18
+                try? await Task.sleep(for: .milliseconds(33))
+            }
+            self?.playbackLevel = 0
+        }
+    }
+
+    // Apple TTS exposes no metering, so approximate a gentle speaking motion
+    // while the synthesizer is talking. Warms up briefly (isSpeaking lags the
+    // speak() call), tracks it, then fades out when it finishes.
+    private func startAppleEnvelope() {
+        meteringTask?.cancel()
+        meteringTask = Task { [weak self] in
+            var phase: Float = 0
+            var started = false
+            var warmup = 0
+            while !Task.isCancelled {
+                guard let self else { break }
+                let speaking = self.appleSynth.isSpeaking
+                if speaking {
+                    started = true
+                } else if started {
+                    break
+                } else {
+                    warmup += 1
+                    if warmup > 25 { break }   // ~1s grace for playback to begin
+                }
+                phase += 0.28
+                let target: Float = speaking ? (0.32 + 0.16 * sinf(phase)) : 0
+                self.playbackLevel += (target - self.playbackLevel) * 0.3
+                try? await Task.sleep(for: .milliseconds(40))
+            }
+            self?.playbackLevel = 0
+        }
+    }
+
+    private func stopMetering() {
+        meteringTask?.cancel()
+        meteringTask = nil
+        playbackLevel = 0
+    }
+
+    // Maps AVAudioPlayer's dB power (−160…0) into a 0…1 level with a −50 dB
+    // floor and a gentle curve, mirroring the mic meter in ConversationRecorder.
+    private static func normalizedPower(_ powerDB: Float) -> Float {
+        guard powerDB.isFinite else { return 0 }
+        let floorDB: Float = -50
+        let clamped = max(floorDB, min(0, powerDB))
+        let linear = (clamped - floorDB) / (0 - floorDB)
+        return powf(linear, 1.5)
     }
 
     // Plays ElevenLabs audio and drives `currentSpokenWordRange` from the
@@ -619,6 +696,7 @@ final class SpeechClient {
         try? AVAudioSession.sharedInstance().setActive(true, options: [])
         lastSpoken = SpokenAudioInfo(text: text, language: language, engine: .apple, voiceID: nil)
         appleSynth.speak(utterance)
+        startAppleEnvelope()
     }
 
     // True when iOS has a synthesizer voice whose primary language code matches

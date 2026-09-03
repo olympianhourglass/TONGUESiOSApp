@@ -1918,6 +1918,7 @@ private struct SharePreviewSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(L("Cancel")) { dismiss() }
+                        .tint(.black)
                 }
             }
         }

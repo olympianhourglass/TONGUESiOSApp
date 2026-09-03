@@ -16,10 +16,16 @@ struct ChatView: View {
 
     @State private var saveSheetItem: GeneratedItem?
     @State private var saveSourceMessageID: UUID?
+    // Foreign form of a picked-up tray chip being banked, so onAdded can mark
+    // that chip saved.
+    @State private var saveSourcePickedForeign: String?
     @State private var savedToast: String?
     @State private var recapSheetPresented = false
     @State private var showClearConfirm = false
     @State private var userInterests: [String] = []
+    // The learner's chosen profile image (JPEG/PNG data), shown as the small
+    // avatar beside their own messages. Nil falls back to a neutral glyph.
+    @State private var avatarImageData: Data?
     @State private var historySheetPresented = false
     @State private var drillTarget: ConversationMessage?
     // Presents the dynamic grammatical breakdown sheet for an AI message.
@@ -41,6 +47,13 @@ struct ChatView: View {
     // it the recognizer would transcribe its own output.
     @State private var lastSpokenMessageID: UUID?
     @State private var isSpeakingPlayback: Bool = false
+    // The AI message currently being read aloud (manually or auto-played). Its
+    // avatar fully activates (animated liquid + volume-reactive size) while it
+    // speaks; older avatars are otherwise grayed out. nil = nothing playing.
+    @State private var speakingMessageID: UUID?
+    // Whether the initial load has landed the scroll at the newest message, so
+    // subsequent arrivals animate but the first paint jumps straight to bottom.
+    @State private var didInitialScroll = false
     // True only while the chat tab is the front-of-screen view. Used
     // to suppress auto-speech when the user is on another tab — we
     // don't want random foreign-language playback while they're
@@ -52,6 +65,10 @@ struct ChatView: View {
     // as a fixed top inset so message lines keep their old starting Y.
     private let removedHeaderOffset: CGFloat = 54
 
+    // Diameter of the small avatar that flanks each message — the AI on the
+    // leading edge, the learner on the trailing edge.
+    private var avatarSize: CGFloat { MacLayout.s(28) }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -62,6 +79,8 @@ struct ChatView: View {
                         // languageHeader has moved into the toolbar.
                         Color.clear.frame(height: removedHeaderOffset)
                     }
+
+                pickedUpTray
 
                 inputBar
             }
@@ -185,8 +204,12 @@ struct ChatView: View {
                             if let msgID = saveSourceMessageID {
                                 vm.markSaved(messageID: msgID, itemID: item.id)
                             }
+                            if let foreign = saveSourcePickedForeign {
+                                vm.markPickedUpBanked(foreign: foreign)
+                            }
                             saveSheetItem = nil
                             saveSourceMessageID = nil
+                            saveSourcePickedForeign = nil
                             withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                                 savedToast = L("Saved “%@”", item.word)
                             }
@@ -265,6 +288,11 @@ struct ChatView: View {
                     dialect: selectedDialect,
                     level: selectedLevel
                 )
+            }
+            // Returning to an existing conversation skips seedFromProfile, so
+            // fetch the avatar here too — guarded so it's at most one fetch.
+            if avatarImageData == nil {
+                avatarImageData = (try? await UserService.fetchProfile())?.avatarImage
             }
             // Seed the auto-playback bookkeeper with the last existing
             // assistant message so we don't re-speak history on load.
@@ -476,9 +504,18 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     if let conversation = vm.conversation {
+                        let checkpoints = checkpointLabels
                         ForEach(conversation.messages) { message in
-                            messageRow(message)
-                                .id(message.id)
+                            VStack(alignment: .leading, spacing: 16) {
+                                messageRow(message)
+                                // Quiet milestone marker woven into the
+                                // transcript so the endless scroll gains a
+                                // sense of a journey with checkpoints.
+                                if let label = checkpoints[message.id] {
+                                    checkpointDivider(label)
+                                }
+                            }
+                            .id(message.id)
                         }
                     }
                     if vm.isSending {
@@ -490,10 +527,34 @@ struct ChatView: View {
                 .padding(.vertical, 16)
             }
             .onChange(of: vm.conversation?.messages.count) { _, _ in
-                if let last = vm.conversation?.messages.last {
+                guard let last = vm.conversation?.messages.last else { return }
+                if didInitialScroll {
+                    // Later arrivals animate into view.
                     withAnimation(.smooth(duration: 0.4)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
+                } else {
+                    // First paint of a loaded conversation: jump straight to the
+                    // newest message instead of animating up from the start.
+                    didInitialScroll = true
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                }
+            }
+            .onChange(of: vm.conversation?.id) { _, _ in
+                // A different conversation loaded — reset so its first paint
+                // lands at the newest message.
+                didInitialScroll = false
+                if let last = vm.conversation?.messages.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                    didInitialScroll = true
+                }
+            }
+            .onAppear {
+                // Returning to an already-loaded conversation: make sure we're at
+                // the newest message rather than wherever the list first built.
+                if let last = vm.conversation?.messages.last {
+                    proxy.scrollTo(last.id, anchor: .bottom)
+                    didInitialScroll = true
                 }
             }
             .onChange(of: vm.isSending) { _, sending in
@@ -504,6 +565,108 @@ struct ChatView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Session progression
+
+    // Milestone labels to render AFTER a given message id — one every few
+    // completed exchanges (counted by the AI's replies). Keyed by message so the
+    // divider lands right under that reply.
+    private var checkpointLabels: [UUID: String] {
+        guard let messages = vm.conversation?.messages else { return [:] }
+        var result: [UUID: String] = [:]
+        var exchanges = 0
+        for m in messages where m.role == .assistant && !m.text.isEmpty {
+            exchanges += 1
+            if exchanges % 5 == 0 {
+                result[m.id] = L("%d exchanges", exchanges)
+            }
+        }
+        return result
+    }
+
+    private func checkpointDivider(_ label: String) -> some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(Color.black.opacity(0.08)).frame(height: 1)
+            Text(label)
+                .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(11)))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+                .fixedSize()
+            Rectangle().fill(Color.black.opacity(0.08)).frame(height: 1)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 24)
+    }
+
+    // A slim, horizontally-scrolling row of words the learner has picked up this
+    // conversation (from tapping to translate), each tappable to bank to a deck.
+    // Ambient: only appears once there's something to show, and never blocks the
+    // chat. The tally folds in tutor "fixes" so refinements count too.
+    @ViewBuilder
+    private var pickedUpTray: some View {
+        if !vm.pickedUp.isEmpty {
+            VStack(spacing: 0) {
+                Divider().opacity(0.4)
+                HStack(spacing: 10) {
+                    Text(trayTallyText)
+                        .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(12)))
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(vm.pickedUp) { item in
+                                pickedUpChip(item)
+                            }
+                        }
+                        .padding(.trailing, 12)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .background(.bar)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.pickedUp.count)
+        }
+    }
+
+    private var trayTallyText: String {
+        if vm.refinedCount > 0 {
+            return L("%d picked up · %d fixes", vm.pickedUp.count, vm.refinedCount)
+        }
+        return L("%d picked up", vm.pickedUp.count)
+    }
+
+    private func pickedUpChip(_ item: ChatViewModel.PickedUpItem) -> some View {
+        let banked = vm.isPickedUpBanked(item)
+        return Button {
+            Haptics.light()
+            guard !banked else { return }
+            saveSourceMessageID = nil
+            saveSourcePickedForeign = item.foreign
+            saveSheetItem = vm.makeItemForSave(
+                foreign: item.foreign,
+                translation: item.translation,
+                transliteration: item.transliteration
+            )
+        } label: {
+            HStack(spacing: 6) {
+                Text(item.foreign)
+                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(13)))
+                    .foregroundStyle(banked ? Color.secondary : Color.primary)
+                    .lineLimit(1)
+                Image(systemName: banked ? "checkmark" : "plus")
+                    .font(.system(size: MacLayout.f(10), weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(Color(libraryHex: "F4F4F4")))
+            .overlay(Capsule().stroke(Color.black.opacity(0.06), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .disabled(banked)
     }
 
     // Placeholder chat bubbles shown while a conversation loads, mirroring the
@@ -526,41 +689,79 @@ struct ChatView: View {
 
     @ViewBuilder
     private func bubbleSkeleton(fromUser: Bool, width: CGFloat) -> some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 8) {
+            // Placeholder avatar mirrors the real rows: AI leads, learner trails.
+            if !fromUser { skeletonAvatar }
             if fromUser { Spacer(minLength: 40) }
             RoundedRectangle(cornerRadius: 16)
                 .fill(Color(white: fromUser ? 0.88 : 0.93))
                 .frame(width: width, height: 44)
             if !fromUser { Spacer(minLength: 40) }
+            if fromUser { skeletonAvatar }
         }
         .frame(maxWidth: .infinity, alignment: fromUser ? .trailing : .leading)
     }
 
+    private var skeletonAvatar: some View {
+        Circle()
+            .fill(Color(white: 0.9))
+            .frame(width: avatarSize, height: avatarSize)
+    }
+
+    // The newest AI message; its avatar is always active while older ones are
+    // grayed out (unless being read aloud). Recomputed so a fresh reply
+    // reassigns "newest" and the previous avatar grays out.
+    private var lastAssistantMessageID: UUID? {
+        vm.conversation?.messages.last(where: { $0.role == .assistant })?.id
+    }
+
     @ViewBuilder
     private func messageRow(_ message: ConversationMessage) -> some View {
-        HStack(alignment: .top) {
-            if message.role == .user { Spacer(minLength: 40) }
+        let isUser = message.role == .user
+        // Corrections live BELOW the avatar row (not inside it), so the avatar
+        // bottom-aligns to the message bubble itself rather than to the taller
+        // stack that includes the correction bubble beneath it.
+        VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+            HStack(alignment: .bottom, spacing: 8) {
+                // The newest AI avatar is always active; older ones are grayed
+                // out unless that message is currently being read aloud, which
+                // temporarily reactivates its animation + volume reaction.
+                if !isUser {
+                    AISandAvatarView(
+                        size: avatarSize,
+                        active: message.id == lastAssistantMessageID
+                            || message.id == speakingMessageID
+                    )
+                }
+                if isUser { Spacer(minLength: 40) }
 
-            VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
-                if message.role == .user {
-                    userBubble(message)
-                } else if !message.text.isEmpty {
-                    // Attachment-only carrier messages skip the bubble.
-                    assistantBubble(message)
+                VStack(alignment: isUser ? .trailing : .leading, spacing: 6) {
+                    if isUser {
+                        userBubble(message)
+                    } else if !message.text.isEmpty {
+                        // Attachment-only carrier messages skip the bubble.
+                        assistantBubble(message)
+                    }
+
+                    if !isUser, let attachment = message.attachment {
+                        attachmentCard(attachment, messageID: message.id)
+                            .frame(maxWidth: MacLayout.s(300), alignment: .leading)
+                    }
                 }
 
-                if message.role == .assistant, let attachment = message.attachment {
-                    attachmentCard(attachment, messageID: message.id)
-                        .frame(maxWidth: MacLayout.s(300), alignment: .leading)
-                }
-
-                if let corrections = message.corrections, !corrections.isEmpty {
-                    CorrectionDecoration(corrections: corrections)
-                        .frame(maxWidth: MacLayout.s(320), alignment: .trailing)
+                if !isUser { Spacer(minLength: 40) }
+                if isUser {
+                    ChatUserAvatar(size: avatarSize, imageData: avatarImageData)
                 }
             }
 
-            if message.role == .assistant { Spacer(minLength: 40) }
+            if let corrections = message.corrections, !corrections.isEmpty {
+                CorrectionDecoration(corrections: corrections)
+                    .frame(maxWidth: MacLayout.s(320), alignment: .trailing)
+                    // Pull the correction bubble back under the message bubble,
+                    // clearing the trailing avatar column on the learner's side.
+                    .padding(.trailing, isUser ? avatarSize + 8 : 0)
+            }
         }
     }
 
@@ -673,29 +874,31 @@ struct ChatView: View {
                     .foregroundStyle(.secondary)
             }
             HStack(spacing: 14) {
-                Button {
-                    Haptics.light()
+                // Same animated waveform glyph used for speech playback
+                // elsewhere in the app, in place of a static speaker icon.
+                AssistantSpeakButton {
                     // Tear the mic down first: the recognizer holds the audio
                     // session in .playAndRecord, so ElevenLabs' AVAudioPlayer
                     // can't take it and would silently fall back to Apple TTS.
                     // Suppress the mic for the playback too (mirrors auto-play).
                     if speech.isRecording { speech.stop() }
                     isSpeakingPlayback = true
+                    // Reactivate this message's avatar (animated + volume-
+                    // reactive) for the duration of playback.
+                    speakingMessageID = message.id
                     SpeechClient.shared.speak(
                         message.text,
                         language: vm.conversation?.language,
                         allowForvo: false,
                         pronunciation: message.transliteration,
                         onFinish: {
-                            Task { @MainActor in isSpeakingPlayback = false }
+                            Task { @MainActor in
+                                isSpeakingPlayback = false
+                                if speakingMessageID == message.id { speakingMessageID = nil }
+                            }
                         }
                     )
-                } label: {
-                    Image(systemName: "speaker.wave.2")
-                        .font(.system(size: MacLayout.f(16)))
-                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
 
                 Button {
                     Haptics.light()
@@ -1097,6 +1300,7 @@ struct ChatView: View {
               lastSpokenMessageID != last.id else { return }
         lastSpokenMessageID = last.id
         isSpeakingPlayback = true
+        speakingMessageID = last.id
         // Pre-emptively stop the mic so it doesn't pick up the AI's
         // voice before reconcileMic gets a chance to react.
         if speech.isRecording { speech.stop() }
@@ -1108,6 +1312,7 @@ struct ChatView: View {
             onFinish: {
                 Task { @MainActor in
                     isSpeakingPlayback = false
+                    if speakingMessageID == last.id { speakingMessageID = nil }
                 }
             }
         )
@@ -1236,6 +1441,61 @@ struct ChatView: View {
             // chip strip carries personalized starters next to the
             // curated set.
             userInterests = profile.onboarding?.interests ?? []
+            // The learner's avatar for their own message rows.
+            avatarImageData = profile.avatarImage
+        }
+    }
+}
+
+// The assistant bubble's "read aloud" control. Uses the same animated waveform
+// glyph as speech playback elsewhere in the app (matching SpeakWaveformButton),
+// sized to sit inline with the bubble's other 16pt action icons. Its own
+// playCount keeps the variable-color animation local to this button.
+private struct AssistantSpeakButton: View {
+    var action: () -> Void
+    @State private var playCount = 0
+
+    var body: some View {
+        Button {
+            Haptics.light()
+            playCount += 1
+            action()
+        } label: {
+            Image(systemName: "waveform")
+                .font(.system(size: MacLayout.f(16)))
+                .foregroundStyle(.secondary)
+                .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: playCount)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// The learner's circular avatar — their chosen profile image (or a neutral
+// person glyph), clipped to a circle. Static: it doesn't react to speech.
+private struct ChatUserAvatar: View {
+    var size: CGFloat
+    var imageData: Data?
+
+    var body: some View {
+        avatar
+            .frame(width: size, height: size)
+            .clipShape(Circle())
+    }
+
+    @ViewBuilder
+    private var avatar: some View {
+        if let data = imageData, let ui = UIImage(data: data) {
+            Image(uiImage: ui)
+                .resizable()
+                .scaledToFill()
+        } else {
+            ZStack {
+                Circle().fill(Color(white: 0.85))
+                Image(systemName: "person.fill")
+                    .font(.system(size: size * 0.5))
+                    .foregroundStyle(Color(white: 0.55))
+            }
         }
     }
 }

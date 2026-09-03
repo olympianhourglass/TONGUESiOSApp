@@ -15,7 +15,7 @@ struct DeckPickerSheet: View {
     var body: some View {
         NavigationStack {
             content
-                .navigationTitle("Add to deck")
+                .navigationTitle("Add to Deck")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {

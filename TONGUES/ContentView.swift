@@ -253,16 +253,30 @@ struct ContentView: View {
             .frame(width: 20, height: 20)
     }
 
+    // Maps a tab's base (outline) icon name to its filled counterpart,
+    // shown while that tab is selected.
+    private func filledIcon(_ name: String) -> String {
+        switch name {
+        case "Compass":    return "CompassRose_fill"
+        case "PlusSquare": return "PlusSquare_fill"
+        case "Chat":       return "Chat_fill"
+        case "Books":      return "Books_fill"
+        default:           return name
+        }
+    }
+
     // Tab entry label. iPhone/iPad keep the icon-only bottom bar exactly as
     // before (the title branch isn't compiled there, and titles are hidden
     // by UITabBarItemAppearance regardless). On Mac Catalyst the TabView
     // renders as a sidebar via `.sidebarAdaptable`, so each row carries its
-    // title next to the icon.
-    private func tabItemLabel(icon: String, title: String) -> some View {
+    // title next to the icon. The selected tab swaps in the filled icon
+    // variant; reading `tabRouter.current` here keeps the swap reactive.
+    private func tabItemLabel(icon: String, title: String, tab: AppTab) -> some View {
+        let name = tabRouter.current == tab ? filledIcon(icon) : icon
         #if targetEnvironment(macCatalyst)
-        Label { Text(title) } icon: { tabIcon(icon) }
+        return Label { Text(title) } icon: { tabIcon(name) }
         #else
-        tabIcon(icon)
+        return tabIcon(name)
         #endif
     }
 
@@ -279,19 +293,19 @@ struct ContentView: View {
     private var tabBarLayout: some View {
         TabView(selection: selectedTab) {
             ExploreView()
-                .tabItem { tabItemLabel(icon: "Compass", title: L("Explore")) }
+                .tabItem { tabItemLabel(icon: "Compass", title: L("Explore"), tab: .explore) }
                 .tag(AppTab.explore)
 
             StudyView()
-                .tabItem { tabItemLabel(icon: "PlusSquare", title: L("Study")) }
+                .tabItem { tabItemLabel(icon: "PlusSquare", title: L("Study"), tab: .study) }
                 .tag(AppTab.study)
 
             ChatView()
-                .tabItem { tabItemLabel(icon: "Chat", title: L("Chat")) }
+                .tabItem { tabItemLabel(icon: "Chat", title: L("Chat"), tab: .chat) }
                 .tag(AppTab.chat)
 
             LibraryView()
-                .tabItem { tabItemLabel(icon: "Books", title: L("Library")) }
+                .tabItem { tabItemLabel(icon: "Books", title: L("Library"), tab: .library) }
                 .tag(AppTab.library)
         }
         .tint(.black)
@@ -356,7 +370,7 @@ struct ContentView: View {
             tabRouter.current = tab
         } label: {
             HStack(spacing: 10) {
-                tabIcon(icon)
+                tabIcon(selected ? filledIcon(icon) : icon)
                     .foregroundStyle(selected ? Color.white : Color.white.opacity(0.55))
                 Text(title)
                     .font(.custom("NeueHaasDisplay-Mediu", size: 15))

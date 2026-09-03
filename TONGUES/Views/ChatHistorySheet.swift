@@ -91,7 +91,7 @@ struct ChatHistorySheet: View {
             .refreshable {
                 await onRefresh()
             }
-            .navigationTitle("Chat history")
+            .navigationTitle("Chat History")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

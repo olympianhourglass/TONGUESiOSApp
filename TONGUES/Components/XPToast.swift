@@ -140,6 +140,14 @@ private struct XPToastOverlayModifier: ViewModifier {
                 if let toast = center.currentToast {
                     XPToastView(toast: toast)
                         .padding(.bottom, 110)
+                        // The overlay spans the whole window, which on Mac
+                        // Catalyst includes the fixed 240pt sidebar — so a
+                        // plain `.bottom` centers across the full width and
+                        // lands left of the content pane. Nudge right by half
+                        // the sidebar width to center within the right pane.
+                        #if targetEnvironment(macCatalyst)
+                        .offset(x: 120)
+                        #endif
                         // Pure slide (no opacity fade): the opaque pill carries
                         // the text up as one unit. A fade made the translucent
                         // pill blend into the background so the high-contrast

@@ -3,6 +3,16 @@ import SwiftUI
 struct FlashcardView: View {
     @Environment(\.dismiss) private var dismiss
     let deck: DeckDocument
+    // Max cards to include this session (nil = every due + new card, up to the
+    // new-card cap). Set from the intro screen so a "Start" session is a short,
+    // finishable chunk instead of a march through the whole deck.
+    var sessionLimit: Int? = nil
+    // When true, study the entire deck (shuffled, uncapped) rather than only
+    // what's due — the intro screen's "Full" option.
+    var fullDeck: Bool = false
+    // Which review interactions are enabled (from the pre-session Settings
+    // modal). Modes are scrambled across the session from this set.
+    var reviewModes: ReviewModeSettings = .all
     var onSessionComplete: () -> Void = {}
     @State private var currentIndex = 0
     @State private var isWordRevealed = false
@@ -16,7 +26,6 @@ struct FlashcardView: View {
     @State private var cardShownAt = Date()
     @State private var didSaveSession = false
     @State private var showLeaveConfirmation = false
-    @State private var isTimeBreakdownExpanded = false
     // Hold-to-reveal grading chip menus above the bottom buttons.
     @State private var showXMenu = false
     @State private var showCheckMenu = false
@@ -53,11 +62,51 @@ struct FlashcardView: View {
     // in the summary and worth bonus XP.
     @State private var handwrittenItemIDs: Set<String> = []
 
-    private var totalCount: Int { deck.items.count }
-    private var isFinished: Bool { currentIndex >= totalCount }
+    // MARK: Session working set (Phase 1: shorten)
+    //
+    // The cards actually studied this session — built on appear from the
+    // deck's items filtered to what's due (or new), capped, and shuffled,
+    // rather than the whole deck in fixed order. Mutable so a missed card can
+    // be re-queued later in the same session (Phase 2).
+    @State private var sessionItems: [GeneratedItem] = []
+    @State private var didBuildSession = false
+    @State private var isBuildingSession = true
+    // No cards were due (and none new) — show the "all caught up" state
+    // instead of forcing a replay of already-learned cards.
+    @State private var isCaughtUp = false
+    // Per-card FSRS schedule, fetched once at build. Drives which interaction
+    // mode each card uses (Phase 3) and which cards count as newly learned.
+    @State private var schedulesByCardID: [String: CardSchedule] = [:]
+    @State private var newCardIDs: Set<String> = []
+    // Cards already re-queued after a lapse, so a miss recurs at most once.
+    @State private var requeuedCardIDs: Set<String> = []
+
+    // MARK: Momentum (Phase 2)
+    @State private var combo = 0
+    @State private var bestCombo = 0
+    // Summed XP from this session, surfaced on the finish screen once the
+    // async award resolves.
+    @State private var earnedXP: Int? = nil
+
+    private var totalCount: Int { sessionItems.count }
+    private var isFinished: Bool {
+        !isBuildingSession && !isCaughtUp && currentIndex >= totalCount
+    }
     private var currentItem: GeneratedItem? {
-        guard currentIndex < deck.items.count else { return nil }
-        return deck.items[currentIndex]
+        guard currentIndex < sessionItems.count else { return nil }
+        return sessionItems[currentIndex]
+    }
+
+    // True only while cards are actively being graded — false during the
+    // build spinner, the caught-up state, and the finish screen.
+    private var sessionActive: Bool {
+        !isBuildingSession && !isCaughtUp && !isFinished
+    }
+
+    // The interaction mode for the card on screen. Defaults to reveal so the
+    // classic X/✓ bottom controls only render for reveal cards.
+    private var currentMode: FlashcardMode {
+        currentItem.map { mode(for: $0) } ?? .reveal
     }
 
     var body: some View {
@@ -72,7 +121,11 @@ struct FlashcardView: View {
 
                 Spacer(minLength: 0)
 
-                if isFinished {
+                if isBuildingSession {
+                    loadingView
+                } else if isCaughtUp {
+                    caughtUpView
+                } else if isFinished {
                     finishView
                 } else if let item = currentItem {
                     // Full-width carrier exists so the slide transition
@@ -83,29 +136,9 @@ struct FlashcardView: View {
                     // half-visible. The carrier makes the move full-bleed
                     // while preserving the iPhone-like card aspect ratio.
                     ZStack {
-                        VStack(spacing: 16) {
-                            cardView(item: item)
-                            // Handwriting practice takes the picker's slot while
-                            // active — the card shifts up as this block grows.
-                            if handwritingActive(for: item), let script = handwritingScript(for: item) {
-                                HandwritingPracticeView(word: item.word, script: script) {
-                                    handwrittenItemIDs.insert(item.id.uuidString)
-                                }
-                                .id("hw-\(item.id.uuidString)")
-                                .transition(.opacity.combined(with: .move(edge: .bottom)))
-                            } else if preferredLanguages.count > 1 {
-                                // Reserve the picker's space at all times once preferred
-                                // languages are loaded — fading opacity instead of
-                                // inserting/removing the view keeps the card pinned in
-                                // place when the user reveals the word.
-                                languagePicker(item: item)
-                                    .opacity(isWordRevealed ? 1 : 0)
-                                    .allowsHitTesting(isWordRevealed)
-                                    .animation(.easeInOut(duration: 0.2), value: isWordRevealed)
-                            }
-                        }
-                        .padding(.horizontal, 8)
-                        .frame(maxWidth: 440)
+                        cardCarrier(item: item)
+                            .padding(.horizontal, 8)
+                            .frame(maxWidth: 440)
                     }
                     .frame(maxWidth: .infinity)
                     // Old card slides off to the left, new card slides in from
@@ -125,13 +158,14 @@ struct FlashcardView: View {
                 // Placeholder reserves only the button row's height so the
                 // card stays centered. The real bottomActions is an overlay
                 // below, free to grow upward when chips appear without
-                // disturbing the card's layout.
-                if !isFinished {
+                // disturbing the card's layout. Only reveal cards use the
+                // X/✓ row — multiple-choice and typed cards grade in place.
+                if sessionActive && currentMode == .reveal {
                     Color.clear.frame(height: 72 + 40)
                 }
             }
 
-            if !isFinished {
+            if sessionActive && currentMode == .reveal {
                 bottomActions
                     .padding(.bottom, 40)
             }
@@ -154,6 +188,7 @@ struct FlashcardView: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
         .task {
+            await buildSessionIfNeeded()
             await loadPreferredLanguagesIfNeeded()
         }
         // The review screen is white, so force dark (black) status-bar
@@ -226,14 +261,22 @@ struct FlashcardView: View {
                     }
                 }
                 Spacer()
+                // Live combo chip — a run of consecutive non-lapse grades.
+                // Rewards momentum mid-session instead of deferring every
+                // signal to the finish screen.
+                if combo >= 3 && sessionActive {
+                    comboChip
+                        .transition(.scale.combined(with: .opacity))
+                }
             }
-            .padding(.bottom, isFinished ? 0 : 12)
+            .animation(.spring(response: 0.32, dampingFraction: 0.7), value: combo)
+            .padding(.bottom, sessionActive ? 12 : 0)
             .zIndex(1)
 
-            // Hide the progress bar + count on the Deck Complete
-            // screen — the session is over, the bar is always full,
-            // and the screen reads cleaner without it.
-            if !isFinished {
+            // Hide the progress bar + count outside active grading — during
+            // the build spinner, the caught-up state, and the finish screen
+            // the bar would be meaningless, and the screen reads cleaner.
+            if sessionActive {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule()
@@ -269,6 +312,143 @@ struct FlashcardView: View {
         return min(currentIndex + (isFinished ? 0 : 1), totalCount)
     }
 
+    private var comboChip: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "flame.fill")
+                .font(.system(size: 13))
+            Text(L("%d in a row", combo))
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+        }
+        .foregroundStyle(.black)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .glassEffect(.regular, in: .capsule)
+    }
+
+    // MARK: Card carrier (Phase 3: interaction variety)
+
+    // Renders the right interaction for this card. New cards teach with the
+    // classic reveal card; learning cards get multiple-choice recognition;
+    // learned cards get typed production recall. Multiple-choice and typed
+    // cards grade themselves and call `submit` directly.
+    @ViewBuilder
+    private func cardCarrier(item: GeneratedItem) -> some View {
+        switch mode(for: item) {
+        case .reveal:
+            VStack(spacing: 16) {
+                cardView(item: item)
+                // Handwriting practice takes the picker's slot while active —
+                // the card shifts up as this block grows.
+                if handwritingActive(for: item), let script = handwritingScript(for: item) {
+                    HandwritingPracticeView(word: item.word, script: script) {
+                        handwrittenItemIDs.insert(item.id.uuidString)
+                    }
+                    .id("hw-\(item.id.uuidString)")
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                } else if preferredLanguages.count > 1 {
+                    // Reserve the picker's space at all times once preferred
+                    // languages are loaded — fading opacity instead of
+                    // inserting/removing the view keeps the card pinned in
+                    // place when the user reveals the word.
+                    languagePicker(item: item)
+                        .opacity(isWordRevealed ? 1 : 0)
+                        .allowsHitTesting(isWordRevealed)
+                        .animation(.easeInOut(duration: 0.2), value: isWordRevealed)
+                }
+            }
+        case .multipleChoice:
+            MultipleChoiceCard(
+                word: item.word,
+                correct: item.translation,
+                pool: distractorPool(for: item),
+                transliteration: item.transliteration,
+                speak: { speakDeckWord(item) },
+                onGrade: { submit($0) }
+            )
+        case .fillInSentence:
+            FillInSentenceCard(
+                sentence: item.exampleSentence ?? "",
+                correct: item.word,
+                hint: item.translation,
+                pool: distractorWords(for: item),
+                speak: { speakDeckWord(item) },
+                onGrade: { submit($0) }
+            )
+        }
+    }
+
+    // Which interaction a card gets. The learner's Settings modal enables a
+    // set of modes; we scramble across the session so the types visibly rotate
+    // rather than clustering. The mode is stable per card (keyed off its fixed
+    // position in the session) so it doesn't flicker on re-render, but adjacent
+    // cards step through the enabled types in turn.
+    private func mode(for item: GeneratedItem) -> FlashcardMode {
+        let usable = reviewModes.enabledModes.filter { isAvailable($0, for: item) }
+        let choices = usable.isEmpty ? [.reveal] : usable
+        if choices.count == 1 { return choices[0] }
+
+        // Rotate by the card's position in the session so modes alternate
+        // evenly (reveal → multiple choice → fill-in → …) instead of a hash
+        // that can land the same type several times in a row.
+        let position = sessionItems.firstIndex(where: { $0.id == item.id }) ?? 0
+        return choices[position % choices.count]
+    }
+
+    // Whether a mode can actually be presented for this card. Reveal always
+    // works; multiple choice needs ≥3 distractors; fill-in-the-sentence needs
+    // both an example sentence (sourced at generation) and ≥3 distractor words.
+    private func isAvailable(_ mode: FlashcardMode, for item: GeneratedItem) -> Bool {
+        switch mode {
+        case .reveal:
+            return true
+        case .multipleChoice:
+            return distractorPool(for: item).count >= 3
+        case .fillInSentence:
+            let hasSentence = !(item.exampleSentence ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+            return hasSentence && distractorWords(for: item).count >= 3
+        }
+    }
+
+    // Distinct translations from other cards in the deck, used as wrong
+    // answers for the meaning multiple-choice card.
+    private func distractorPool(for item: GeneratedItem) -> [String] {
+        var seen = Set<String>([item.translation])
+        var pool: [String] = []
+        for other in deck.items where other.id != item.id {
+            let t = other.translation
+            guard !t.isEmpty, !seen.contains(t) else { continue }
+            seen.insert(t)
+            pool.append(t)
+        }
+        return pool
+    }
+
+    // Distinct target-language words from other cards, used as wrong answers
+    // for the fill-in-the-sentence cloze.
+    private func distractorWords(for item: GeneratedItem) -> [String] {
+        var seen = Set<String>([item.word])
+        var pool: [String] = []
+        for other in deck.items where other.id != item.id {
+            let w = other.word
+            guard !w.isEmpty, !seen.contains(w) else { continue }
+            seen.insert(w)
+            pool.append(w)
+        }
+        return pool
+    }
+
+    // Speaks the target-language word (used by the MC / fill-in cards, which
+    // always test the deck language rather than a picked translation).
+    private func speakDeckWord(_ item: GeneratedItem) {
+        SpeechClient.shared.speak(
+            item.word,
+            language: item.language ?? deck.language,
+            allowForvo: true,
+            pronunciation: item.transliteration
+        )
+    }
+
     // MARK: Handwriting practice
 
     // The script to practice for a card, or nil when handwriting doesn't
@@ -287,6 +467,10 @@ struct FlashcardView: View {
         handwritingEnabled && handwritingSupported(for: item)
     }
 
+    // Kept as quiet as its neighbor, the icon-only speak button: a single
+    // pencil glyph rather than a filled pill. Its state reads through weight
+    // and a thin ink underline that draws itself in when active — a subtle
+    // nod to writing on a ruled line — instead of a heavy black capsule.
     private var writeToggle: some View {
         Button {
             Haptics.light()
@@ -294,17 +478,19 @@ struct FlashcardView: View {
                 handwritingEnabled.toggle()
             }
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "pencil.and.scribble")
-                    .font(.system(size: 14, weight: .medium))
-                Text(L("Write"))
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .foregroundStyle(handwritingEnabled ? .white : .black)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            // Light-gray off-state so the pill reads on the white card.
-            .background(handwritingEnabled ? Color.black : Color(white: 0.93), in: Capsule())
+            Image(systemName: "pencil")
+                .font(.system(size: 18))
+                .foregroundStyle(.black.opacity(handwritingEnabled ? 1 : 0.35))
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(.black)
+                        .frame(height: 1.5)
+                        .scaleEffect(x: handwritingEnabled ? 1 : 0, anchor: .leading)
+                        .offset(y: 4)
+                }
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+                .accessibilityLabel(L("Write"))
         }
         .buttonStyle(.plain)
     }
@@ -327,6 +513,13 @@ struct FlashcardView: View {
             Text(translatedWordOverride.isEmpty ? item.word : translatedWordOverride)
                 .font(.system(size: 44, weight: .semibold))
                 .foregroundStyle(.black)
+                // Long words wrap to a second line and shrink to fit rather
+                // than clipping off the card edge — invisible for short words,
+                // graceful for long ones.
+                .lineLimit(2)
+                .minimumScaleFactor(0.5)
+                .allowsTightening(true)
+                .fixedSize(horizontal: false, vertical: true)
                 .blur(radius: isWordRevealed ? 0 : 18)
                 .clipped()
                 .contentShape(Rectangle())
@@ -583,9 +776,38 @@ struct FlashcardView: View {
         } else {
             correctCount += 1
         }
+        // Capture the mode before advancing — the grade toast only makes
+        // sense for reveal cards (it lands on the X/✓ row those cards show).
+        let wasReveal = currentMode == .reveal
+        updateCombo(for: grade)
         recordReview(grade)
+        // Re-queue a missed card BEFORE advancing so `totalCount` already
+        // reflects the reinserted card when `advance()` checks for the end.
+        requeueIfNeeded(for: grade)
         advance()
-        triggerLastGradeToast(grade)
+        if wasReveal { triggerLastGradeToast(grade) }
+    }
+
+    // Consecutive non-lapse grades build a combo; a lapse resets it.
+    private func updateCombo(for grade: ReviewResult) {
+        if grade.isLapse {
+            combo = 0
+        } else {
+            combo += 1
+            bestCombo = max(bestCombo, combo)
+        }
+    }
+
+    // A lapsed card is slotted a few positions ahead so it recurs once more
+    // this session — turning a miss into a second chance instead of a card
+    // that vanishes. Guarded so a card is re-queued at most once.
+    private func requeueIfNeeded(for grade: ReviewResult) {
+        guard grade == .again, let item = currentItem else { return }
+        let id = item.id.uuidString
+        guard !requeuedCardIDs.contains(id) else { return }
+        requeuedCardIDs.insert(id)
+        let insertAt = min(sessionItems.count, currentIndex + 3)
+        sessionItems.insert(item, at: insertAt)
     }
 
     private func triggerLastGradeToast(_ grade: ReviewResult) {
@@ -605,36 +827,79 @@ struct FlashcardView: View {
 
     // MARK: Finished
 
+    // Distinct new (previously unseen) cards the learner recalled this
+    // session — a concrete "you learned N words today" payoff.
+    private var newWordsLearned: Int {
+        Set(
+            reviews
+                .filter { newCardIDs.contains($0.cardId) && !$0.result.isLapse }
+                .map { $0.cardId }
+        ).count
+    }
+
+    // A perfect run (no lapses) gets its own headline — the emotional peak
+    // of finishing should read as a reward, not a data dump.
+    private var finishHeadline: String {
+        incorrectCount == 0 && !reviews.isEmpty ? L("Perfect session!") : L("Session complete")
+    }
+
+    private var hasRewards: Bool {
+        (earnedXP ?? 0) > 0 || newWordsLearned > 0 || bestCombo >= 3 || !handwrittenItemIDs.isEmpty
+    }
+
     private var finishView: some View {
-        VStack(spacing: 20) {
-            Text(L("Deck complete"))
-                .font(.system(size: 28, weight: .bold))
-                .foregroundStyle(.black)
-
-            HStack(spacing: 32) {
-                statTile(value: "\(totalCount)", label: L("Reviewed"))
-                statTile(value: "\(correctCount)", label: L("Correct"))
-                statTile(value: "\(incorrectCount)", label: L("Incorrect"))
+        VStack(alignment: .leading, spacing: 0) {
+            // Editorial header — mirrors the intro's overline + display title:
+            // the deck as a quiet kicker, the outcome as the headline.
+            VStack(alignment: .leading, spacing: 6) {
+                Text(deck.title)
+                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .foregroundStyle(.black.opacity(0.45))
+                    .lineLimit(1)
+                Text(finishHeadline)
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 34))
+                    .foregroundStyle(.black)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.top, 8)
+            .padding(.top, 12)
 
-            if !handwrittenItemIDs.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "pencil.and.scribble")
-                        .font(.system(size: 14, weight: .medium))
-                    Text(handwrittenItemIDs.count == 1
-                         ? L("Wrote 1 word by hand · +%d XP", handwrittenItemIDs.count * 3)
-                         : L("Wrote %d words by hand · +%d XP", handwrittenItemIDs.count, handwrittenItemIDs.count * 3))
-                        .font(.system(size: 14, weight: .medium))
+            statsRow
+                .padding(.top, 28)
+
+            if hasRewards {
+                VStack(alignment: .leading, spacing: 10) {
+                    if let earnedXP, earnedXP > 0 {
+                        rewardPill(icon: "bolt.fill", text: L("+%d XP earned", earnedXP))
+                    }
+                    if newWordsLearned > 0 {
+                        rewardPill(
+                            icon: "sparkles",
+                            text: newWordsLearned == 1
+                                ? L("1 new word learned")
+                                : L("%d new words learned", newWordsLearned)
+                        )
+                    }
+                    if bestCombo >= 3 {
+                        rewardPill(icon: "flame.fill", text: L("Best streak: %d in a row", bestCombo))
+                    }
+                    if !handwrittenItemIDs.isEmpty {
+                        rewardPill(
+                            icon: "pencil.line",
+                            text: handwrittenItemIDs.count == 1
+                                ? L("Wrote 1 word by hand · +%d XP", 3)
+                                : L("Wrote %d words by hand · +%d XP", handwrittenItemIDs.count, handwrittenItemIDs.count * 3)
+                        )
+                    }
                 }
-                .foregroundStyle(.black)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(Color(white: 0.93), in: Capsule())
+                .padding(.top, 20)
+                .animation(.spring(response: 0.4, dampingFraction: 0.8), value: earnedXP)
             }
+
+            Spacer(minLength: 24)
 
             timeSpentSection
-                .padding(.top, 4)
+
+            Spacer(minLength: 24)
 
             Button {
                 Haptics.success()
@@ -647,28 +912,129 @@ struct FlashcardView: View {
                 dismiss()
             } label: {
                 Text(L("Finish"))
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 17))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .background(Color.black)
-                    .clipShape(Capsule())
+                    .padding(.vertical, 17)
+                    .background(Color.black, in: Capsule())
             }
             .buttonStyle(.plain)
-            .padding(.top, 16)
+            .padding(.bottom, 8)
         }
-        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 24)
+    }
+
+    // Reviewed / Correct / Incorrect as one lifted card split by hairline
+    // dividers — reads as a single considered unit rather than three numbers
+    // crammed together in the middle of the screen.
+    private var statsRow: some View {
+        HStack(spacing: 0) {
+            statTile(value: "\(reviews.count)", label: L("Reviewed"))
+            statDivider
+            statTile(value: "\(correctCount)", label: L("Correct"))
+            statDivider
+            statTile(value: "\(incorrectCount)", label: L("Incorrect"))
+        }
+        .padding(.vertical, 22)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 8, x: 0, y: 2)
+    }
+
+    private var statDivider: some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.08))
+            .frame(width: 1, height: 34)
+    }
+
+    private func rewardPill(icon: String, text: String) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.black)
+                .frame(width: 18)
+            Text(text)
+                .font(.custom("NeueHaasDisplay-Mediu", size: 14))
+                .foregroundStyle(.black)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(Color.white, in: Capsule())
+        .overlay(Capsule().stroke(Color.black.opacity(0.06), lineWidth: 1))
+        .transition(.scale.combined(with: .opacity))
+    }
+
+    // MARK: Build / caught-up / loading states
+
+    private var loadingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .tint(.black)
+            Text(L("Building your session…"))
+                .font(.custom("NeueHaasDisplay-Light", size: 15))
+                .foregroundStyle(.black.opacity(0.5))
+        }
+    }
+
+    private var caughtUpView: some View {
+        VStack(spacing: 18) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 52, weight: .thin))
+                .foregroundStyle(.black)
+            Text(L("You're all caught up"))
+                .font(.custom("NeueHaasDisplay-Mediu", size: 26))
+                .foregroundStyle(.black)
+            Text(L("No cards are due for review right now. Come back later, or study ahead."))
+                .font(.custom("NeueHaasDisplay-Light", size: 15))
+                .foregroundStyle(.black.opacity(0.5))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 24)
+
+            VStack(spacing: 12) {
+                Button {
+                    Haptics.medium()
+                    studyAhead()
+                } label: {
+                    Text(L("Study ahead"))
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 17))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 17)
+                        .background(Color.black, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                Button {
+                    Haptics.light()
+                    dismiss()
+                } label: {
+                    Text(L("Done"))
+                        .font(.custom("NeueHaasDisplay-Light", size: 16))
+                        .foregroundStyle(.black.opacity(0.6))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 12)
+            .padding(.horizontal, 8)
+        }
+        .padding(.horizontal, 24)
     }
 
     private func statTile(value: String, label: String) -> some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 6) {
             Text(value)
-                .font(.system(size: 28, weight: .semibold))
+                .font(.custom("NeueHaasDisplay-Mediu", size: 30))
                 .foregroundStyle(.black)
+                .monospacedDigit()
             Text(label)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
+                .font(.custom("NeueHaasDisplay-Light", size: 13))
+                .foregroundStyle(.black.opacity(0.5))
         }
+        .frame(maxWidth: .infinity)
     }
 
     // Total deck time + a collapsible per-card breakdown. Total uses the
@@ -676,48 +1042,45 @@ struct FlashcardView: View {
     // active study time (matches the per-card rows when expanded) rather
     // than wall-clock from launch.
     private var timeSpentSection: some View {
-        VStack(spacing: 12) {
-            statTile(value: formatTotalDuration(totalReviewTime), label: L("Time"))
+        VStack(alignment: .leading, spacing: 12) {
+            // Header row: label + total. The per-card breakdown below is always
+            // visible, so this is a static heading rather than a collapse toggle.
+            HStack(spacing: 8) {
+                Text(L("Time"))
+                    .font(.custom("NeueHaasDisplay-Light", size: 14))
+                    .foregroundStyle(.black.opacity(0.5))
+                Spacer()
+                Text(formatTotalDuration(totalReviewTime))
+                    .font(.system(size: 15, design: .monospaced))
+                    .foregroundStyle(.black)
+            }
 
             if !reviews.isEmpty {
-                if isTimeBreakdownExpanded {
-                    VStack(spacing: 8) {
-                        ForEach(Array(reviews.enumerated()), id: \.offset) { _, review in
-                            HStack {
-                                Text(review.word)
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(.black)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                Spacer(minLength: 12)
-                                Text(formatCardDuration(review.timeSpent ?? 0))
-                                    .font(.system(size: 14, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
+                VStack(spacing: 8) {
+                    ForEach(Array(reviews.enumerated()), id: \.offset) { _, review in
+                        HStack {
+                            Text(review.word)
+                                .font(.system(size: 14))
+                                .foregroundStyle(.black)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 12)
+                            Text(formatCardDuration(review.timeSpent ?? 0))
+                                .font(.system(size: 14, design: .monospaced))
+                                .foregroundStyle(.black.opacity(0.5))
                         }
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 4)
                 }
-
-                Button {
-                    Haptics.light()
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isTimeBreakdownExpanded.toggle()
-                    }
-                } label: {
-                    HStack {
-                        Spacer()
-                        Image(systemName: isTimeBreakdownExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 14, weight: .regular))
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+                .padding(.top, 2)
             }
         }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.black.opacity(0.06), lineWidth: 1)
+        )
     }
 
     private var totalReviewTime: TimeInterval {
@@ -778,6 +1141,85 @@ struct FlashcardView: View {
                 timeSpent: max(0, elapsed)
             )
         )
+    }
+
+    // MARK: Session build
+
+    // Builds the working set once: due cards + a capped batch of new cards,
+    // shuffled, then trimmed to the length the learner picked on the intro
+    // screen. This is what makes a session a short, finishable chunk instead
+    // of a march through every card in the deck.
+    @MainActor
+    private func buildSessionIfNeeded() async {
+        guard !didBuildSession else { return }
+        didBuildSession = true
+
+        let ids = deck.items.map { $0.id.uuidString }
+        let schedules = (try? await FirebaseDeckService.fetchSchedules(cardIds: ids)) ?? [:]
+        schedulesByCardID = schedules
+
+        // Track which cards are brand-new (no schedule) for the "new words
+        // learned" payoff and for interaction-mode selection.
+        let now = Date()
+        for item in deck.items where schedules[item.id.uuidString] == nil {
+            newCardIDs.insert(item.id.uuidString)
+        }
+
+        // "Full" start: study the entire deck, shuffled and uncapped.
+        if fullDeck {
+            sessionItems = deck.items.shuffled()
+            startedAt = Date()
+            cardShownAt = Date()
+            isBuildingSession = false
+            return
+        }
+
+        var due: [GeneratedItem] = []
+        var fresh: [GeneratedItem] = []
+        for item in deck.items {
+            if let schedule = schedules[item.id.uuidString] {
+                if schedule.nextReviewAt <= now { due.append(item) }
+            } else {
+                fresh.append(item)
+            }
+        }
+
+        // Cap new cards so a brand-new deck doesn't dump every unseen word at
+        // once — introducing a steady trickle is both gentler and more
+        // effective than front-loading 50 novel items.
+        let newCardCap = 20
+        fresh = Array(fresh.shuffled().prefix(newCardCap))
+
+        var working = (due + fresh).shuffled()
+        if let limit = sessionLimit, limit > 0 {
+            working = Array(working.prefix(limit))
+        }
+
+        if working.isEmpty {
+            isCaughtUp = true
+            isBuildingSession = false
+            return
+        }
+
+        sessionItems = working
+        startedAt = Date()
+        cardShownAt = Date()
+        isBuildingSession = false
+    }
+
+    // From the caught-up state: review already-learned cards anyway, capped so
+    // "study ahead" is still a bounded session.
+    private func studyAhead() {
+        let cap = sessionLimit ?? 20
+        var working = deck.items.shuffled()
+        if working.count > cap { working = Array(working.prefix(cap)) }
+        startedAt = Date()
+        cardShownAt = Date()
+        withAnimation(.easeInOut(duration: 0.3)) {
+            sessionItems = working
+            currentIndex = 0
+            isCaughtUp = false
+        }
     }
 
     // MARK: Language picker
@@ -960,8 +1402,13 @@ struct FlashcardView: View {
                 averageSecondsPerCard: averageSecondsPerCard
             )
             let dailyGrants = try await XPService.awardDailyBonusIfNeeded()
+            let all = sessionGrants + dailyGrants
+            let total = all.reduce(0) { $0 + $1.amount }
             await MainActor.run {
-                XPToastCenter.shared.enqueue(sessionGrants + dailyGrants)
+                XPToastCenter.shared.enqueue(all)
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    earnedXP = total
+                }
             }
         } catch {
             print("XP award (flashcard) failed: \(error)")

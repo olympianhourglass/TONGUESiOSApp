@@ -8,6 +8,7 @@ import UIKit
 enum Haptics {
     nonisolated(unsafe) private static let lightGenerator = UIImpactFeedbackGenerator(style: .light)
     nonisolated(unsafe) private static let mediumGenerator = UIImpactFeedbackGenerator(style: .medium)
+    nonisolated(unsafe) private static let softGenerator = UIImpactFeedbackGenerator(style: .soft)
     nonisolated(unsafe) private static let notificationGenerator = UINotificationFeedbackGenerator()
 
     /// Subtle tap feedback for routine button presses.
@@ -20,6 +21,13 @@ enum Haptics {
     static func medium() {
         mediumGenerator.impactOccurred()
         mediumGenerator.prepare()
+    }
+
+    /// Soft, low-intensity thud for footfalls during the 3D walkthrough.
+    /// `intensity` (0...1) lets callers scale it with walking speed.
+    static func footstep(intensity: CGFloat = 0.5) {
+        softGenerator.impactOccurred(intensity: max(0, min(1, intensity)))
+        softGenerator.prepare()
     }
 
     /// Two-beat success pulse for completion events (e.g. saved to deck).

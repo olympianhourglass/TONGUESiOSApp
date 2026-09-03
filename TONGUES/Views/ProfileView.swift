@@ -62,6 +62,12 @@ struct ProfileView: View {
                     .buttonStyle(.plain)
 
                     settingsLinkRow(
+                        icon: "building.columns",
+                        title: L("Memory Palace"),
+                        summary: nil
+                    ) { MemoryPalaceView() }
+
+                    settingsLinkRow(
                         icon: "chart.bar",
                         title: L("Usage"),
                         summary: nil

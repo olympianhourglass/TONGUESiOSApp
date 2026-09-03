@@ -1176,8 +1176,12 @@ struct ChatView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .overlay(
+                // strokeBorder (not stroke) so the 1pt line is inset fully
+                // inside the chip. A centered stroke straddles the frame edge
+                // and its outer half gets clipped by the enclosing horizontal
+                // ScrollView, which made the border weight look uneven.
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color.black.opacity(0.18))
+                    .strokeBorder(Color.black.opacity(0.18), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

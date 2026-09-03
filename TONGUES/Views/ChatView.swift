@@ -1107,8 +1107,7 @@ struct ChatView: View {
                 Text(vm.isSuggesting
                      ? L("Finding ways to reply…")
                      : L("Not sure what to say? Tap one."))
-                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(11)))
-                    .tracking(0.5)
+                    .font(.custom("NeueHaasDisplay-Roman", size: MacLayout.f(11)))
                 Spacer()
                 if !vm.suggestions.isEmpty {
                     Button {

@@ -226,15 +226,40 @@ struct WordInfoSheet: View {
     private func infoContent(_ info: WordInfo) -> some View {
         VStack(alignment: .leading, spacing: 28) {
             // Meaning + speak button (8pt right margin, vertically
-            // centered against the whole Meaning block).
+            // centered against the whole Meaning block). The primary sense
+            // shows large; any additional senses (common for Chinese
+            // characters) list compactly beneath so a single word never
+            // collapses to just one narrow gloss.
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(L("Meaning:"))
+                    // Prefer whichever source carries more senses: a freshly
+                    // enriched WordInfo, or the deck item's own definitions
+                    // (so multi-sense still shows when the shared WordInfo
+                    // cache predates this and has only one meaning).
+                    let infoSenses = info.allMeanings
+                    let itemSenses = item.allDefinitions
+                    let senses = infoSenses.count >= itemSenses.count ? infoSenses : itemSenses
+                    Text(senses.count > 1 ? L("Meanings:") : L("Meaning:"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
                         .foregroundStyle(.white.opacity(0.55))
-                    Text(info.meaning)
+                    Text(senses[0])
                         .font(.custom("NeueHaasDisplay-Light", size: 26))
                         .foregroundStyle(.white)
+                    if senses.count > 1 {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(senses.dropFirst().enumerated()), id: \.offset) { index, sense in
+                                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                    Text("\(index + 2).")
+                                        .font(.custom("NeueHaasDisplay-Light", size: 15))
+                                        .foregroundStyle(.white.opacity(0.4))
+                                    Text(sense)
+                                        .font(.custom("NeueHaasDisplay-Light", size: 17))
+                                        .foregroundStyle(.white.opacity(0.85))
+                                }
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
                 }
                 Spacer(minLength: 0)
                 SpeakWaveformButton(

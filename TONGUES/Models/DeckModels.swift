@@ -72,11 +72,23 @@ struct Dialect: Hashable {
 
 struct WordInfo: Codable, Hashable {
     let meaning: String
+    // Distinct common senses of the word, primary first. Optional so WordInfo
+    // docs cached before multi-definition support (and single-sense words)
+    // decode cleanly; `allMeanings` normalizes the fallback. `meaning` always
+    // mirrors the primary sense so every existing single-line consumer works.
+    var meanings: [String]? = nil
     let partsOfSpeech: [String]
     let pronunciation: String
     let language: String
     let wordFrequency: String
     let pronunciationDifficulty: String
+
+    // Every sense to display, primary first. Falls back to the single
+    // `meaning` when no multi-sense list was generated/cached.
+    var allMeanings: [String] {
+        let list = (meanings ?? []).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return list.isEmpty ? [meaning] : list
+    }
 }
 
 // Structured etymology data, fetched on demand and rendered inside the
@@ -243,6 +255,12 @@ struct GeneratedItem: Codable, Identifiable, Hashable {
     var id = UUID()
     let word: String
     let translation: String
+    // Distinct common senses of the word, primary first. Optional so items
+    // saved before multi-definition support (and genuinely single-sense words)
+    // decode cleanly. `translation` always mirrors the primary sense, so every
+    // compact consumer (rows, widgets, exports, flashcards) is unchanged; the
+    // richer list surfaces where there's room (e.g. the word-info sheet).
+    var definitions: [String]?
     let transliteration: String?
     var language: String?
     // Optional tag set when this item was generated as a relation (e.g.
@@ -265,29 +283,48 @@ struct GeneratedItem: Codable, Identifiable, Hashable {
     // before this field existed; the Statistics distribution treats those as
     // "Generate" since generation is the default acquisition path.
     var source: String?
+    // A short, natural example sentence in the target language that uses this
+    // word in context. Sourced once at deck generation (folded into the same
+    // AI call that produces the deck — no extra requests), so it loads for
+    // free on the client. Powers the "fill in the sentence" review mode. Nil
+    // for legacy items generated before this field existed; that mode simply
+    // isn't offered for those cards.
+    var exampleSentence: String?
 
     enum CodingKeys: String, CodingKey {
-        case word, translation, transliteration, language, kind, partsOfSpeech, addedAt, source
+        case word, translation, definitions, transliteration, language, kind, partsOfSpeech, addedAt, source, exampleSentence
     }
 
     init(
         word: String,
         translation: String,
         transliteration: String?,
+        definitions: [String]? = nil,
         language: String? = nil,
         kind: String? = nil,
         partsOfSpeech: [String]? = nil,
         addedAt: Date? = nil,
-        source: String? = nil
+        source: String? = nil,
+        exampleSentence: String? = nil
     ) {
         self.word = word
         self.translation = translation
+        self.definitions = definitions
         self.transliteration = transliteration
         self.language = language
         self.kind = kind
         self.partsOfSpeech = partsOfSpeech
         self.addedAt = addedAt
         self.source = source
+        self.exampleSentence = exampleSentence
+    }
+
+    // Every sense to display, primary first. Falls back to the single
+    // `translation` for legacy/single-sense items. `translation` is always the
+    // primary, so compact UIs can keep using it directly.
+    var allDefinitions: [String] {
+        let list = (definitions ?? []).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        return list.isEmpty ? [translation] : list
     }
 
     func withLanguage(_ language: String) -> GeneratedItem {

@@ -32,18 +32,45 @@ struct SessionIntroView: View {
     var presentation: Presentation = .modal
     var onSessionComplete: () -> Void = {}
 
-    @State private var hasStarted = false
-    @State private var showLearnedInfo = false
+    // A single item-driven sheet — stacking two `.sheet(isPresented:)` on one
+    // view left the first unable to dismiss, so both routes share one.
+    private enum IntroSheet: String, Identifiable {
+        case settings, learned
+        var id: String { rawValue }
+    }
+    @State private var activeSheet: IntroSheet?
 
-    // "Adjust Your Session" pill is hidden until the underlying
-    // session-adjustment surface lands. Flip to `true` to bring the
-    // affordance back — the rest of the code path is preserved.
-    private let isAdjustSessionSurfaced = false
+    @State private var hasStarted = false
+    // A "Start" session is a short quick chunk; "Full" studies the whole deck.
+    // Set by whichever button the learner taps, then read by FlashcardView.
+    @State private var fullDeck = false
+
+    // Which review interactions are enabled, persisted across sessions. All on
+    // by default so the learner gets the full scrambled mix out of the box.
+    @AppStorage("review.mode.reveal") private var revealEnabled = true
+    @AppStorage("review.mode.multipleChoice") private var multipleChoiceEnabled = true
+    @AppStorage("review.mode.fillInSentence") private var fillInSentenceEnabled = true
+
+    private var reviewModes: ReviewModeSettings {
+        ReviewModeSettings(
+            reveal: revealEnabled,
+            multipleChoice: multipleChoiceEnabled,
+            fillInSentence: fillInSentenceEnabled
+        )
+    }
+
+    // Cards in a quick "Start" session.
+    private let quickSessionCount = 15
 
     var body: some View {
         ZStack {
             if hasStarted {
-                FlashcardView(deck: deck) {
+                FlashcardView(
+                    deck: deck,
+                    sessionLimit: fullDeck ? nil : quickSessionCount,
+                    fullDeck: fullDeck,
+                    reviewModes: reviewModes
+                ) {
                     onSessionComplete()
                 }
                 // Fade in from the dark intro so the user's eye lands
@@ -70,13 +97,9 @@ struct SessionIntroView: View {
                 Spacer(minLength: 24)
                 cardbackTile
                 Spacer(minLength: 24)
-                if isAdjustSessionSurfaced {
-                    adjustPill
-                        .padding(.bottom, 16)
-                }
                 statsList
                     .padding(.bottom, 28)
-                beginButton
+                beginButtons
                     .padding(.bottom, 24)
             }
             .padding(.horizontal, 24)
@@ -84,11 +107,24 @@ struct SessionIntroView: View {
         .statusBarHidden(true)
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden(true)
-        .sheet(isPresented: $showLearnedInfo) {
-            LearnedInfoSheet(thresholdDays: Int(FSRSScheduler.learnedStabilityThresholdDays))
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .settings:
+                ReviewSettingsSheet(
+                    reveal: $revealEnabled,
+                    multipleChoice: $multipleChoiceEnabled,
+                    fillInSentence: $fillInSentenceEnabled,
+                    onDone: { activeSheet = nil }
+                )
                 .presentationDetents([.medium, .large])
                 .presentationBackground(.black)
                 .presentationDragIndicator(.visible)
+            case .learned:
+                LearnedInfoSheet(thresholdDays: Int(FSRSScheduler.learnedStabilityThresholdDays))
+                    .presentationDetents([.medium, .large])
+                    .presentationBackground(.black)
+                    .presentationDragIndicator(.visible)
+            }
         }
     }
 
@@ -153,26 +189,6 @@ struct SessionIntroView: View {
         }
     }
 
-    private var adjustPill: some View {
-        Button {
-            Haptics.light()
-            // Placeholder — the session-adjustment surface will hang
-            // off this when it lands.
-        } label: {
-            HStack(spacing: 6) {
-                Text(L("Adjust Your Session"))
-                    .font(.custom("NeueHaasDisplay-Light", size: 14))
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-        }
-        .buttonStyle(.plain)
-        .glassEffect(.regular.interactive(), in: .capsule)
-    }
-
     private var statsList: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("\(localizedLanguageName(deck.language)) \(L(deck.level))")
@@ -182,7 +198,7 @@ struct SessionIntroView: View {
                     .foregroundStyle(.white.opacity(0.7))
                 Button {
                     Haptics.light()
-                    showLearnedInfo = true
+                    activeSheet = .learned
                 } label: {
                     Image(systemName: "info.circle")
                         .font(.system(size: 14))
@@ -197,30 +213,75 @@ struct SessionIntroView: View {
         .font(.custom("NeueHaasDisplay-Light", size: 15))
     }
 
-    private var beginButton: some View {
-        HStack {
-            Spacer()
+    // Two ways in: "Full" (left) runs the whole deck; "Quick Session" (right,
+    // the primary CTA) runs a short quick session. Quick Session greedily
+    // fills the remaining width so it reads as the default action.
+    private var beginButtons: some View {
+        // Both use the same clear glass so they read as one control. Full deck
+        // hugs its label; Quick Session takes whatever width is left, so it's
+        // always the widest, most prominent control.
+        //
+        // Deliberately NOT sizing Quick Session as a measured multiple of the
+        // Full Deck button: feeding a geometry read back into @State and then
+        // into a sibling's width creates a layout feedback loop that can pin
+        // the main thread (Full Deck compresses → Quick shrinks → row fits →
+        // Full Deck expands → repeat), freezing the intro on tap. A greedy
+        // maxWidth needs no measurement and can't oscillate.
+        HStack(spacing: 8) {
+            // Session settings live all the way on the leading edge, apart
+            // from the two start actions so they don't read as a third way in.
             Button {
-                Haptics.medium()
-                // Longer, eased cross-fade so the intro doesn't snap
-                // away — the user's eye glides into the first card
-                // instead of being yanked into it.
-                withAnimation(.easeInOut(duration: 0.6)) {
-                    hasStarted = true
-                }
+                Haptics.light()
+                activeSheet = .settings
+            } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 50, height: 50)
+                    .glassEffect(.clear, in: .circle)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("Session settings"))
+
+            Button {
+                begin(full: true)
+            } label: {
+                Text(L("Full Deck"))
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 16))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+                    .frame(height: 50)
+                    .glassEffect(.clear, in: .capsule)
+            }
+            .buttonStyle(.plain)
+            .fixedSize()
+
+            Button {
+                begin(full: false)
             } label: {
                 HStack(spacing: 8) {
-                    Text(L("Begin"))
+                    Text(L("Quick Session"))
                         .font(.custom("NeueHaasDisplay-Mediu", size: 16))
                     Image(systemName: "arrow.right")
                         .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .frame(height: 50)
+                .glassEffect(.clear, in: .capsule)
             }
-            .buttonStyle(.glass(.clear))
-            Spacer()
+            .buttonStyle(.plain)
+        }
+    }
+
+    private func begin(full: Bool) {
+        Haptics.medium()
+        fullDeck = full
+        // Longer, eased cross-fade so the intro doesn't snap away — the
+        // user's eye glides into the first card instead of being yanked in.
+        withAnimation(.easeInOut(duration: 0.6)) {
+            hasStarted = true
         }
     }
 
@@ -244,6 +305,130 @@ struct SessionIntroView: View {
     private var remaining: Int {
         guard let urgency else { return deck.items.count }
         return max(0, urgency.totalCount - urgency.learnedCount)
+    }
+}
+
+// Pre-session settings: which review interactions to mix into the upcoming
+// flashcard session. All on by default; the learner can trim the set, but at
+// least one must stay enabled (the last-on row can't be turned off).
+private struct ReviewSettingsSheet: View {
+    @Binding var reveal: Bool
+    @Binding var multipleChoice: Bool
+    @Binding var fillInSentence: Bool
+    // Closure instead of @Environment(\.dismiss): this sheet is presented from
+    // inside a fullScreenCover, where the environment dismiss can resolve to
+    // the wrong presentation. Clearing the parent's item binding directly is
+    // unambiguous.
+    var onDone: () -> Void
+
+    private var enabledCount: Int {
+        [reveal, multipleChoice, fillInSentence].filter { $0 }.count
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                VStack(spacing: 12) {
+                    row(
+                        title: L("Flashcard"),
+                        subtitle: L("Reveal the word, then grade yourself."),
+                        isOn: $reveal
+                    )
+                    row(
+                        title: L("Multiple choice"),
+                        subtitle: L("Pick the meaning from four options."),
+                        isOn: $multipleChoice
+                    )
+                    row(
+                        title: L("Fill in the sentence"),
+                        subtitle: L("Choose the word that completes an example sentence."),
+                        isOn: $fillInSentence
+                    )
+                }
+                .padding(.top, 22)
+                Spacer(minLength: 24)
+                doneButton
+            }
+            .padding(24)
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L("Review types"))
+                .font(.custom("NeueHaasDisplay-Mediu", size: 26))
+                .foregroundStyle(.white)
+            Text(L("Your session mixes the types you keep on, scrambled card to card."))
+                .font(.custom("NeueHaasDisplay-Light", size: 15))
+                .foregroundStyle(.white.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 12)
+    }
+
+    private func row(title: String, subtitle: String, isOn: Binding<Bool>) -> some View {
+        // The last enabled row can't be switched off — a session needs at
+        // least one review type.
+        let isLastOn = isOn.wrappedValue && enabledCount == 1
+        return Button {
+            guard !isLastOn else { Haptics.medium(); return }
+            Haptics.light()
+            withAnimation(.easeOut(duration: 0.15)) { isOn.wrappedValue.toggle() }
+        } label: {
+            HStack(alignment: .center, spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.custom("NeueHaasDisplay-Mediu", size: 16))
+                        .foregroundStyle(.white)
+                    Text(subtitle)
+                        .font(.custom("NeueHaasDisplay-Light", size: 13))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 8)
+                checkbox(on: isOn.wrappedValue)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .glassEffect(.regular, in: .rect(cornerRadius: 14))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func checkbox(on: Bool) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(on ? Color.white : Color.clear)
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(Color.white.opacity(on ? 0 : 0.4), lineWidth: 1.5)
+            if on {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.black)
+            }
+        }
+        .frame(width: 26, height: 26)
+    }
+
+    private var doneButton: some View {
+        Button {
+            Haptics.light()
+            onDone()
+        } label: {
+            Text(L("Done"))
+                .font(.custom("NeueHaasDisplay-Mediu", size: 17))
+                .foregroundStyle(.black)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(Color.white, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 12)
     }
 }
 

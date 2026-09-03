@@ -202,14 +202,19 @@ enum DeckGenerator {
                 "items": .schemaArray(items: .schemaObject(
                     properties: [
                         "word": .schemaString("The \(singularForm) written in \(language) using its native script."),
-                        "translation": .schemaString("Natural, idiomatic \(native) translation."),
+                        "translation": .schemaString("Natural, idiomatic \(native) translation — the single most useful primary sense. Must match the first entry of \"definitions\". Never a bare \"surname\" unless the word is chiefly used as a surname."),
+                        "definitions": .schemaArray(
+                            items: .schemaString("One distinct common sense in \(native), a few words each."),
+                            description: "The word's distinct common senses in \(native), most useful first; the first entry MUST equal \"translation\". Many words — especially Chinese characters — carry several everyday meanings (e.g. 中: middle; center; China): list the genuinely common ones (up to ~4). Do not pad with rare or purely technical senses, and never lead with \"surname\" unless the word is chiefly a surname."
+                        ),
                         "transliteration": .schemaNullableString("Latin-script romanization with diacritics for non-Latin scripts (Arabic, Chinese, Japanese, Korean, Hebrew, Russian, Thai, Hindi, etc.). For Chinese: standard Hanyu Pinyin with tone-mark diacritics (not tone numbers), word-segmented, using the correct per-context reading for heteronyms — it must match the characters exactly. Null for languages that already use Latin script."),
                         "partsOfSpeech": .schemaArray(
                             items: .schemaEnum(
                                 ["Noun", "Verb", "Adjective", "Adverb", "Pronoun", "Preposition", "Conjunction", "Interjection", "Determiner", "Phrase", "Idiom", "Sentence"]
                             ),
                             description: "One or more standard English grammatical categories. Always include — never omit."
-                        )
+                        ),
+                        "exampleSentence": .schemaNullableString("A single short, natural sentence in \(language) (native script) that uses \"word\" in realistic, level-appropriate context. The exact surface form of \"word\" should appear verbatim in the sentence so it can be blanked out for a fill-in-the-sentence exercise. Keep it to one clause where possible. Null only if a natural sentence genuinely can't be formed (e.g. a bare interjection).")
                     ],
                     required: ["word", "translation"]
                 ))
@@ -271,8 +276,10 @@ enum DeckGenerator {
         • Exactly \(amount) items in the "items" array.
         • Each "word" must be linguistically authentic in \(dialect) \(language).
         • Difficulty must match \(level).
-        • Each "translation" must read naturally in \(native).
+        • Each "translation" must read naturally in \(native) and give the single most useful primary sense.
+        • Populate "definitions" with the word's distinct common senses in \(native), primary sense first (it must match "translation"). Many words — especially Chinese characters — carry several everyday meanings; list the genuinely common ones rather than a single narrow gloss, and never lead with "surname" unless the word is used chiefly as a surname.
         • For non-Latin scripts, include accurate romanization with diacritics (for Chinese, correctly-toned Hanyu Pinyin that matches the characters).
+        • Populate "exampleSentence" with one short, natural sentence in \(language) that uses the item in realistic, \(level)-appropriate context. The exact surface form of "word" must appear verbatim in the sentence (so it can be blanked out for a fill-in-the-sentence drill). One clause is ideal; use null only when a natural sentence genuinely can't be formed.
         • Every "word" must be a REAL expression native speakers currently use — never invent, guess, or literally calque a slang term from \(native); if unsure, use a genuine common colloquialism instead.
         • All items must be on-topic for the categories above.
         • Match the requested tone: \(tonesLine).
@@ -348,7 +355,11 @@ enum DeckGenerator {
         let native = AppLanguage.currentNative.promptName
         return .schemaObject(
             properties: [
-                "meaning": .schemaString("A slightly expanded meaning or definition in \(native), max ~10 words."),
+                "meaning": .schemaString("A slightly expanded PRIMARY meaning or definition in \(native), max ~10 words. Must match the first entry of \"meanings\"."),
+                "meanings": .schemaArray(
+                    items: .schemaString("One distinct common sense in \(native), a few words each."),
+                    description: "The word's distinct common senses in \(native), most common first; the first entry must align with \"meaning\". For words with several everyday meanings (common in Chinese, e.g. 中: middle; center; China), enumerate the real senses (up to ~4). Never lead with a surname unless the word is chiefly a surname."
+                ),
                 // Parts of speech stay in English — the app matches these tags
                 // against English category names ("noun", "verb", "phrase"…).
                 "partsOfSpeech": .schemaArray(
@@ -363,7 +374,7 @@ enum DeckGenerator {
                     description: "A single uppercase token."
                 )
             ],
-            required: ["meaning", "partsOfSpeech", "pronunciation", "language", "wordFrequency", "pronunciationDifficulty"]
+            required: ["meaning", "meanings", "partsOfSpeech", "pronunciation", "language", "wordFrequency", "pronunciationDifficulty"]
         )
     }
 
@@ -375,12 +386,14 @@ enum DeckGenerator {
     ) -> String {
         let native = AppLanguage.currentNative.promptName
         return """
-        Provide structured metadata for this word. Write the "meaning" in \(native).
+        Provide structured metadata for this word. Write the "meaning" and every entry of "meanings" in \(native).
 
         Word to analyze:
         • Word: \(word)
         • \(native) translation: \(translation)
         • Source language: \(dialect) \(language)
+
+        List the word's distinct common senses in "meanings" (primary sense first, matching "meaning"). Include several when the word genuinely has multiple everyday meanings — this is common for Chinese characters — and never lead with a surname unless the word is chiefly a surname.
 
         Submit your output by calling the `submit_word_info` tool. All values must be plausible; educated estimates are acceptable.
         """

@@ -47,6 +47,63 @@ final class ChatViewModel {
     // word in an assistant bubble. Cleared on dismiss.
     var translationCallout: TranslationCallout?
 
+    // MARK: - Session progression ("picked up" this thread)
+
+    // Words/phrases the learner has gathered this conversation — sourced
+    // cheaply from tap-to-translate (no extra API). Shown as an accumulating
+    // tray the user can bank to a deck. Resets per conversation.
+    struct PickedUpItem: Identifiable, Hashable {
+        let id = UUID()
+        let foreign: String
+        let translation: String
+        let transliteration: String?
+    }
+    var pickedUp: [PickedUpItem] = []
+    // Foreign forms already banked to a deck this session, so their chip reads
+    // as saved and can't be double-added.
+    private(set) var bankedForeigns: Set<String> = []
+    // Count of corrections the tutor has made this thread — the "fixes" tally
+    // shown alongside the picked-up words (they refine what you already know
+    // rather than being new bankable vocab).
+    var refinedCount: Int = 0
+
+    private func pickedKey(_ s: String) -> String {
+        s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // Records a tapped-and-translated word into the session tray. Ignores
+    // blanks, the loading placeholder, failures, and duplicates.
+    func recordPickedUp(foreign: String, translation: String, transliteration: String?) {
+        let key = pickedKey(foreign)
+        let trimmedTranslation = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty,
+              trimmedTranslation != "…",
+              !trimmedTranslation.isEmpty,
+              trimmedTranslation != "Couldn't translate",
+              !pickedUp.contains(where: { pickedKey($0.foreign) == key })
+        else { return }
+        pickedUp.append(PickedUpItem(
+            foreign: foreign,
+            translation: trimmedTranslation,
+            transliteration: transliteration
+        ))
+    }
+
+    func isPickedUpBanked(_ item: PickedUpItem) -> Bool {
+        bankedForeigns.contains(pickedKey(item.foreign))
+    }
+
+    func markPickedUpBanked(foreign: String) {
+        bankedForeigns.insert(pickedKey(foreign))
+    }
+
+    // Wipe the session tally when the thread changes.
+    private func resetSessionProgress() {
+        pickedUp = []
+        bankedForeigns = []
+        refinedCount = 0
+    }
+
     // "I'm stuck" helper. `suggestions` holds a few candidate learner
     // replies the user can tap to drop into the input; `isSuggesting`
     // gates the loading state. Both clear when the user sends, taps a
@@ -250,6 +307,8 @@ final class ChatViewModel {
                 var stamped = current.messages[userIndex]
                 if !corrections.isEmpty {
                     stamped.corrections = corrections
+                    // Tally refinements for the session progress tray.
+                    refinedCount += corrections.count
                 }
                 if let translit = analysis.transliteration {
                     stamped.transliteration = translit
@@ -476,6 +535,7 @@ final class ChatViewModel {
         fresh.purpose = "placement"
         conversation = fresh
         translationCallout = nil
+        resetSessionProgress()
         suggestions = []
         input = ""
         errorText = nil
@@ -702,6 +762,7 @@ final class ChatViewModel {
             }
             pendingScenarioPrompt = nil
             translationCallout = nil
+        resetSessionProgress()
             await loadDecksForCurrentLanguage()
             // Learner model + due words + tutor notices, off the critical
             // path so the conversation renders immediately.
@@ -742,6 +803,7 @@ final class ChatViewModel {
         )
         pendingScenarioPrompt = nil
         translationCallout = nil
+        resetSessionProgress()
         input = ""
         errorText = nil
     }
@@ -755,6 +817,7 @@ final class ChatViewModel {
         conversation = Self.normalizeAgainstLanguageData(target)
         pendingScenarioPrompt = nil
         translationCallout = nil
+        resetSessionProgress()
         input = ""
         errorText = nil
         Task { await refreshLearnerContext() }
@@ -838,6 +901,7 @@ final class ChatViewModel {
         )
         pendingScenarioPrompt = nil
         translationCallout = nil
+        resetSessionProgress()
     }
 
     // MARK: - Translate a tapped word
@@ -866,6 +930,9 @@ final class ChatViewModel {
                 original: token,
                 translation: translation
             )
+            // A tapped-and-translated word is something they're picking up —
+            // add it to the session tray so progress accumulates as they chat.
+            recordPickedUp(foreign: token, translation: translation, transliteration: nil)
         } catch {
             guard translationCallout?.id == placeholderID else { return }
             translationCallout = TranslationCallout(

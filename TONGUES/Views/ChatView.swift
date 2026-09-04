@@ -562,10 +562,7 @@ struct ChatView: View {
                     }
                 }
                 .padding(.horizontal, 12)
-                .padding(.top, 16)
-                // Extra breathing room so the newest message doesn't sit right
-                // against the input/reply bar when scrolled to the bottom.
-                .padding(.bottom, 28)
+                .padding(.vertical, 16)
             }
             .onChange(of: vm.conversation?.messages.count) { _, _ in
                 guard let last = vm.conversation?.messages.last else { return }

@@ -101,6 +101,9 @@ struct ChatView: View {
                     }
 
                 inputBar
+                    // Breathing room between the last message and the top edge
+                    // of the reply window, contributed by the reply window side.
+                    .padding(.top, 12)
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -135,16 +135,25 @@ struct ChatView: View {
                 ToolbarSpacer(.fixed, placement: .topBarTrailing)
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        // Tone of the AI partner. Reflected live in the chat
-                        // (see ChatViewModel.bedsideManner) and in this icon's tint.
-                        Picker(selection: $bedsideManner) {
+                        // Tone of the AI partner, in its own submenu. Reflected
+                        // live in the chat (see ChatViewModel.bedsideManner) and
+                        // in the AI avatar's color.
+                        Menu {
                             ForEach(BedsideManner.allCases) { manner in
-                                Text(L(manner.displayName)).tag(manner)
+                                Button {
+                                    Haptics.light()
+                                    bedsideManner = manner
+                                } label: {
+                                    if bedsideManner == manner {
+                                        Label(L(manner.displayName), systemImage: "checkmark")
+                                    } else {
+                                        Text(L(manner.displayName))
+                                    }
+                                }
                             }
                         } label: {
                             Label(L("Bedside Manner"), systemImage: "theatermasks")
                         }
-                        .onChange(of: bedsideManner) { _, _ in Haptics.light() }
 
                         Button {
                             Haptics.light()

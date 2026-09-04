@@ -163,7 +163,7 @@ struct ChatView: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis")
-                            .foregroundStyle(bedsideManner.iconColor)
+                            .foregroundStyle(.black)
                     }
                 }
             }
@@ -761,7 +761,8 @@ struct ChatView: View {
                     AISandAvatarView(
                         size: avatarSize,
                         active: message.id == lastAssistantMessageID
-                            || message.id == speakingMessageID
+                            || message.id == speakingMessageID,
+                        tone: bedsideManner
                     )
                 }
                 if isUser { Spacer(minLength: 40) }

@@ -166,19 +166,23 @@ static float aiFbm(float2 p) {
                                     half4 color,
                                     float2 size,
                                     float time,
-                                    float amplitude) {
+                                    float amplitude,
+                                    float3 rimColor,
+                                    float3 coreColor) {
     float amp = clamp(amplitude, 0.0, 1.0);
 
     // Centered, y-normalized coordinates: the inscribed circle edge is r = 0.5.
     float2 uv = (position - 0.5 * size) / size.y;
     float r = length(uv);
 
-    half3 rimBlue  = half3(0.349h, 0.486h, 0.698h);  // #597CB2 base at the edge
-    half3 coreBlue = half3(0.53h, 0.69h, 0.89h);     // brighter blue center
+    // Disc palette supplied by the caller (varies with the chat's bedside
+    // manner): `rimBlue` is the edge base, `coreBlue` the brighter center.
+    half3 rimBlue  = half3(rimColor);
+    half3 coreBlue = half3(coreColor);
     half3 white    = half3(1.0h, 1.0h, 1.0h);        // liquid
 
-    // Background is a radial gradient: a bright blue core easing out to the
-    // base blue at the rim (no white — the disc stays blue edge to edge).
+    // Background is a radial gradient: a bright core easing out to the base
+    // color at the rim (no white — the disc stays tinted edge to edge).
     float centerGlow = exp(-r * r * 4.0);
     half3 col = mix(rimBlue, coreBlue, half(centerGlow));
 

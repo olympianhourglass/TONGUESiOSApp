@@ -100,8 +100,6 @@ struct ChatView: View {
                         Color.clear.frame(height: removedHeaderOffset)
                     }
 
-                pickedUpTray
-
                 inputBar
             }
             .navigationBarTitleDisplayMode(.inline)
@@ -637,76 +635,6 @@ struct ChatView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 24)
-    }
-
-    // A slim, horizontally-scrolling row of words the learner has picked up this
-    // conversation (from tapping to translate), each tappable to bank to a deck.
-    // Ambient: only appears once there's something to show, and never blocks the
-    // chat. The tally folds in tutor "fixes" so refinements count too.
-    @ViewBuilder
-    private var pickedUpTray: some View {
-        if !vm.pickedUp.isEmpty {
-            VStack(spacing: 0) {
-                Divider().opacity(0.4)
-                HStack(spacing: 10) {
-                    Text(trayTallyText)
-                        .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(12)))
-                        .foregroundStyle(.secondary)
-                        .fixedSize()
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(vm.pickedUp) { item in
-                                pickedUpChip(item)
-                            }
-                        }
-                        .padding(.trailing, 12)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            .background(.bar)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-            .animation(.spring(response: 0.4, dampingFraction: 0.85), value: vm.pickedUp.count)
-        }
-    }
-
-    private var trayTallyText: String {
-        if vm.refinedCount > 0 {
-            return L("%d picked up · %d fixes", vm.pickedUp.count, vm.refinedCount)
-        }
-        return L("%d picked up", vm.pickedUp.count)
-    }
-
-    private func pickedUpChip(_ item: ChatViewModel.PickedUpItem) -> some View {
-        let banked = vm.isPickedUpBanked(item)
-        return Button {
-            Haptics.light()
-            guard !banked else { return }
-            saveSourceMessageID = nil
-            saveSourcePickedForeign = item.foreign
-            saveSheetItem = vm.makeItemForSave(
-                foreign: item.foreign,
-                translation: item.translation,
-                transliteration: item.transliteration
-            )
-        } label: {
-            HStack(spacing: 6) {
-                Text(item.foreign)
-                    .font(.custom("NeueHaasDisplay-Mediu", size: MacLayout.f(13)))
-                    .foregroundStyle(banked ? Color.secondary : Color.primary)
-                    .lineLimit(1)
-                Image(systemName: banked ? "checkmark" : "plus")
-                    .font(.system(size: MacLayout.f(10), weight: .semibold))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(Color(libraryHex: "F4F4F4")))
-            .overlay(Capsule().stroke(Color.black.opacity(0.06), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .disabled(banked)
     }
 
     // Placeholder chat bubbles shown while a conversation loads, mirroring the

@@ -27,13 +27,23 @@ enum BedsideManner: String, CaseIterable, Identifiable {
         }
     }
 
-    // Tint for the overflow (•••) icon: purple = Direct (the default), a light
-    // green = Warm, red = Withering.
-    var iconColor: Color {
+    // Radial-gradient colors for the AI sand-avatar disc, per manner: Direct
+    // keeps the app's current blue, Warm is a light green, Withering is red.
+    // `discRim` is the base color at the disc's edge; `discCore` is the brighter
+    // center glow. Passed to the aiSandAvatar Metal shader as float3s.
+    var discRim: SIMD3<Float> {
         switch self {
-        case .warm:      return Color(libraryHex: "5FB27A")   // light green
-        case .direct:    return Color(libraryHex: "7C5CFF")   // purple (default)
-        case .withering: return Color(libraryHex: "D6453F")   // red
+        case .warm:      return SIMD3(0.373, 0.698, 0.478)   // green
+        case .direct:    return SIMD3(0.349, 0.486, 0.698)   // #597CB2 blue
+        case .withering: return SIMD3(0.780, 0.110, 0.120)   // red
+        }
+    }
+
+    var discCore: SIMD3<Float> {
+        switch self {
+        case .warm:      return SIMD3(0.550, 0.820, 0.620)
+        case .direct:    return SIMD3(0.530, 0.690, 0.890)
+        case .withering: return SIMD3(0.970, 0.340, 0.400)
         }
     }
 

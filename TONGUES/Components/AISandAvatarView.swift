@@ -26,6 +26,10 @@ struct AISandAvatarView: View {
     /// loud/quiet frame. `nil` reads `SpeechClient.shared.playbackLevel`.
     var previewLevel: Float? = nil
 
+    /// The chat's bedside manner, which tints the disc: Direct = blue (default),
+    /// Warm = green, Withering = red.
+    var tone: BedsideManner = .direct
+
     var body: some View {
         Group {
             if active {
@@ -58,7 +62,9 @@ struct AISandAvatarView: View {
                 ShaderLibrary.aiSandAvatar(
                     .float2(Float(size), Float(size)),
                     .float(time),
-                    .float(level)
+                    .float(level),
+                    .float3(tone.discRim.x, tone.discRim.y, tone.discRim.z),
+                    .float3(tone.discCore.x, tone.discCore.y, tone.discCore.z)
                 )
             )
             .frame(width: size, height: size)

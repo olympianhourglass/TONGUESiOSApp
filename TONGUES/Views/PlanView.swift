@@ -110,7 +110,7 @@ struct PlanView: View {
             if let toast = vm.toast {
                 Text(toast)
                     .font(.custom("NeueHaasDisplay-Mediu", size: 14))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(Color.toastForeground)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 9)
                     .background(Color.toastBackground, in: Capsule())

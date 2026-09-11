@@ -136,7 +136,7 @@ struct DeckResultsView: View {
                 }
 
                 HStack(spacing: 8) {
-                    ActionCard(title: L("Regenerate"), systemImage: "arrow.2.circlepath", isPrimary: false) {
+                    ActionCard(title: L("Regenerate"), systemImage: "arrow.2.circlepath", isPrimary: false, glass: true) {
                         Haptics.light()
                         onRegenerate()
                     }
@@ -144,13 +144,14 @@ struct DeckResultsView: View {
                     ActionCard(
                         title: isSaving ? L("Saving…") : L("Create New Deck"),
                         systemImage: isSaving ? "arrow.up.circle" : "square.stack.3d.up",
-                        isPrimary: false
+                        isPrimary: false,
+                        glass: true
                     ) {
                         Haptics.medium()
                         showCoverCustomization = true
                     }
                     .disabled(isSaving)
-                    ActionCard(title: L("Add to Deck"), systemImage: "plus.circle", isPrimary: true) {
+                    ActionCard(title: L("Add to Deck"), systemImage: "plus.circle", isPrimary: true, glass: true) {
                         Haptics.medium()
                         showAddToDeck = true
                     }
@@ -628,6 +629,11 @@ struct ActionCard: View {
     // inverted Camera page): the primary card becomes white-on-black text,
     // the secondary card becomes an outlined white-on-dark chip.
     var inverted: Bool = false
+    // When true, the card's flat fill + border is replaced with a Liquid
+    // Glass surface (used by the post-generation Regenerate / Create New
+    // Deck / Add to Deck row). Primary cards get a dark-tinted glass with
+    // white text; secondary cards get plain interactive glass.
+    var glass: Bool = false
     let action: () -> Void
 
     private var foreground: Color {
@@ -645,25 +651,39 @@ struct ActionCard: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 10) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 24))
-                Text(title)
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .foregroundStyle(foreground)
-            .frame(maxWidth: .infinity)
-            .frame(height: 92)
-            .background(background)
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(border, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            cardLabel
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var cardLabel: some View {
+        let stack = VStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 24))
+            Text(title)
+                .font(.system(size: 13))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .foregroundStyle(foreground)
+        .frame(maxWidth: .infinity)
+        .frame(height: 92)
+
+        if glass {
+            stack.glassEffect(
+                isPrimary ? .regular.tint(.black).interactive() : .regular.interactive(),
+                in: .rect(cornerRadius: 8)
+            )
+        } else {
+            stack
+                .background(background)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(border, lineWidth: 1)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
     }
 }
 

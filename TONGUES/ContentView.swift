@@ -15,6 +15,10 @@ struct ContentView: View {
     @State private var coach = FirstRunCoachController.shared
     // Drives the first-run native-language picker + the app-wide UI language.
     @State private var localizer = Localizer.shared
+    // Hosts the audio listening session at the app root so it survives a
+    // pull-down into the floating mini-bar above the tab bar (Apple Music-style)
+    // and keeps playing across tab switches.
+    @State private var listenHost = ListenSessionHost.shared
     private var selectedTab: Binding<AppTab> {
         Binding(
             get: { tabRouter.current },
@@ -92,6 +96,18 @@ struct ContentView: View {
                 .onAppear { onboardingInProgress = true }
             }
 
+            // The listening session lives above the tab bar so its full-screen
+            // player covers the bar when expanded, and its mini-bar floats over
+            // the bar when collapsed. Kept mounted for the whole session so the
+            // audio never stops on a pull-down. `.id` restarts it when a
+            // different deck is presented.
+            if let deck = listenHost.deck {
+                ListenSessionView(deck: deck)
+                    .id(deck.id)
+                    .transition(.move(edge: .bottom))
+                    .zIndex(1)
+            }
+
             if coach.isPresented {
                 firstRunCoachLayer
             }
@@ -159,7 +175,13 @@ struct ContentView: View {
         // onboarding lands, because the hosting controller can be
         // (re)created at any of those moments and the swap has to
         // run against the new instance.
-        .onChange(of: tabRouter.current) { _, _ in
+        .onChange(of: tabRouter.current) { _, newTab in
+            // Chat owns the audio route (mic + spoken replies), so a listening
+            // session can't coexist there: entering Chat stops the playlist and
+            // dismisses the mini-bar, letting the chat interface take over.
+            if newTab == .chat, listenHost.deck != nil {
+                listenHost.end()
+            }
             tabRouter.applyStatusBarStyle()
         }
         .onChange(of: isShowingSplash) { _, _ in

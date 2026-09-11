@@ -379,7 +379,7 @@ struct PremiumActionSheet: View {
                         .foregroundStyle(.black)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.toastBackground))
+                        .background(Capsule().fill(Color.white))
                 }
                 Text(selectedTier.headline)
                     .font(.custom("NeueHaasDisplay-Mediu", size: 26))
@@ -539,7 +539,7 @@ struct PremiumActionSheet: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(
-                                Capsule().fill(Color.toastBackground)
+                                Capsule().fill(Color.white)
                             )
                     }
                 }
@@ -683,7 +683,7 @@ struct PremiumActionSheet: View {
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .background(Color.toastBackground)
+                .background(Color.white)
                 // Fully rounded in every state (idle, purchasing, disabled).
                 .clipShape(Capsule())
             }

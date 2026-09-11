@@ -2,9 +2,16 @@ import SwiftUI
 import Observation
 
 extension Color {
-    // Shared background for every toast in the app (XP awards, session
-    // complete, save confirmations, etc.). Toasts pair this with black text.
-    static let toastBackground = Color(red: 0xE5/255, green: 0xFF/255, blue: 0x00/255)
+    // Shared styling for every toast in the app (XP awards, session
+    // complete, save confirmations, etc.): a black capsule paired with
+    // white text (`toastForeground`).
+    static let toastBackground = Color.black
+    static let toastForeground = Color.white
+
+    // Lime accent reused by the Premium sheet's chips and CTA buttons.
+    // Not a toast — kept separate so the toast treatment can change
+    // independently of the Premium sheet's lime look.
+    static let premiumLime = Color(red: 0xE5/255, green: 0xFF/255, blue: 0x00/255)
 }
 
 // Global, fire-and-forget XP toast system. Anywhere in the app can call
@@ -90,28 +97,28 @@ struct XPToastView: View {
                 HStack(spacing: 8) {
                     Image(systemName: icon)
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Color.toastForeground)
                     Text(L("Achievement unlocked"))
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Color.toastForeground)
                     Text("·")
                         .font(.system(size: 14))
-                        .foregroundStyle(.black.opacity(0.5))
+                        .foregroundStyle(Color.toastForeground.opacity(0.5))
                     Text(L(toast.reason))
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Color.toastForeground)
                 }
             } else {
                 HStack(spacing: 8) {
                     Text("+\(toast.amount) XP")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Color.toastForeground)
                     Text("·")
                         .font(.system(size: 14))
-                        .foregroundStyle(.black.opacity(0.5))
+                        .foregroundStyle(Color.toastForeground.opacity(0.5))
                     Text(toast.reason)
                         .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Color.toastForeground)
                 }
             }
         }

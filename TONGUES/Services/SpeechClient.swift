@@ -35,6 +35,14 @@ final class SpeechClient {
     // seconds.
     var statusMessage: String?
 
+    // True from the moment a network-backed voice (ElevenLabs) starts being
+    // FETCHED until playback actually begins — or the request falls back to
+    // Apple/Forvo, or is cancelled. Lets a "Read aloud" control show a spinner
+    // during the first, uncached fetch (which can take several seconds);
+    // subsequent reads hit the disk cache and flip this only for an instant.
+    // Audio that's actively playing is reflected by `isSpeaking`, not this.
+    private(set) var isPreparingAudio = false
+
     // Details of the most recent playback, surfaced by the audio-source chip's
     // audit sheet: it shows the engine/voice and, for ElevenLabs, offers a
     // regenerate. Set at every play point.
@@ -119,6 +127,9 @@ final class SpeechClient {
         // found, API/playback error) falls through to the Apple/Forvo tiers,
         // so this only ever upgrades quality — it never removes a fallback.
         if let language, ElevenLabsClient.isConfigured {
+            // Fetching the native voice — surface the spinner until playback
+            // starts (play/playWithAlignment) or we drop to a fallback tier.
+            isPreparingAudio = true
             activeTask = Task { [weak self] in
                 guard let self else { return }
                 if highlightPassage {
@@ -162,6 +173,9 @@ final class SpeechClient {
     // configured or its native-voice attempt fails. Assumes `speak` has
     // already torn down any in-flight playback and set `pendingCompletion`.
     private func fallbackSpeak(_ trimmed: String, language: String?, allowForvo: Bool, rate: Float, pronunciation: String? = nil) {
+        // No longer waiting on the ElevenLabs fetch — Apple TTS is instant and
+        // Forvo is a quick word lookup, so the spinner should give way now.
+        isPreparingAudio = false
         // Preferred fallback: Forvo native-speaker recording (single-word
         // lookups only) — a real human voice, so it's chosen over Apple TTS.
         // On a miss or error the Forvo task itself drops to Apple TTS. This is
@@ -301,6 +315,7 @@ final class SpeechClient {
         player?.stop()
         appleSynth.stopSpeaking(at: .immediate)
         currentSpokenWordRange = nil
+        isPreparingAudio = false
     }
 
     // True while audio is actively being produced (Apple TTS, Forvo recording,
@@ -492,6 +507,8 @@ final class SpeechClient {
     }
 
     private func play(data: Data, rate: Float = 1.0) throws {
+        // Audio in hand — playback is starting, so drop the fetch spinner.
+        isPreparingAudio = false
         let session = AVAudioSession.sharedInstance()
         do {
             try session.setCategory(.playback, mode: .spokenAudio, options: [])

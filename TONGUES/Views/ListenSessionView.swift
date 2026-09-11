@@ -4,8 +4,12 @@ import AVFoundation
 import UIKit
 
 struct ListenSessionView: View {
-    @Environment(\.dismiss) private var dismiss
     let deck: DeckDocument
+
+    // The app-root host that keeps this view mounted across minimize/expand.
+    // Reading it here makes the body react to `isMinimized` and the shared
+    // Create New Deck button frame that positions the mini-bar.
+    @State private var host = ListenSessionHost.shared
 
     // Hardware-keyboard transport (iPad/Mac): ← acts as Back, → as Next. A
     // focusable container receives the key presses.
@@ -15,6 +19,16 @@ struct ListenSessionView: View {
     @State private var currentIndex = 0
     @State private var isPaused = false
     @State private var dragOffset: CGFloat = 0
+    // True for the brief window while the sheet is sliding up/down. The
+    // breathing radial gradient is paused during it so a static, cheap backdrop
+    // translates cleanly with the text instead of re-rendering per-frame mid
+    // transition (which caused the lag + the background trailing the text).
+    @State private var isAnimatingPresentation = false
+    // The window's safe-area insets, measured from a context that respects
+    // them. The full player ignores the safe area as ONE layer (so the backdrop
+    // and text slide together with no screen-anchored bleed mismatch), then the
+    // controls are pushed back inside the safe area using these.
+    @State private var safeAreaInsets = EdgeInsets()
     @State private var volume: Double = 0.08
     @State private var autoPlay = false
     @State private var advanceTask: Task<Void, Never>?
@@ -74,8 +88,14 @@ struct ListenSessionView: View {
 
     private var totalCount: Int { deck.items.count }
     private var currentItem: GeneratedItem? {
-        guard currentIndex >= 0, currentIndex < playOrder.count else { return nil }
-        let deckIdx = playOrder[currentIndex]
+        // Before onAppear populates `playOrder`, fall back to natural deck order
+        // so the first word/translation are on screen from the VERY FIRST frame
+        // of the present slide. Otherwise the text has no content at mount and
+        // pops in a beat after the sheet has started rising — which reads as the
+        // text sliding in slower than the backdrop.
+        let order = playOrder.isEmpty ? Array(0..<deck.items.count) : playOrder
+        guard currentIndex >= 0, currentIndex < order.count else { return nil }
+        let deckIdx = order[currentIndex]
         guard deckIdx < deck.items.count else { return nil }
         return deck.items[deckIdx]
     }
@@ -100,103 +120,31 @@ struct ListenSessionView: View {
     private var isAtLast: Bool { currentIndex >= totalCount - 1 }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+        ZStack {
+            if host.isMinimized {
+                miniBarLayer
+                    .transition(.opacity)
+            } else {
+                // A pure slide (no opacity fade): the backdrop is opaque from
+                // the first frame, so the text rises glued to the background
+                // instead of fading in ahead of it.
+                fullPlayer
+                    .transition(.move(edge: .bottom))
+            }
+        }
+        // Measure the safe-area insets from this (non-ignoring) context so the
+        // full player can ignore the safe area as one layer yet still inset its
+        // controls correctly.
+        .background(
             GeometryReader { geo in
-                // Center at top, oversized endRadius (~2x the larger screen
-                // dimension) so the visible part of the gradient is only a small
-                // slice of the full radial spread — gives the smooth Figma feel
-                // produced by dragging the radial-handle far past the canvas.
-                // The radius gently breathes over a ~9-second period; amplitude
-                // is small (≤4%) so the motion stays subtle, and slightly
-                // boosted while audio is playing for an audio-visualizer feel.
-                let t = context.date.timeIntervalSinceReferenceDate
-                let phase = sin(t * .pi * 2 / 9.0) * 0.5 + 0.5  // 0…1
-                let amplitude: Double = SpeechClient.shared.isSpeaking ? 0.04 : 0.015
-                let breath = 1.0 + phase * amplitude
-                let stops = selectedGradientTheme.colors
-                RadialGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: stops[0], location: 0.0),
-                        .init(color: stops[1], location: 0.167),
-                        .init(color: stops[2], location: 0.5)
-                    ]),
-                    center: .top,
-                    startRadius: 0,
-                    endRadius: max(geo.size.width, geo.size.height) * 2 * breath
-                )
+                Color.clear
+                    .onAppear { safeAreaInsets = geo.safeAreaInsets }
+                    .onChange(of: geo.safeAreaInsets) { _, new in safeAreaInsets = new }
             }
-        }
-        .clipShape(.rect(topLeadingRadius: 16, topTrailingRadius: 16))
-        .ignoresSafeArea()
-        .overlay {
-            VStack(spacing: 0) {
-                topBar
-                    .padding(.horizontal, 8)
-                    .padding(.top, 16)
-
-                Spacer(minLength: 0)
-
-                wordSection
-                    .padding(.horizontal, 8)
-
-                Spacer(minLength: 0)
-
-                bottomControls
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 28)
-
-                bottomMeta
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 40)
-            }
-        }
-        .presentationBackground(.clear)
-        .offset(y: dragOffset)
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    // Only follow downward drags so the view doesn't slide
-                    // horizontally during left/right swipes.
-                    let v = value.translation.height
-                    let h = value.translation.width
-                    dragOffset = abs(v) > abs(h) ? max(0, v) : 0
-                }
-                .onEnded { value in
-                    let v = value.translation.height
-                    let h = value.translation.width
-                    let pv = value.predictedEndTranslation.height
-                    let ph = value.predictedEndTranslation.width
-
-                    // Horizontal swipe takes precedence when its travel
-                    // dominates the vertical component.
-                    if abs(h) > abs(v),
-                       abs(h) > 60 || abs(ph) > 120 {
-                        if h < 0 {
-                            goNext()
-                        } else {
-                            goBack()
-                        }
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            dragOffset = 0
-                        }
-                        return
-                    }
-
-                    // Otherwise treat as swipe-down-to-dismiss.
-                    if v > 120 || pv > 220 {
-                        Haptics.light()
-                        dismiss()
-                    } else {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            dragOffset = 0
-                        }
-                    }
-                }
         )
-        // Re-classes the status bar to white once the full-screen cover's
-        // hosting controller is actually on screen — reliable where the
-        // onAppear timing passes below can miss the freshly-presented
-        // controller (e.g. when opened from a pushed DeckDetailView).
+        // Session-lifetime hooks live on this always-mounted container so they
+        // fire once per session (start / true end) — the mini-bar keeps the
+        // view mounted across a minimize, so onDisappear must NOT run then.
         .background(StatusBarRefresher().frame(width: 0, height: 0))
         // Hardware-keyboard transport (iPad/Mac): ← = Back, → = Next. The
         // focusable container receives the key presses; the focus ring is
@@ -213,14 +161,10 @@ struct ListenSessionView: View {
             // light-content tab like Explore. Force the light override on
             // (it wins over both the tab style and the dark override) and
             // re-run the runtime swap against the freshly-presented
-            // fullScreenCover hosting controller.
+            // hosting controller.
             AppTabRouter.shared.forceLightStatusBar = true
-            // The flag's didSet installs the swap immediately, but the
-            // fullScreenCover's hosting controller often isn't in the
-            // window hierarchy yet at onAppear, so that first pass can
-            // miss it and the bar stays dark. Re-assert on the next
-            // runloop and again once the present animation has settled so
-            // the presented controller is reliably re-classed to white.
+            // Pause the breathing gradient while the present slide plays.
+            beginPresentationAnimation()
             DispatchQueue.main.async { StatusBarStyleSwap.installAndRefresh() }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                 guard AppTabRouter.shared.forceLightStatusBar else { return }
@@ -235,22 +179,27 @@ struct ListenSessionView: View {
             if currentIndex < playOrder.count {
                 advancedDeckIndices.insert(playOrder[currentIndex])
             }
+            // Kick off speech RIGHT AWAY so the first (uncached) ElevenLabs
+            // fetch overlaps the present slide instead of starting 0.4s after
+            // it. These calls are light on the main thread — the network fetch
+            // runs in an async Task — so the slide stays smooth. Only the
+            // ambient beds' on-disk AVAudioPlayer decode actually hitched the
+            // transition, so that alone stays deferred until the sheet settles.
             configureRemoteCommands()
             updateNowPlayingInfo()
             playCurrent()
-            // Resume any previously-chosen ambient tracks, layered under
-            // the study audio.
-            ambient.set(ambientSoundId, for: .sound)
-            ambient.set(ambientMusicId, for: .music)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                startAmbientBeds()
+            }
             // Take focus so the ← / → keys drive transport immediately.
             if supportsArrowKeyNav {
                 keyboardNavFocused = true
             }
         }
         .onDisappear {
-            // Release the white-bar override so the presenter (a tab or
-            // DeckDetailView) reclaims its own status-bar style. That view's
-            // own onChange/onDisappear then restores the correct bar.
+            // Fires only on a genuine end (deck cleared on the host), not on
+            // minimize. Release the white-bar override so the presenter
+            // reclaims its own status-bar style, then tear down playback.
             AppTabRouter.shared.forceLightStatusBar = false
             advanceTask?.cancel()
             advanceTask = nil
@@ -291,12 +240,328 @@ struct ListenSessionView: View {
                 advanceTask = nil
             }
         }
+        // Minimizing hands the status bar back to the tab underneath; expanding
+        // re-asserts the white override over the full-screen backdrop.
+        .onChange(of: host.isMinimized) { _, minimized in
+            if minimized {
+                AppTabRouter.shared.forceLightStatusBar = false
+                AppTabRouter.shared.applyStatusBarStyle()
+            } else {
+                AppTabRouter.shared.forceLightStatusBar = true
+                StatusBarStyleSwap.installAndRefresh()
+            }
+        }
+    }
+
+    // MARK: Full-screen player
+
+    private var fullPlayer: some View {
+        // Backdrop and controls are SIBLINGS in one ZStack that ignores the safe
+        // area as a whole, so the move transition slides the entire composited
+        // layer up together. (With the controls as an `.overlay` on a separately
+        // safe-area-ignoring backdrop, the transition translated the backdrop
+        // while the text rendered at rest — reading as "text arrives first".)
+        ZStack {
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: isAnimatingPresentation)) { context in
+                GeometryReader { geo in
+                // Center at top, oversized endRadius (~2x the larger screen
+                // dimension) so the visible part of the gradient is only a small
+                // slice of the full radial spread — gives the smooth Figma feel
+                // produced by dragging the radial-handle far past the canvas.
+                // The radius gently breathes over a ~9-second period; amplitude
+                // is small (≤4%) so the motion stays subtle, and slightly
+                // boosted while audio is playing for an audio-visualizer feel.
+                let t = context.date.timeIntervalSinceReferenceDate
+                let phase = sin(t * .pi * 2 / 9.0) * 0.5 + 0.5  // 0…1
+                let amplitude: Double = SpeechClient.shared.isSpeaking ? 0.04 : 0.015
+                let breath = 1.0 + phase * amplitude
+                let stops = selectedGradientTheme.colors
+                RadialGradient(
+                    gradient: Gradient(stops: [
+                        .init(color: stops[0], location: 0.0),
+                        .init(color: stops[1], location: 0.167),
+                        .init(color: stops[2], location: 0.5)
+                    ]),
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: max(geo.size.width, geo.size.height) * 2 * breath
+                )
+            }
+        }
+            .clipShape(.rect(topLeadingRadius: 16, topTrailingRadius: 16))
+
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.horizontal, 8)
+                    .padding(.top, 16)
+
+                Spacer(minLength: 0)
+
+                wordSection
+                    .padding(.horizontal, 8)
+
+                Spacer(minLength: 0)
+
+                bottomControls
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 28)
+
+                bottomMeta
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 40)
+            }
+            // Push the controls back inside the safe area (the whole ZStack
+            // ignores it below), so "SKIP TO END" and the transport stay clear
+            // of the status bar / home indicator — the original spacing.
+            .padding(.top, safeAreaInsets.top)
+            .padding(.bottom, safeAreaInsets.bottom)
+        }
+        // Ignore the safe area on the WHOLE player as a single layer, so the
+        // backdrop and controls slide together — no screen-anchored bleed that
+        // makes the gradient outrun the text.
+        .ignoresSafeArea()
+        .offset(y: dragOffset)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    // Only follow downward drags so the view doesn't slide
+                    // horizontally during left/right swipes.
+                    let v = value.translation.height
+                    let h = value.translation.width
+                    dragOffset = abs(v) > abs(h) ? max(0, v) : 0
+                }
+                .onEnded { value in
+                    let v = value.translation.height
+                    let h = value.translation.width
+                    let pv = value.predictedEndTranslation.height
+                    let ph = value.predictedEndTranslation.width
+
+                    // Horizontal swipe takes precedence when its travel
+                    // dominates the vertical component.
+                    if abs(h) > abs(v),
+                       abs(h) > 60 || abs(ph) > 120 {
+                        if h < 0 {
+                            goNext()
+                        } else {
+                            goBack()
+                        }
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            dragOffset = 0
+                        }
+                        return
+                    }
+
+                    // Otherwise treat as swipe-down-to-MINIMIZE: the session
+                    // collapses into the floating mini-bar above the tab bar
+                    // (Apple Music-style) and keeps playing, rather than
+                    // disappearing.
+                    if v > 120 || pv > 220 {
+                        // Don't snap dragOffset back to 0 here — that would jump
+                        // the player up for a frame before the move-down removal
+                        // transition slides it away (the flash the user saw). It
+                        // keeps its dragged offset and slides straight down;
+                        // expandSession() zeroes it before the next present.
+                        minimizeSession()
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            dragOffset = 0
+                        }
+                    }
+                }
+        )
         .overlay {
             if showOptions {
                 optionsPanel
                     .transition(.opacity)
             }
         }
+    }
+
+    // MARK: Floating mini-bar
+
+    // Collapsed state: a floating control bar above the tab bar. On the Study
+    // tab it stops 8pt short of the Create New Deck button and matches its
+    // height; on every other tab it spans the full tab-bar width. Positioned in
+    // global space (the GeometryReader ignores the safe area, so local ==
+    // global) off the Study button's measured frame — which also supplies the
+    // vertical anchor, since the tab bar sits at the same height on every tab.
+    private var miniBarLayer: some View {
+        // Read the current tab and dismiss/hide flags here in the view body —
+        // not inside the GeometryReader closure — so @Observable tracking
+        // reliably reflows the width when the tab changes.
+        let btn = host.createButtonFrame
+        let hasButtonFrame = btn != .zero
+        // The bar takes the default full tab-bar width everywhere; it only
+        // shortens when the Create New Deck button is actually on screen to its
+        // right — the Study home screen with nothing pushed over it. Pushing a
+        // detail page hides the button, so the bar reclaims the full width.
+        let createButtonOnRight = hasButtonFrame
+            && AppTabRouter.shared.current == .study
+            && host.createButtonVisible
+        // Withhold the bar on full-bleed screens (Statistics) and while it's
+        // dissolving away — the session keeps playing regardless.
+        let showBar = !host.isDismissing && !host.hideMiniBar
+
+        return GeometryReader { geo in
+            // Strip the button's 8pt invisible tap halo to recover the visible
+            // capsule metrics the bar mirrors. Fallbacks cover the rare case
+            // where Study hasn't laid out yet (session started from Library).
+            let barHeight = hasButtonFrame ? btn.height - 16 : 52
+            let barBottom = hasButtonFrame ? btn.maxY - 8 : geo.size.height - 91
+            let barTop = barBottom - barHeight
+            // Inset 16pt on the leading side (mirroring the Create button's own
+            // trailing inset). Trailing edge is 8pt from the visible Create
+            // button on Study — its 8pt halo makes `btn.minX` exactly that gap
+            // — otherwise the matching 16pt inset for the full default width.
+            let leftX: CGFloat = 16
+            let rightX = createButtonOnRight ? btn.minX : geo.size.width - 16
+            let barWidth = max(0, rightX - leftX)
+
+            // Removing the bar within the container makes its Liquid Glass melt
+            // out via the materialize transition — the Apple-native dissolve —
+            // rather than a hand-rolled fade. `dismissMiniBar()` flips
+            // `isDismissing`, which drops it here and, on Study, morphs the
+            // Create button back to full size.
+            GlassEffectContainer {
+                if showBar {
+                    miniBar(height: barHeight)
+                        .glassEffectTransition(.materialize)
+                        .frame(width: barWidth, height: barHeight)
+                        .position(x: leftX + barWidth / 2, y: barTop + barHeight / 2)
+                }
+            }
+        }
+        .ignoresSafeArea()
+    }
+
+    private func miniBar(height: CGFloat) -> some View {
+        let theme = selectedGradientTheme
+        // Controls stay white on the mini-bar regardless of the chosen theme.
+        let fg: Color = .white
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text(currentItem?.word ?? deck.title)
+                    .font(.custom("NeueHaasDisplay-Mediu", size: 15))
+                    .foregroundStyle(fg)
+                    .lineLimit(1)
+                if let translation = currentItem?.translation {
+                    Text(translation)
+                        .font(.custom("NeueHaasDisplay-Light", size: 12))
+                        .foregroundStyle(fg.opacity(0.7))
+                        .lineLimit(1)
+                }
+            }
+            // The label area is the large hit target: tap to re-expand, or
+            // swipe it back down to dismiss the session entirely. Kept off the
+            // transport buttons so their taps aren't swallowed. `.lineLimit(1)`
+            // tail-truncates each line, so the text quietly gives up width to
+            // the transport cluster rather than pushing it off the capsule.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { expandSession() }
+            .gesture(
+                DragGesture(minimumDistance: 20)
+                    .onEnded { value in
+                        // Swipe LEFT (or down) melts the control away with the
+                        // Liquid Glass materialize transition and stops the
+                        // playlist.
+                        let h = value.translation.width
+                        let v = value.translation.height
+                        if h < -40 || value.predictedEndTranslation.width < -80 || v > 24 {
+                            host.dismissMiniBar()
+                        }
+                    }
+            )
+
+            // Back / play-pause / next, clustered tightly on the trailing side.
+            HStack(spacing: 2) {
+                Button {
+                    goBack()
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(fg)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(isAtFirst)
+                .opacity(isAtFirst ? 0.4 : 1)
+
+                Button {
+                    togglePause()
+                } label: {
+                    Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                        .font(.system(size: 18))
+                        .foregroundStyle(fg)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    goNext()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(fg)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .frame(height: height)
+        // An animated lava-lamp mesh in the user's chosen session colors churns
+        // beneath clear Liquid Glass — the same crashing-colors treatment the
+        // Create New Deck button used, now floating over that palette.
+        .background {
+            LavaLampGradient(colors: theme.lavaPalette)
+                .clipShape(Capsule())
+        }
+        .glassEffect(.clear.interactive(), in: .capsule)
+        .shadow(color: .black.opacity(0.18), radius: 10, x: 0, y: 6)
+    }
+
+    // The ambient beds decode their mp3s off disk on the main thread, which
+    // hitches the present slide — so they start a beat after onAppear, once the
+    // sheet has settled. No-ops if the session was dismissed in that window.
+    private func startAmbientBeds() {
+        guard host.deck != nil else { return }
+        ambient.set(ambientSoundId, for: .sound)
+        ambient.set(ambientMusicId, for: .music)
+    }
+
+    // MARK: Session transitions
+
+    // Pauses the breathing gradient for the duration of a slide so the sheet
+    // animates smoothly, then resumes it once the sheet has settled.
+    private func beginPresentationAnimation() {
+        isAnimatingPresentation = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+            isAnimatingPresentation = false
+        }
+    }
+
+    private func minimizeSession() {
+        Haptics.light()
+        beginPresentationAnimation()
+        host.minimize()
+    }
+
+    private func expandSession() {
+        Haptics.light()
+        // Clear any leftover drag from the minimize gesture so the full player
+        // presents cleanly at rest rather than pre-offset downward.
+        dragOffset = 0
+        beginPresentationAnimation()
+        host.expand()
+    }
+
+    private func endSession() {
+        host.end()
     }
 
     // MARK: Sections
@@ -307,7 +572,7 @@ struct ListenSessionView: View {
                 Spacer()
                 Button {
                     Haptics.light()
-                    dismiss()
+                    endSession()
                 } label: {
                     Text(L("SKIP TO END"))
                         .font(.custom("NeueHaasDisplay-Light", size: 13))
@@ -600,7 +865,7 @@ struct ListenSessionView: View {
                 } else {
                     autoPlay = false
                     didCompletePlaylist = true
-                    dismiss()
+                    endSession()
                 }
             } else {
                 currentIndex += 1
@@ -658,7 +923,7 @@ struct ListenSessionView: View {
         chainTask = nil
         if isAtLast {
             didCompletePlaylist = true
-            dismiss()
+            endSession()
         } else {
             currentIndex += 1
         }
@@ -1206,6 +1471,32 @@ enum ListenGradientTheme: String, CaseIterable, Identifiable {
         case .peach:    return "Peach"
         case .myst:     return "Myst"
         case .night:    return "Night"
+        }
+    }
+
+    // The three session stops expanded into a 9-color 3×3 mesh for the
+    // animated lava-lamp fill on the audio mini-bar. Every row rotates the
+    // three stops so all of them collide and churn into one another rather
+    // than sitting in flat horizontal bands.
+    var lavaPalette: [Color] {
+        let c = colors
+        return [
+            c[0], c[1], c[2],
+            c[1], c[2], c[0],
+            c[2], c[0], c[1]
+        ]
+    }
+
+    // A single representative hue for tinting Liquid Glass (the mini-bar),
+    // where a full gradient isn't available. Picks whichever stop reads as the
+    // theme's signature color rather than its near-white/near-black extreme.
+    var tint: Color {
+        switch self {
+        case .night:  return colors[1]  // slate blue
+        case .arctic: return colors[0]  // 54728B (its mid stop is near-white)
+        case .peach:  return colors[1]  // E2725B
+        case .myst:   return colors[1]  // BFB4DC lavender
+        case .aura:   return colors[0]  // 9993A5 mauve
         }
     }
 

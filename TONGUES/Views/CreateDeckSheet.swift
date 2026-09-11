@@ -194,9 +194,12 @@ struct CreateDeckSheet: View {
             // BACKGROUND layer, not `.ignoresSafeArea` on the TabView itself
             // (which blanks the non-initial pages), so paging stays intact.
             .background {
-                // The Camera tab is inverted: black page, light chrome.
-                (currentPage == 1 ? Color.black : Color.white).ignoresSafeArea()
+                // Camera (page 1) is inverted black; every other tab —
+                // including Generate — is a solid white page.
+                (currentPage == 1 ? Color.black : Color.white)
+                    .ignoresSafeArea()
             }
+            .presentationBackground(.white)
             // The nav bar carries no title/items (the close X is a custom
             // overlay), so hide it outright.
             .toolbar(.hidden, for: .navigationBar)
@@ -250,13 +253,15 @@ struct CreateDeckSheet: View {
                     VStack(spacing: 0) {
                         if currentPage == 0 {
                             // The Generate form's drop-downs + Generate button
-                            // live in a pinned white bar above the page tab.
+                            // sit directly above the pinned page toggle, with no
+                            // panel behind them — the full-screen frosted blur is
+                            // the only background.
                             generateBottomBar
                         }
                         bottomPageToggle
                             .padding(.horizontal, 24)
-                            // 44pt above the bottom safe area, matching the
-                            // gap a tab bar would normally hold.
+                            // 44pt above the bottom safe area on every page, so
+                            // the toggle stays put as you swipe between tabs.
                             .padding(.bottom, 44)
                     }
                 }
@@ -564,17 +569,9 @@ struct CreateDeckSheet: View {
                 // Breathing room before the pinned bottom bar takes over.
                 .padding(.bottom, 24)
             }
-            // Subtle white→light-gray gradient behind the scrolling content.
-            // The pinned bottom bar (attribute pills + Generate) is solid
-            // white, so it reads as "interrupting" this gradient.
-            .background(
-                LinearGradient(
-                    colors: [Color.white, Color(white: 0.93)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .ignoresSafeArea()
-            )
+            // No fill behind the scrolling content: the Generate tab is
+            // transparent so the Study screen shows through the Liquid Glass
+            // card and attribute pills.
             // Drag-to-dismiss the keyboard inside the scroll view —
             // standard iOS Mail/Notes behavior. Combined with the
             // toolbar Done button this gives the user three ways out:
@@ -743,11 +740,10 @@ struct CreateDeckSheet: View {
             .id("coach.generate")
         }
         .padding(.top, 12)
-        // ~40pt gap between the Generate button and the page tab below it,
-        // which shifts the whole bar (and the scroll content above) upward.
-        .padding(.bottom, 40)
+        .padding(.bottom, 32)
         .frame(maxWidth: .infinity)
-        .background(Color.white)
+        // No background: the attribute pills + Generate button read directly
+        // over the full-screen frosted blur, with no panel behind them.
     }
 
     // 4-item page toggle, pinned 44pt above the bottom safe area.

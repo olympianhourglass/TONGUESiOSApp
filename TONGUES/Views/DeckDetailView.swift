@@ -6,7 +6,6 @@ struct DeckDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var deck: DeckDocument
     @State private var isPlaying = false
-    @State private var isListening = false
     @State private var selectedItem: GeneratedItem?
     // Separate sheet binding for phrase/sentence items — tapping one
     // skips the WordInfoSheet intermediary and opens Sentence Studio
@@ -183,9 +182,6 @@ struct DeckDetailView: View {
                 await loadUrgency()
             }
         }
-        .fullScreenCover(isPresented: $isListening) {
-            ListenSessionView(deck: deck)
-        }
         .subscriptionCapAlert($capError)
         .sessionCompleteToast(isPresented: $showSessionToast)
         .sheet(item: $selectedItem) { item in
@@ -285,11 +281,13 @@ struct DeckDetailView: View {
         .onDisappear { AppTabRouter.shared.forceDarkStatusBar = false }
         .speechStatusToast()
         .onChange(of: isPlaying) { _, _ in updateForcedStatusBar() }
-        .onChange(of: isListening) { _, _ in updateForcedStatusBar() }
     }
 
     private func updateForcedStatusBar() {
-        AppTabRouter.shared.forceDarkStatusBar = !isPlaying && !isListening
+        // The listening session forces the light status bar globally while its
+        // full player is up (that override wins over this dark one), so this
+        // only needs to track the flashcard cover.
+        AppTabRouter.shared.forceDarkStatusBar = !isPlaying
     }
 
     // Mirrors the Study page's featured-card slot, but recolored to the
@@ -1164,14 +1162,18 @@ struct DeckDetailView: View {
     // unlimited (Int.max), so for them this is a single async hop and
     // then-present. Beginner blocks at 50/month with the paywall.
     private func startAudio() {
+        // Open instantly; run the cap check alongside the present slide rather
+        // than gating the whole presentation on a Firestore round-trip. Only
+        // dismiss again if the user is genuinely over their cap.
+        ListenSessionHost.shared.present(deck)
         Task {
             do {
                 try await SubscriptionService.shared.tryStartAudioSession()
-                isListening = true
             } catch let error as SubscriptionError {
+                ListenSessionHost.shared.end()
                 capError = error
             } catch {
-                isListening = true
+                // Network blip — fail open, session already playing.
             }
         }
     }
@@ -1929,6 +1931,19 @@ struct ArtifactReaderSheet: View {
 
                         actionButtonRow
 
+                        if speech.isPreparingAudio {
+                            // The first read-aloud generates the narration from
+                            // scratch (several seconds); it's cached afterward,
+                            // so replays are instant. Let the user know so the
+                            // wait doesn't read as a hang.
+                            Text(L("Generating the narration — the first read-aloud can take a few seconds. It's saved after this, so it plays instantly next time."))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal)
+                                .transition(.opacity)
+                        }
+
                         if let prompt = current.userPrompt, !prompt.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text(L("You asked for"))
@@ -2053,8 +2068,16 @@ struct ArtifactReaderSheet: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: speech.isSpeaking ? "stop.fill" : "waveform")
-                    .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: readAloudPlayCount)
+                if speech.isPreparingAudio {
+                    // First, uncached read-aloud is being generated — swap the
+                    // waveform for a spinner so the wait reads as "working".
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(.black)
+                } else {
+                    Image(systemName: speech.isSpeaking ? "stop.fill" : "waveform")
+                        .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: readAloudPlayCount)
+                }
                 Text(speech.isSpeaking ? L("Stop") : L("Read aloud"))
             }
             .font(.system(size: 14, weight: .medium))
@@ -2064,7 +2087,7 @@ struct ArtifactReaderSheet: View {
             .overlay(Capsule().stroke(Color(white: 0.85)))
         }
         .buttonStyle(.plain)
-        .disabled(foreignText.isEmpty)
+        .disabled(foreignText.isEmpty || speech.isPreparingAudio)
     }
 
     private func continuationButton(_ relation: DeckGenerator.ContinuationRelation) -> some View {
@@ -2235,6 +2258,22 @@ struct ArtifactReaderSheet: View {
         )
     }
 
+    // The story text with a read-along karaoke highlight over the word the
+    // voice is currently speaking. Rendered against `foreignText` — the exact
+    // string handed to `speak()` — so `currentSpokenWordRange` (an NSRange into
+    // that string) maps 1:1 onto what's displayed.
+    private var highlightedStory: AttributedString {
+        var attributed = AttributedString(foreignText)
+        attributed.foregroundColor = .black
+        if let range = speech.currentSpokenWordRange,
+           range.length > 0,
+           let stringRange = Range(range, in: foreignText),
+           let attrRange = Range(stringRange, in: attributed) {
+            attributed[attrRange].backgroundColor = Color.orange.opacity(0.55)
+        }
+        return attributed
+    }
+
     @ViewBuilder
     private var contentBody: some View {
         if isInterleaved, !current.pairs.isEmpty {
@@ -2256,11 +2295,11 @@ struct ArtifactReaderSheet: View {
                 }
             }
         } else {
-            // Story mode (or a legacy artifact without aligned pairs):
-            // render the raw prose so paragraph breaks survive.
-            Text(current.prose)
+            // Story mode: render the foreign passage with the read-along
+            // karaoke highlight (over the exact text that's read aloud), so the
+            // spoken word lights up like it does in the generation sheet.
+            Text(highlightedStory)
                 .font(.custom("NeueHaasDisplay-Light", size: 16))
-                .foregroundStyle(.black)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }

@@ -1,4 +1,5 @@
 import SwiftUI
+import StoreKit
 
 struct StudyView: View {
     @State private var isCreateDeckPresented = false
@@ -36,8 +37,19 @@ struct StudyView: View {
     @State private var vm = LibraryViewModel()
     @State private var path = NavigationPath()
     @State private var showSessionToast = false
-    @State private var audioDeck: DeckDocument?
     @State private var showPaywall = false
+    // The audio session host — when its mini-bar is showing next to the
+    // Create New Deck button, the button collapses to a plus-only icon.
+    @State private var listenHost = ListenSessionHost.shared
+    // One-time, least-tacky App Store review nudge: after the user
+    // creates their first deck, once the create sheet dismisses back to
+    // this home screen, we quietly ask iOS to present its own native
+    // rating sheet (no custom "rate us" UI). `didRequestFirstDeckReview`
+    // makes it fire once, ever; `pendingReviewRequest` is the transient
+    // arm set at creation time and consumed on return.
+    @Environment(\.requestReview) private var requestReview
+    @AppStorage("didRequestFirstDeckReview") private var didRequestFirstDeckReview = false
+    @State private var pendingReviewRequest = false
     // Catches `SubscriptionError.capExceeded` from the audio cap
     // gate; surfaces it via the shared cap alert + paywall.
     @State private var capError: SubscriptionError?
@@ -51,15 +63,20 @@ struct StudyView: View {
     // the cap alert (with an upgrade CTA) when the user is over
     // budget. Free + Beginner are capped; Pro + Max are Int.max.
     private func startAudio(_ deck: DeckDocument) {
+        // Open the session instantly — the cap check (a Firestore refresh +
+        // increment) used to gate the whole presentation, which was the bulk of
+        // the "first play takes forever" wait. Run it alongside the present
+        // slide instead, and only tear the session back down if the user is
+        // genuinely over their audio cap.
+        ListenSessionHost.shared.present(deck)
         Task {
             do {
                 try await SubscriptionService.shared.tryStartAudioSession()
-                audioDeck = deck
             } catch let error as SubscriptionError {
+                ListenSessionHost.shared.end()
                 capError = error
             } catch {
-                // Network/Firebase blip — fail open so audio still works.
-                audioDeck = deck
+                // Network/Firebase blip — fail open, session already playing.
             }
         }
     }
@@ -110,7 +127,7 @@ struct StudyView: View {
                 )
             }
             .overlay(alignment: .bottomTrailing) {
-                CreateNewDeckButton()
+                CreateNewDeckButton(compact: createButtonCompact)
                     // A quick TAP goes straight to the Generate screen; a
                     // LONG-PRESS opens the custom quick-actions menu (hold,
                     // then drag onto an option to fire it — releasing
@@ -127,6 +144,13 @@ struct StudyView: View {
                         proxy.frame(in: .global)
                     } action: { newValue in
                         createButtonFrame = newValue
+                        // Publish to the audio host so the collapsed listening
+                        // mini-bar can match this button's height and sit 8pt
+                        // to its left on the Study tab. The button only lays out
+                        // when the home is visible, so this also confirms it's
+                        // on screen (a pushed detail page can't re-fire this).
+                        ListenSessionHost.shared.createButtonFrame = newValue
+                        ListenSessionHost.shared.createButtonVisible = path.isEmpty
                     }
                     .padding(.trailing, 16)
                 // Visible button sits 8pt above the tab bar — the button's
@@ -151,16 +175,36 @@ struct StudyView: View {
                         await SubscriptionService.shared.markFreeDeckUsed()
                         await vm.loadDecks()
                     }
+                    // First-ever deck creation: arm the review nudge so it
+                    // fires once the sheet dismisses back to the home screen.
+                    if !didRequestFirstDeckReview {
+                        pendingReviewRequest = true
+                    }
                 }
             }
-            .fullScreenCover(item: $audioDeck) { deck in
-                ListenSessionView(deck: deck)
+            // The create sheet just dismissed back to home; if this was the
+            // user's first deck, surface Apple's native rating sheet after a
+            // beat so it lands cleanly on the home screen.
+            .onChange(of: isCreateDeckPresented) { _, presented in
+                guard !presented, pendingReviewRequest, !didRequestFirstDeckReview else { return }
+                pendingReviewRequest = false
+                didRequestFirstDeckReview = true
+                Task {
+                    try? await Task.sleep(for: .seconds(1.2))
+                    requestReview()
+                }
             }
             .sheet(isPresented: $showPaywall) {
                 PremiumActionSheet()
             }
             .subscriptionCapAlert($capError)
             .toolbar(.hidden, for: .navigationBar)
+            // Tell the audio host whether the Create New Deck button is on
+            // screen — false once a detail page is pushed over the home — so the
+            // mini-bar knows when to leave a gap for it vs. take full width.
+            .onChange(of: path.count) { _, count in
+                ListenSessionHost.shared.createButtonVisible = (count == 0)
+            }
             .task {
                 await subscription.refresh()
                 await vm.loadDecks()
@@ -316,6 +360,13 @@ struct StudyView: View {
     // the pill's visible left edge (from `createButtonFrame`, offsetting the
     // pill's 8pt tap halo) and stack bottom→top as Direct, Conversation,
     // Camera. No system preview border on the pill.
+    // Mirrors the Create New Deck button's compact (plus-only) state — true
+    // while the audio mini-bar is showing beside it. In that state the
+    // long-press shortcut menu drops its text labels to match the icon-only pill.
+    private var createButtonCompact: Bool {
+        listenHost.deck != nil && listenHost.isMinimized && !listenHost.isDismissing
+    }
+
     private var quickActionsMenuOverlay: some View {
         GeometryReader { proxy in
             let origin = proxy.frame(in: .global).origin
@@ -357,11 +408,13 @@ struct StudyView: View {
             HStack(spacing: 10) {
                 Image(systemName: icon)
                     .font(.system(size: 15, weight: .medium))
-                Text(title)
-                    .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
+                if !createButtonCompact {
+                    Text(title)
+                        .font(.custom("NeueHaasDisplay-Light", size: MacLayout.f(16)))
+                }
             }
             .foregroundStyle(isHighlighted ? .white : .black)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, createButtonCompact ? 12 : 16)
             .padding(.vertical, 12)
             .background(isHighlighted ? Color.black : Color.white,
                         in: RoundedRectangle(cornerRadius: 12))
@@ -1044,19 +1097,102 @@ struct DeckMiniCard: View {
 // from a long-press (custom quick-actions menu) without the system
 // context-menu chrome/border.
 struct CreateNewDeckButton: View {
+    // Collapses to a plus-only circle when the audio mini-bar is showing
+    // alongside it, so the two floating controls share the row without
+    // crowding.
+    var compact: Bool = false
+
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "plus")
-                .font(.system(size: 18, weight: .semibold))
-            Text(L("Create New Deck"))
-                .font(.custom("NeueHaasDisplay-Light", size: 17))
+        // A GlassEffectContainer lets the capsule's Liquid Glass fluidly morph
+        // between the compact plus-only size and the full labelled size as the
+        // audio mini-bar comes and goes.
+        GlassEffectContainer {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                    .font(.system(size: 18, weight: .semibold))
+                if !compact {
+                    Text(L("Create New Deck"))
+                        .font(.custom("NeueHaasDisplay-Light", size: 17))
+                        // Pin its intrinsic width so it materializes at full
+                        // size instead of truncating while the capsule grows.
+                        .fixedSize()
+                        .transition(.opacity)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, compact ? 16 : 24)
+            .padding(.vertical, 16)
+            .glassEffect(.regular.tint(.black).interactive(), in: .capsule)
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .glassEffect(.regular.tint(.black).interactive(), in: .capsule)
         .shadow(color: .black.opacity(0.22), radius: 8, x: 0, y: 8)
         .padding(8)
         .contentShape(.capsule)
+    }
+}
+
+// An animated gradient that slowly churns the Figma "Study" slide
+// palette (deep navy → warm sand → deep crimson) like a lava lamp:
+// pools of color drift, stretch, and spill into one another on a set of
+// looping, out-of-phase sine waves. Rendered behind the Create New Deck
+// button's clear Liquid Glass so the material refracts the flow.
+struct LavaLampGradient: View {
+    // Nine mesh colors, laid across a 3×3 grid. Defaults to the Figma
+    // background palette (cool blues up top → warm sand → hot reds), but any
+    // caller can supply its own 9-color palette — the audio mini-bar feeds in
+    // the user's chosen session gradient.
+    let colors: [Color]
+
+    // A fixed epoch so the animation phase stays continuous and stable
+    // across redraws.
+    @State private var start = Date()
+
+    // The top-to-bottom Study palette laid across the 3×3 mesh.
+    static let studyPalette: [Color] = [
+        Color(red: 32 / 255,  green: 62 / 255,  blue: 110 / 255),  // deep navy
+        Color(red: 60 / 255,  green: 93 / 255,  blue: 144 / 255),  // steel blue
+        Color(red: 89 / 255,  green: 124 / 255, blue: 178 / 255),  // sky blue
+        Color(red: 224 / 255, green: 128 / 255, blue: 126 / 255),  // coral
+        Color(red: 249 / 255, green: 212 / 255, blue: 170 / 255),  // warm sand
+        Color(red: 237 / 255, green: 170 / 255, blue: 148 / 255),  // soft peach
+        Color(red: 205 / 255, green: 76 / 255,  blue: 72 / 255),   // red
+        Color(red: 196 / 255, green: 49 / 255,  blue: 45 / 255),   // scarlet
+        Color(red: 187 / 255, green: 23 / 255,  blue: 18 / 255)    // deep crimson
+    ]
+
+    init(colors: [Color] = LavaLampGradient.studyPalette) {
+        self.colors = colors
+    }
+
+    var body: some View {
+        TimelineView(.animation) { context in
+            let t = context.date.timeIntervalSince(start)
+            MeshGradient(width: 3, height: 3, points: points(at: t), colors: colors)
+                // A whisper of darkening preserves the white label's
+                // legibility where the bright sand band drifts under it.
+                .overlay(Color.black.opacity(0.12))
+        }
+    }
+
+    // Nine mesh vertices on a 3×3 grid. The four corners stay pinned so
+    // the capsule always fills edge-to-edge; the edge midpoints slide
+    // along their own edges while the center roams freely — that is what
+    // stretches the color pools and spills them into each other. Every
+    // offset is a slow, out-of-phase sine, so the motion loops forever
+    // without ever settling into an obvious repeat.
+    private func points(at t: Double) -> [SIMD2<Float>] {
+        func wave(_ base: Double, _ amp: Double, _ speed: Double, _ phase: Double) -> Float {
+            Float(base + amp * sin(t * speed + phase))
+        }
+        return [
+            SIMD2(0, 0),
+            SIMD2(wave(0.5, 0.22, 0.24, 1.0), 0),                           // top mid
+            SIMD2(1, 0),
+            SIMD2(0, wave(0.5, 0.22, 0.21, 0.4)),                           // left mid
+            SIMD2(wave(0.5, 0.20, 0.18, 2.3), wave(0.5, 0.20, 0.27, 0.9)),  // center
+            SIMD2(1, wave(0.5, 0.22, 0.23, 3.2)),                           // right mid
+            SIMD2(0, 1),
+            SIMD2(wave(0.5, 0.22, 0.20, 4.1), 1),                           // bottom mid
+            SIMD2(1, 1)
+        ]
     }
 }

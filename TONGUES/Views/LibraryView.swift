@@ -275,18 +275,11 @@ struct LibraryView: View {
             // and any pull-down slack; it never moves the bottom edge.
             let topExtra: CGFloat = 260
             VStack(spacing: 0) {
-                Color(red: 14/255, green: 12/255, blue: 12/255)
-                RadialGradient(
-                    gradient: Gradient(stops: [
-                        .init(color: Color(red: 14/255, green: 12/255, blue: 12/255), location: 0.0),
-                        .init(color: Color(red: 70/255, green: 61/255, blue: 58/255), location: 0.5),
-                        .init(color: Color(red: 102/255, green: 102/255, blue: 102/255), location: 1.0)
-                    ]),
-                    center: .top,
-                    startRadius: 0,
-                    endRadius: fillHeight * 1.3
-                )
-                .frame(height: fillHeight)
+                Color.black
+                // Flattened to solid black for now (was a warm brown radial
+                // gradient). Swap this back to a RadialGradient to restore it.
+                Color.black
+                    .frame(height: fillHeight)
             }
             .frame(width: geo.size.width, height: fillHeight + topExtra)
             // Pin the top to the scroll view's top (and lift by topExtra so

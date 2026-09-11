@@ -177,6 +177,14 @@ struct StatisticsView: View {
         }
         .scrollIndicators(.hidden)
         .background(Color.black.ignoresSafeArea())
+        // Full-bleed black screen with the tab bar hidden — withhold the audio
+        // mini-bar while it's up, but let the session keep playing underneath.
+        .onAppear {
+            withAnimation { ListenSessionHost.shared.hideMiniBar = true }
+        }
+        .onDisappear {
+            withAnimation { ListenSessionHost.shared.hideMiniBar = false }
+        }
         .task {
             // Favorite topic first so the overall-summary prompt can
             // reference it; the overall summary then ties everything

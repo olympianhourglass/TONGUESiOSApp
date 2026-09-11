@@ -1420,7 +1420,7 @@ struct SessionCompleteToast: View {
     var body: some View {
         Text(L("Session complete!"))
             .font(.system(size: 14, weight: .medium))
-            .foregroundStyle(.black)
+            .foregroundStyle(Color.toastForeground)
             .padding(.horizontal, 18)
             .padding(.vertical, 10)
             .background(Color.toastBackground, in: Capsule())

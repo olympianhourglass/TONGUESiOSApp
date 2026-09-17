@@ -26,6 +26,12 @@ struct PremiumActionSheet: View {
     // instead of `dismiss()` so onboarding can hand off into the app.
     var onFinish: (() -> Void)? = nil
 
+    // Hard-paywall mode. There is no free tier, so when the user holds no
+    // entitlement this sheet is the app — there's no Skip, no X, and no
+    // swipe-out. The only ways forward are starting the trial, restoring a
+    // purchase, or redeeming a code (both still offered in the footer).
+    var isMandatory: Bool = false
+
     @State private var store = StoreKitClient.shared
     @State private var subscription = SubscriptionService.shared
     @State private var selectedTier: SubscriptionTier = .pro
@@ -106,13 +112,18 @@ struct PremiumActionSheet: View {
         // Extreme swipe-down → dismiss. Sheets normally handle this via
         // the grabber, but with the grabber hidden the gesture lives
         // here so users still have a swipe path out of the paywall.
-        .gesture(extremeSwipeDownDismiss)
+        // Disabled in hard-paywall mode — there's nothing behind it.
+        .gesture(isMandatory ? nil : extremeSwipeDownDismiss)
+        // Block the interactive sheet dismissal too, so a locked user can't
+        // swipe the paywall away into an empty app.
+        .interactiveDismissDisabled(isMandatory)
         // Pull-to-dismiss on the stretchy header: once the user has
         // dragged the hero past `pullDismissThreshold`, fire dismiss
         // exactly once. `didFirePullDismiss` is reset when the pull
         // relaxes back below half the threshold so re-presenting the
         // sheet behaves cleanly.
         .onChange(of: heroPullDistance) { _, newValue in
+            guard !isMandatory else { return }
             if newValue >= pullDismissThreshold, !didFirePullDismiss {
                 didFirePullDismiss = true
                 Haptics.success()
@@ -131,10 +142,20 @@ struct PremiumActionSheet: View {
             // (`onFinish` set) we always land on Pro — the promoted default —
             // regardless of any tier the test/real account already holds.
             if onFinish == nil,
-               subscription.currentTier != .free,
+               subscription.currentTier.grantsAccess,
                displayTiers.contains(subscription.currentTier) {
                 selectedTier = subscription.currentTier
             }
+            // The denominator for install → trial. `source` distinguishes the
+            // forced onboarding/lock views from a user-initiated open, and
+            // `trialEligible` separates "declined the trial" from "was never
+            // offered one".
+            AnalyticsService.log(.paywallViewed, [
+                .source: paywallSource,
+                .tier: selectedTier.rawValue,
+                .cycle: selectedCycle == .monthly ? "monthly" : "yearly",
+                .trialEligible: store.isEligibleForTrial ?? false
+            ])
         }
         .alert(
             L("Couldn't start purchase"),
@@ -258,6 +279,14 @@ struct PremiumActionSheet: View {
     // Routes a "done with the paywall" action: onboarding hands off to the
     // app via `onFinish`; the in-app sheet dismisses itself.
     private func complete() {
+        // Voluntary abandon. In mandatory mode this only runs after a
+        // successful purchase/restore, so it isn't an abandon then.
+        if !isMandatory {
+            AnalyticsService.log(.paywallDismissed, [
+                .source: paywallSource,
+                .tier: selectedTier.rawValue
+            ])
+        }
         if let onFinish {
             onFinish()
         } else {
@@ -265,7 +294,28 @@ struct PremiumActionSheet: View {
         }
     }
 
+    // Where this paywall came from. `onboarding` and `lock` are the two
+    // forced presentations (non-dismissible); anything else the user opened
+    // themselves, which is a very different intent signal.
+    private var paywallSource: String {
+        if onFinish != nil { return "onboarding" }
+        if isMandatory { return "lock" }
+        return "in_app"
+    }
+
+    @ViewBuilder
     private var heroTopBar: some View {
+        // Hard paywall: no escape hatch in the top bar. Restore Purchases and
+        // Redeem Code in the footer remain the routes in for anyone who
+        // already paid or was comped.
+        if isMandatory {
+            EmptyView()
+        } else {
+            dismissTopBar
+        }
+    }
+
+    private var dismissTopBar: some View {
         HStack(alignment: .top) {
             Spacer()
             Button {
@@ -309,6 +359,12 @@ struct PremiumActionSheet: View {
                         // below, which scopes the animation to the tabs so the
                         // info card's text simply blips to the new tier.
                         selectedTier = tier
+                        // Which plan people actually gravitate to vs. the
+                        // Pro default we preselect.
+                        AnalyticsService.log(.paywallTierSelected, [
+                            .tier: tier.rawValue,
+                            .source: paywallSource
+                        ])
                     } label: {
                         Text(tier.displayName)
                             .font(.custom("NeueHaasDisplay-Mediu", size: 14))
@@ -519,6 +575,10 @@ struct PremiumActionSheet: View {
             withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                 selectedCycle = cycle
             }
+            AnalyticsService.log(.paywallCycleSelected, [
+                .cycle: cycle == .monthly ? "monthly" : "yearly",
+                .tier: selectedTier.rawValue
+            ])
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
@@ -691,25 +751,23 @@ struct PremiumActionSheet: View {
             .disabled(isPurchasing || subscription.currentTier == selectedTier)
             .opacity(subscription.currentTier == selectedTier ? 0.5 : 1)
 
-            // "Then $X/mo. Cancel anytime." subline reinforces the
-            // pricing and reassures the user that the free trial
-            // doesn't lock them in. Only rendered when we're actively
-            // pitching the trial (free → paid). Once the user is on a
-            // paid tier the sub-copy disappears.
-            if shouldOfferFreeTrial {
-                Text(trialFinePrint)
-                    .font(.custom("NeueHaasDisplay-Light", size: 11))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .multilineTextAlignment(.center)
-            }
+            // Auto-renew disclosure. Apple requires the trial length, the
+            // price it converts to, and the renewing nature to be visible
+            // next to the CTA — and it's the honest thing to show for an
+            // offer that starts charging on day two.
+            Text(billingDisclosure)
+                .font(.custom("NeueHaasDisplay-Light", size: 11))
+                .foregroundStyle(.white.opacity(0.55))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    // True when the user is on the free tier — i.e., this is their
-    // first time onto a paid tier and StoreKit will honour the
-    // introductoryOffer baked into TONGUES.storekit / Connect.
+    // True only when StoreKit says this Apple ID can still claim the
+    // introductory offer. Never promise a trial to someone who already
+    // used it — they'd tap "Start Free Trial" and be charged immediately.
     private var shouldOfferFreeTrial: Bool {
-        subscription.currentTier == .free && selectedTier.freeTrialDays > 0
+        (store.isEligibleForTrial ?? false) && selectedTier.freeTrialDays > 0
     }
 
     private var ctaLabel: String {
@@ -717,11 +775,24 @@ struct PremiumActionSheet: View {
         if shouldOfferFreeTrial {
             return L("Start %@ Free Trial", selectedTier.freeTrialLabel)
         }
-        return L("Upgrade to %@", selectedTier.displayName)
+        if subscription.hasAccess {
+            return L("Upgrade to %@", selectedTier.displayName)
+        }
+        return L("Subscribe to %@", selectedTier.displayName)
     }
 
-    private var trialFinePrint: String {
-        L("Then %@/month. Cancel anytime.", mainPriceString(for: selectedCycle))
+    // Spells out exactly what happens after the trial, so the automatic
+    // conversion is never a surprise.
+    private var billingDisclosure: String {
+        let price = mainPriceString(for: selectedCycle)
+        if shouldOfferFreeTrial {
+            return L(
+                "%@ free, then %@/month. Renews automatically until cancelled. Cancel anytime in Settings.",
+                selectedTier.freeTrialLabel,
+                price
+            )
+        }
+        return L("%@/month. Renews automatically until cancelled. Cancel anytime in Settings.", price)
     }
 
     // MARK: - Footer
@@ -736,7 +807,19 @@ struct PremiumActionSheet: View {
                     openURL("https://www.mytongues.com/privacy.html")
                 }
                 footerLink(title: L("Restore Purchases")) {
-                    Task { await store.restorePurchases() }
+                    Task {
+                        AnalyticsService.log(.restoreAttempted, [.source: paywallSource])
+                        await store.restorePurchases()
+                        // Success is judged by the resulting entitlement, not
+                        // by the call returning — AppStore.sync() succeeds even
+                        // when there's nothing to restore.
+                        if SubscriptionService.shared.hasAccess {
+                            AnalyticsService.log(.restoreSucceeded, [
+                                .tier: SubscriptionService.shared.currentTier.rawValue
+                            ])
+                            AnalyticsService.refreshUserProperties()
+                        }
+                    }
                 }
             }
             footerLink(title: L("Redeem Code")) {
@@ -767,9 +850,36 @@ struct PremiumActionSheet: View {
     private func purchase() async {
         isPurchasing = true
         defer { isPurchasing = false }
+
+        // Captured BEFORE the purchase: once it succeeds the user is no
+        // longer trial-eligible, so reading it afterwards would always
+        // report false and we'd lose the trial-vs-direct distinction.
+        let startedAsTrial = shouldOfferFreeTrial
+        let cycleName = selectedCycle == .monthly ? "monthly" : "yearly"
+        let priceShown = mainPriceString(for: selectedCycle)
+
         let success = await store.purchase(selectedTier, cycle: selectedCycle)
         if success {
             Haptics.success()
+            // `trial_started` is the headline conversion metric for the
+            // 1-day-trial funnel; purchase_completed carries the same
+            // context so direct (non-trial) subscribes stay comparable.
+            if startedAsTrial {
+                AnalyticsService.log(.trialStarted, [
+                    .tier: selectedTier.rawValue,
+                    .cycle: cycleName,
+                    .price: priceShown,
+                    .source: paywallSource
+                ])
+            }
+            AnalyticsService.log(.purchaseCompleted, [
+                .tier: selectedTier.rawValue,
+                .cycle: cycleName,
+                .price: priceShown,
+                .isTrial: startedAsTrial,
+                .source: paywallSource
+            ])
+            AnalyticsService.refreshUserProperties()
             // Do NOT re-read Firestore here: store.purchase already resolved
             // and applied the new tier to SubscriptionService in memory (and
             // committed it). Re-reading could clobber that with a stale doc
@@ -783,6 +893,23 @@ struct PremiumActionSheet: View {
             // OR the local .storekit configuration isn't bound to the
             // run scheme).
             purchaseError = error
+            ReviewPromptCoordinator.shared.noteBadExperience("purchase_failed")
+            AnalyticsService.log(.purchaseFailed, [
+                .tier: selectedTier.rawValue,
+                .cycle: cycleName,
+                .source: paywallSource,
+                .reason: error
+            ])
+        } else {
+            // No error and no success → the user backed out of Apple's
+            // sheet. Distinguishing this from a failure matters: one is a
+            // pricing/intent problem, the other is a bug.
+            AnalyticsService.log(.purchaseCancelled, [
+                .tier: selectedTier.rawValue,
+                .cycle: cycleName,
+                .source: paywallSource,
+                .isTrial: startedAsTrial
+            ])
         }
     }
 }

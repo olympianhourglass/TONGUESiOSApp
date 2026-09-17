@@ -82,6 +82,17 @@ final class CreateDeckViewModel {
     func generate() async {
         isGenerating = true
         defer { isGenerating = false }
+        // Logged before the call so a generation that never returns (network
+        // stall, crash) still shows up as an attempt — otherwise the
+        // started→created ratio silently flatters itself.
+        AnalyticsService.log(.deckGenerationStarted, [
+            .language: language,
+            .dialect: dialect,
+            .contentType: contentType,
+            .level: level,
+            .itemCount: Int(amount) ?? 0,
+            .count: referencedDecks.count
+        ])
         do {
             let deck = try await DeckGenerator.generate(
                 userPrompt: interestPrompt,
@@ -98,8 +109,21 @@ final class CreateDeckViewModel {
             showResults = true
         } catch let error as SubscriptionError {
             capError = error
+            // Hitting a cap is a MONETIZATION signal, not a bug — kept
+            // separate from genuine generation failures.
+            AnalyticsService.log(.subscriptionCapHit, [
+                .source: "deck_generation",
+                .tier: SubscriptionService.shared.currentTier.rawValue,
+                .contentType: contentType
+            ])
         } catch {
             generationError = error.localizedDescription
+            ReviewPromptCoordinator.shared.noteBadExperience("deck_generation_failed")
+            AnalyticsService.log(.deckGenerationFailed, [
+                .language: language,
+                .contentType: contentType,
+                .reason: "\((error as NSError).domain).\((error as NSError).code)"
+            ])
         }
     }
 }

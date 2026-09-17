@@ -29,6 +29,19 @@ struct ReviewModeSettings: Equatable {
         if fillInSentence { modes.append(.fillInSentence) }
         return modes.isEmpty ? [.reveal] : modes
     }
+
+    // Stable, low-cardinality label for analytics ("reveal+mc+fill"), so the
+    // session event can be segmented by which mode MIX the learner runs —
+    // that's how we learn whether anyone keeps all three enabled.
+    var analyticsLabel: String {
+        enabledModes.map {
+            switch $0 {
+            case .reveal:         return "reveal"
+            case .multipleChoice: return "mc"
+            case .fillInSentence: return "fill"
+            }
+        }.joined(separator: "+")
+    }
 }
 
 // MARK: - Multiple choice
@@ -176,7 +189,10 @@ struct FillInSentenceCard: View {
     let correct: String         // the target-language word that fills the blank
     let hint: String            // the word's meaning (native language)
     let pool: [String]          // other target-language words, for distractors
-    let speak: () -> Void
+    // Reads the sentence aloud. The flag says whether the answer may be voiced:
+    // only once the learner has actually got it right. Until then the sentence
+    // is clipped before the blank so listening can't hand over the answer.
+    let speak: (_ mayRevealAnswer: Bool) -> Void
     let onGrade: (ReviewResult) -> Void
 
     @State private var options: [String] = []
@@ -225,7 +241,13 @@ struct FillInSentenceCard: View {
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
-                SpeakWaveformButton(action: speak, font: .system(size: 16))
+                // The answer is only voiced after a correct choice — an
+                // unanswered or wrongly-answered card hears the sentence up to
+                // the blank and stops.
+                SpeakWaveformButton(
+                    action: { speak(chosen == correct) },
+                    font: .system(size: 16)
+                )
             }
 
             Text(clozeSentence)

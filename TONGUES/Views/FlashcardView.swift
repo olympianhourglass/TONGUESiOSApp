@@ -61,6 +61,11 @@ struct FlashcardView: View {
     // Cards whose word the user wrote out successfully this session — shown
     // in the summary and worth bonus XP.
     @State private var handwrittenItemIDs: Set<String> = []
+    // How many cards each interaction mode actually DELIVERED this session.
+    // The enabled mix isn't the same as the delivered mix — multiple-choice
+    // and fill-in need distractors/example sentences, so a card can fall back
+    // to reveal. Emitted once per mode at session end.
+    @State private var modeCounts: [FlashcardMode: Int] = [:]
 
     // MARK: Session working set (Phase 1: shorten)
     //
@@ -342,6 +347,14 @@ struct FlashcardView: View {
                 // the card shifts up as this block grows.
                 if handwritingActive(for: item), let script = handwritingScript(for: item) {
                     HandwritingPracticeView(word: item.word, script: script) {
+                        // Only log the FIRST success per card so repeated
+                        // tracing of one word doesn't inflate the metric.
+                        if !handwrittenItemIDs.contains(item.id.uuidString) {
+                            AnalyticsService.log(.handwritingPracticed, [
+                                .script: script.rawValue,
+                                .language: deck.language
+                            ])
+                        }
                         handwrittenItemIDs.insert(item.id.uuidString)
                     }
                     .id("hw-\(item.id.uuidString)")
@@ -372,7 +385,9 @@ struct FlashcardView: View {
                 correct: item.word,
                 hint: item.translation,
                 pool: distractorWords(for: item),
-                speak: { speakDeckWord(item) },
+                speak: { mayRevealAnswer in
+                    speakFillInSentence(item, mayRevealAnswer: mayRevealAnswer)
+                },
                 onGrade: { submit($0) }
             )
         }
@@ -440,6 +455,25 @@ struct FlashcardView: View {
 
     // Speaks the target-language word (used by the MC / fill-in cards, which
     // always test the deck language rather than a picked translation).
+    // Cloze cards read the EXAMPLE SENTENCE, not the answer word. One
+    // full-sentence generation is made (and cached), then clipped locally right
+    // before the blank until the learner has answered correctly — so listening
+    // never hands over the answer, and revealing it later costs no extra call.
+    private func speakFillInSentence(_ item: GeneratedItem, mayRevealAnswer: Bool) {
+        let sentence = item.exampleSentence ?? ""
+        guard !sentence.isEmpty else {
+            // No sentence to work with — only the word itself is available, so
+            // stay silent until it's safe to say it.
+            if mayRevealAnswer { speakDeckWord(item) }
+            return
+        }
+        SpeechClient.shared.speakSentence(
+            sentence,
+            language: item.language ?? deck.language,
+            hidingWord: mayRevealAnswer ? nil : item.word
+        )
+    }
+
     private func speakDeckWord(_ item: GeneratedItem) {
         SpeechClient.shared.speak(
             item.word,
@@ -779,6 +813,7 @@ struct FlashcardView: View {
         // Capture the mode before advancing — the grade toast only makes
         // sense for reveal cards (it lands on the X/✓ row those cards show).
         let wasReveal = currentMode == .reveal
+        modeCounts[currentMode, default: 0] += 1
         updateCombo(for: grade)
         recordReview(grade)
         // Re-queue a missed card BEFORE advancing so `totalCount` already
@@ -1360,6 +1395,29 @@ struct FlashcardView: View {
         let completedForXP = isFinished
         let elapsedForXP = max(0, Date().timeIntervalSince(startedAt))
         let avgPerCardForXP = reviews.isEmpty ? 0 : elapsedForXP / Double(reviews.count)
+        // One aggregate event per session rather than one per graded card —
+        // per-card logging would dominate our event volume and tell us
+        // nothing extra. `completed` separates a real finish from an early
+        // exit, since this same function runs for both.
+        for (mode, count) in modeCounts {
+            AnalyticsService.log(.reviewModeUsed, [
+                .mode: mode.rawValue,
+                .count: count,
+                .language: deck.language
+            ])
+        }
+        AnalyticsService.log(.studySessionCompleted, [
+            .language: deck.language,
+            .deckId: deckIdForXP,
+            .cardsGraded: reviews.count,
+            .correctCount: correctCount,
+            .accuracy: reviews.isEmpty ? 0 : Int((Double(correctCount) / Double(reviews.count)) * 100),
+            .durationSeconds: Int(elapsedForXP),
+            .completed: completedForXP,
+            .fullDeck: fullDeck,
+            .modes: reviewModes.analyticsLabel,
+            .count: handwrittenForXP
+        ])
         Task {
             do {
                 _ = try await FirebaseDeckService.saveStudySession(session)

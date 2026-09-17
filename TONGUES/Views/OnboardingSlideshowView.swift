@@ -172,6 +172,12 @@ struct OnboardingSlideshowView: View {
     private func advance() {
         Haptics.light()
         if selection < slides.count - 1 {
+            // Logged on ADVANCE (not on index change) so a back-swipe and
+            // re-advance doesn't double-count the same slide.
+            AnalyticsService.log(.onboardingSlideViewed, [
+                .index: selection + 1,
+                .count: slides.count
+            ])
             withAnimation(.easeInOut(duration: 0.3)) { selection += 1 }
         } else {
             AppTabRouter.shared.forceLightStatusBar = false

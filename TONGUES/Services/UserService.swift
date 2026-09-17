@@ -67,6 +67,21 @@ enum UserService {
             "updatedAt": FieldValue.serverTimestamp()
         ]
 
+        // Mirror the primary (first) language preference into flat, top-level
+        // fields so a companion app can read the active language/dialect/level
+        // straight off the user doc without decoding the onboarding array. Kept
+        // in lock-step here so EVERY save path (settings edit, add/remove, the
+        // Chat picker) updates the mirror automatically.
+        if let primary = answers.languagePreferences?.first {
+            payload["preferredLanguage"] = primary.language
+            payload["preferredDialect"] = primary.dialect
+            payload["preferredLevel"] = primary.level
+        } else {
+            payload["preferredLanguage"] = FieldValue.delete()
+            payload["preferredDialect"] = FieldValue.delete()
+            payload["preferredLevel"] = FieldValue.delete()
+        }
+
         // Only set createdAt if the document doesn't already exist (preserve first-seen time).
         let snapshot = try await ref.getDocument()
         if !snapshot.exists {
@@ -86,7 +101,58 @@ enum UserService {
         let profile = try snapshot.data(as: UserProfile.self)
         // Refresh the local cache from the authoritative copy.
         cacheOnboarding(profile.onboarding)
+        // Adopt the account's synced interface language so a fresh install / a
+        // second device / the companion app converge on the same UI language.
+        if let code = profile.interfaceLanguage {
+            await MainActor.run { Localizer.shared.adoptRemote(languageCode: code) }
+        }
         return profile
+    }
+
+    // Writes only the interface (native) language onto the user document, so the
+    // companion app and other devices read the same UI-language choice. Silently
+    // no-ops when signed out (e.g. the first-run picker before sign-in — the
+    // choice is pushed once the user authenticates). Uses `merge: true` so
+    // onboarding, avatar, and timestamps stay untouched.
+    static func saveInterfaceLanguage(_ code: String) async throws {
+        guard let uid = currentUID else { return }
+        try await userDoc(uid: uid).setData(
+            [
+                "interfaceLanguage": code,
+                "updatedAt": FieldValue.serverTimestamp()
+            ],
+            merge: true
+        )
+    }
+
+    // Promotes (or inserts) the given language as the user's PRIMARY preference:
+    // moved to the front of `languagePreferences` (deduped by language) and
+    // saved to Firestore — which also refreshes the flat preferred* mirror. Lets
+    // an in-app language switch (e.g. the Chat picker) become the canonical,
+    // companion-app-readable preference instead of staying ephemeral. No-ops for
+    // a user with no onboarding answers yet (they'll set it during onboarding).
+    static func setPrimaryLanguagePreference(language: String, dialect: String, level: String) async throws {
+        guard currentUID != nil else { return }
+        // Prefer the instant local cache; fall back to a Firestore read. (`await`
+        // can't live inside the `??` autoclosure, so resolve it explicitly.)
+        var resolved = cachedOnboarding()
+        if resolved == nil {
+            resolved = (try? await fetchProfile())?.onboarding
+        }
+        guard var answers = resolved else { return }
+        var prefs = answers.languagePreferences ?? []
+        // Already primary with the same dialect + level → nothing to write.
+        if let first = prefs.first,
+           first.language.lowercased() == language.lowercased(),
+           first.dialect == dialect,
+           first.level == level {
+            return
+        }
+        prefs.removeAll { $0.language.lowercased() == language.lowercased() }
+        prefs.insert(LanguagePreference(language: language, dialect: dialect, level: level), at: 0)
+        answers.languagePreferences = prefs
+        answers.languageOfInterest = language
+        try await saveOnboarding(answers)
     }
 
     // Writes only the bio field on the user document. Empty / blank

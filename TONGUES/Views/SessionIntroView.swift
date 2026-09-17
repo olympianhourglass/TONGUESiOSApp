@@ -277,6 +277,17 @@ struct SessionIntroView: View {
 
     private func begin(full: Bool) {
         Haptics.medium()
+        // A flashcard session and a listening session can't run at once — the
+        // review has its own audio (TTS/pronunciation), so stop any active
+        // listening playlist and dismiss its mini-bar as we enter the session.
+        ListenSessionHost.shared.end()
+        AnalyticsService.log(.studySessionStarted, [
+            .deckId: deck.id ?? "",
+            .language: deck.language,
+            .fullDeck: full,
+            .modes: reviewModes.analyticsLabel,
+            .itemCount: deck.items.count
+        ])
         fullDeck = full
         // Longer, eased cross-fade so the intro doesn't snap away — the
         // user's eye glides into the first card instead of being yanked in.

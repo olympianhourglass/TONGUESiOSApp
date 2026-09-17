@@ -66,7 +66,7 @@ enum SubscriptionProduct {
         cycle: SubscriptionBillingCycle = .monthly
     ) -> String? {
         switch (tier, cycle) {
-        case (.free, _):                return nil
+        case (.locked, _):              return nil
         case (.beginner, .monthly):     return beginnerMonthly
         case (.beginner, .yearly):      return beginnerYearly
         case (.pro, .monthly):          return proMonthly

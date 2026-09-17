@@ -33,6 +33,9 @@ final class OnboardingDeckSeeder {
 
         isSeeding = true
         seededCount = 0
+        AnalyticsService.log(.starterDecksSeedStarted, [
+            .planned: min(titles.count, 4)
+        ])
 
         Task {
             defer { isSeeding = false }
@@ -48,7 +51,9 @@ final class OnboardingDeckSeeder {
             let interests = answers.interests ?? []
 
             // Cap at 4 to match the onboarding "Your first decks" list.
-            for title in titles.prefix(4) {
+            let plannedTitles = Array(titles.prefix(4))
+            let planned = plannedTitles.count
+            for title in plannedTitles {
                 do {
                     let deck = try await DeckGenerator.generate(
                         userPrompt: title,
@@ -71,6 +76,14 @@ final class OnboardingDeckSeeder {
                     print("⚠️ OnboardingDeckSeeder failed for \"\(title)\": \(error)")
                 }
             }
+            // Success RATIO matters here: a new user landing in an empty
+            // Study tab because seeding silently failed is a first-run
+            // experience we'd otherwise never hear about.
+            AnalyticsService.log(.starterDecksSeedFinished, [
+                .succeeded: seededCount,
+                .planned: planned,
+                .language: language
+            ])
         }
     }
 }

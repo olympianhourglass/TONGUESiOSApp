@@ -330,6 +330,16 @@ struct DeckResultsView: View {
                 isPublic: isPublic
             )
             Haptics.success()
+            // Success = SAVED, not generated. A user can generate and walk
+            // away; this is the event that means a deck now exists.
+            AnalyticsService.log(.deckCreated, [
+                .language: currentDeck.language,
+                .dialect: currentDeck.dialect,
+                .level: currentDeck.level,
+                .contentType: currentDeck.contentType,
+                .itemCount: currentDeck.items.count,
+                .theme: style.rawValue
+            ])
             onComplete()
         } catch {
             Haptics.error()
@@ -954,8 +964,8 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .audioGradient:   return "Audio"
         case .black:           return "Black"
         case .white:           return "White"
-        case .darkCherry:      return "Dark Cherry"
-        case .pleasant:        return "Pleasant"
+        case .darkCherry:      return "Burgundy"
+        case .pleasant:        return "Glacier"
         case .mouths1:         return "Mouths"
         case .mouths2:         return "Mouths 2"
         case .peopleSpeaking:  return "Speakers"
@@ -1026,9 +1036,11 @@ enum DeckCoverStyle: String, CaseIterable, Identifiable, Codable {
         case .white:
             Color.white
         case .darkCherry:
-            Color(libraryHex: "180805")
+            // Burgundy — matched to the widget's Burgundy background color.
+            Color(libraryHex: "461B24")
         case .pleasant:
-            Color(libraryHex: "C6EFFF")
+            // Glacier — matched to the widget's Glacier background color.
+            Color(libraryHex: "EAF0FC")
         case .mouths1, .mouths2, .peopleSpeaking, .peopleSpeaking2,
              .porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife,
              .chineseVillage:
@@ -1065,7 +1077,6 @@ enum DeckCoverCategory: String, CaseIterable, Identifiable {
     case colors = "Colors"
     case graphics = "Graphics"
     case art = "Art"
-    case medieval = "Medieval"
 
     var id: String { rawValue }
 
@@ -1074,8 +1085,6 @@ enum DeckCoverCategory: String, CaseIterable, Identifiable {
         case .colors:   return [.gradient, .audioGradient, .black, .white, .darkCherry, .pleasant]
         case .graphics: return [.mouths1, .mouths2, .peopleSpeaking, .peopleSpeaking2]
         case .art:      return [.porcelain1, .porcelain2, .byzantine1, .byzantine2, .stillLife, .chineseVillage]
-        // Not uploaded yet — renders a "coming soon" placeholder.
-        case .medieval: return []
         }
     }
 }
@@ -1325,8 +1334,8 @@ struct DeckCoverCustomizationSheet: View {
     }
 
     // One page of the cover pager: a 3-column grid of that category's
-    // swatches, or a "coming soon" placeholder for empty categories
-    // (Medieval, whose art hasn't been uploaded yet).
+    // swatches, or a "coming soon" placeholder should a category ever ship
+    // empty (defensive — every current category has styles).
     @ViewBuilder
     private func categoryPage(_ category: DeckCoverCategory) -> some View {
         if category.styles.isEmpty {
@@ -1427,8 +1436,7 @@ struct DeckCoverCustomizationSheet: View {
                         onSave(finalTitle, chosen, isPublic)
                     } label: {
                         Text(L("Save deck"))
-                            .font(.custom("PlayfairDisplay-Regular", size: 20))
-                            .tracking(-1.2)
+                            .font(.custom("NeueHaasDisplay-Mediu", size: 20))
                             .foregroundStyle(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 56)

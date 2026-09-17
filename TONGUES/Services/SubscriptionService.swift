@@ -50,36 +50,16 @@ final class SubscriptionService {
 
     // Convenience for views.
     var currentTier: SubscriptionTier {
-        state.resolvedTier
+        if UserDefaults.standard.bool(forKey: "tonguesSimCaptureBypass") { return .max }
+        return state.resolvedTier
     }
 
-    // True when the account has ever redeemed a creator-comp code
-    // (TONGUESVIP / TONGUESCREATOR). Such users are exempt from the Free
-    // tier's one-time lockout: their Free usage stays on the
-    // monthly-refreshing caps and they're never forced into the paywall by
-    // exhausting the one-off allowance, even after the grant expires.
-    var isFreeLockoutExempt: Bool {
-        PromoCode.grantsFreeLockoutExemption(state.promoCode)
-    }
-
-    // True while the user may still open the Create New Deck flow without
-    // hitting the paywall: any paid tier, or a free user who hasn't yet
-    // spent their one free deck. Drives the Study tab's create button.
-    var canCreateFreeDeck: Bool {
-        currentTier != .free || !state.freeDeckUsed
-    }
-
-    // Consumes the free-deck grace. Called after a free user saves their
-    // first deck; idempotent and a no-op for paid tiers.
-    func markFreeDeckUsed() async {
-        guard currentTier == .free, !state.freeDeckUsed else { return }
-        state.freeDeckUsed = true
-        do {
-            try await commit()
-        } catch {
-            print("⚠️ SubscriptionService.markFreeDeckUsed failed: \(error)")
-            await refresh()
-        }
+    // The single gate for app access. There is no free tier: a user is
+    // either inside an active trial/subscription (or a promo grant) or they
+    // are locked out behind the paywall.
+    var hasAccess: Bool {
+        if UserDefaults.standard.bool(forKey: "tonguesSimCaptureBypass") { return true }
+        return currentTier.grantsAccess
     }
 
     // MARK: - Promo codes
@@ -270,33 +250,26 @@ final class SubscriptionService {
     // Async so non-isolated callers (e.g. DeckGenerator) hop to the
     // MainActor cleanly via `try await`.
     func ensureCapacity(in bucket: SubscriptionBucket, requested: Int) async throws {
-        // Free users get one full deck (generate + save) before the
-        // paywall kicks in. The grace is consumed at save time
-        // (markFreeDeckUsed), so every generation in that first deck
-        // session passes regardless of the free tier's zero caps. Audio
-        // sessions are excluded so the grace can't be spent on playback.
-        if currentTier == .free, !state.freeDeckUsed, bucket != .audioSessions {
-            return
+        // No entitlement → nothing is permitted. The paywall is the only
+        // way forward, and every locked cap is 0 so this is belt-and-braces
+        // against a caller that somehow got past the access gate.
+        guard hasAccess else {
+            throw SubscriptionError.capExceeded(
+                bucket: bucket,
+                tier: currentTier,
+                remaining: 0,
+                requested: requested
+            )
         }
 
         let cap = bucket.cap(for: currentTier)
-        // Unlimited buckets (audio on every tier, and all paid buckets that
-        // use Int.max) never block — bail before any arithmetic so a huge
-        // `used` can't overflow the subtraction below.
+        // Unlimited buckets (audio on every paid tier, and any paid bucket
+        // that uses Int.max) never block — bail before any arithmetic so a
+        // huge `used` can't overflow the subtraction below.
         if cap == Int.max { return }
 
-        // The Free tier's allowance is a ONE-TIME lifetime grant, not a
-        // monthly one: once a free user has consumed their whole allowance
-        // (100 words / 20 sentences / 5 artifacts) across the entire life
-        // of the account, they must subscribe. Creator-comp redeemers
-        // (isFreeLockoutExempt) are excluded and keep the monthly-
-        // refreshing behaviour. Paid tiers always meter per calendar month.
-        let used: Int
-        if currentTier == .free, !isFreeLockoutExempt {
-            used = state.lifetimeUsage(in: bucket)
-        } else {
-            used = state.usage(in: bucket, monthKey: currentMonthKey)
-        }
+        // Paid tiers meter per calendar month.
+        let used = state.usage(in: bucket, monthKey: currentMonthKey)
         let remaining = Swift.max(0, cap - used)
         if requested > remaining {
             throw SubscriptionError.capExceeded(
@@ -390,8 +363,8 @@ final class SubscriptionService {
         state.activeProductId = productId
         state.activeTransactionId = transactionId
         state.lastVerifiedAt = verifiedAt
-        if state.tierStartedAt == nil || tier == .free {
-            state.tierStartedAt = tier == .free ? nil : verifiedAt
+        if state.tierStartedAt == nil || tier == .locked {
+            state.tierStartedAt = tier == .locked ? nil : verifiedAt
         } else if state.activeTransactionId != transactionId {
             state.tierStartedAt = verifiedAt
         }
@@ -413,14 +386,14 @@ final class SubscriptionService {
     // Drops the user back to the free tier. Used when StoreKit reports
     // no active entitlements (e.g. subscription expired, refund).
     func clearEntitlement(verifiedAt: Date) async {
-        if state.tier == SubscriptionTier.free.rawValue
+        if state.tier == SubscriptionTier.locked.rawValue
             && state.activeTransactionId == nil
             && state.activeProductId == nil {
             state.lastVerifiedAt = verifiedAt
             await commitLogging("clearEntitlement(noop)")
             return
         }
-        state.tier = SubscriptionTier.free.rawValue
+        state.tier = SubscriptionTier.locked.rawValue
         state.activeProductId = nil
         state.activeTransactionId = nil
         state.tierStartedAt = nil

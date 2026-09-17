@@ -84,8 +84,16 @@ struct OnboardingFlow: View {
             OnboardingIntroView(
                 // "Get Started" begins the questions; the swipeable slideshow
                 // now comes later, after sign-up and before the paywall.
-                onContinue: { path.append(.question(1)) },
-                onSignIn: { path.append(.signIn) }
+                onContinue: {
+                    AnalyticsService.log(.onboardingStarted)
+                    path.append(.question(1))
+                },
+                onSignIn: {
+                    // Returning user taking the sign-in shortcut — tracked
+                    // separately so it doesn't dilute the new-user funnel.
+                    AnalyticsService.log(.onboardingSignInStarted, [.source: "intro"])
+                    path.append(.signIn)
+                }
             )
             .navigationDestination(for: OnboardingStep.self) { step in
                 switch step {
@@ -147,23 +155,33 @@ struct OnboardingFlow: View {
                     // Shown after sign-up. Everyone sees it, regardless of
                     // subscription. The slideshow manages its own per-slide
                     // status-bar tint (it mixes light and dark slides). On
-                    // finish: free accounts go to the paywall; already-paid
+                    // finish: anyone without an entitlement hits the paywall
+                    // (there is no free tier); existing subscribers and comped
                     // accounts skip straight to the welcome finale.
                     OnboardingSlideshowView(
                         onFinish: {
-                            if SubscriptionService.shared.currentTier == .free {
-                                path.append(.paywall)
-                            } else {
+                            let hasAccess = SubscriptionService.shared.hasAccess
+                            AnalyticsService.log(.onboardingSlideshowDone, [
+                                .source: hasAccess ? "skipped_paywall" : "to_paywall"
+                            ])
+                            if hasAccess {
                                 path.append(.welcome)
+                            } else {
+                                path.append(.paywall)
                             }
                         }
                     )
                     .toolbar(.hidden, for: .navigationBar)
                     .navigationBarBackButtonHidden(true)
                 case .paywall:
-                    // After the paywall (skip or purchase) the welcome finale
-                    // is the last beat before the app.
-                    PremiumActionSheet(onFinish: { path.append(.welcome) })
+                    // Hard paywall — there's no free tier, so the only way past
+                    // is starting the trial, restoring a purchase, or redeeming
+                    // a code. `isMandatory` strips the Skip button and every
+                    // swipe-out path.
+                    PremiumActionSheet(
+                        onFinish: { path.append(.welcome) },
+                        isMandatory: true
+                    )
                         .toolbar(.hidden, for: .navigationBar)
                         .navigationBarBackButtonHidden(true)
                         // The paywall is dark; force light status-bar content
@@ -175,7 +193,14 @@ struct OnboardingFlow: View {
                     // greeting; swiping on enters the app.
                     OnboardingWelcomeView(
                         userName: state.name,
-                        onFinish: onComplete
+                        // Terminal funnel event: this user is now activated
+                        // and inside the app.
+                        onFinish: {
+                            AnalyticsService.log(.onboardingCompleted, [
+                                .tier: SubscriptionService.shared.currentTier.rawValue
+                            ])
+                            onComplete()
+                        }
                     )
                     .toolbar(.hidden, for: .navigationBar)
                     .navigationBarBackButtonHidden(true)
@@ -191,10 +216,35 @@ struct OnboardingFlow: View {
     private let totalQuestions = 9
 
     private func handleNext(after question: Int) {
+        // Every one of the nine questions advances through here, so this is
+        // the funnel's per-step conversion signal: comparing the count of
+        // `index: 1` to `index: 9` shows exactly which question loses people.
+        AnalyticsService.log(.onboardingQuestionAnswered, [
+            .index: question,
+            .questionId: Self.questionId(for: question)
+        ])
         if question < totalQuestions {
             path.append(.question(question + 1))
         } else {
+            AnalyticsService.log(.onboardingSignInStarted, [.source: "questions"])
             path.append(.login)
+        }
+    }
+
+    // Stable, human-readable ids so the funnel report stays legible if the
+    // question order ever changes.
+    private static func questionId(for index: Int) -> String {
+        switch index {
+        case 1: return "motivation"
+        case 2: return "destinations"
+        case 3: return "languages"
+        case 4: return "motivation_detail"
+        case 5: return "fluency_scene"
+        case 6: return "first_understand"
+        case 7: return "heritage"
+        case 8: return "interests"
+        case 9: return "ready"
+        default: return "question_\(index)"
         }
     }
 

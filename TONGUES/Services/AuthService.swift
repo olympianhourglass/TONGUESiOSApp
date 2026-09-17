@@ -68,8 +68,10 @@ final class AuthService {
             didJustAuthenticate = true
             lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? false
             lastError = nil
+            logAuthSuccess("apple", isNewUser: lastSignInWasNewUser)
         } catch {
             lastError = error.localizedDescription
+            logAuthFailure("apple", error)
         }
     }
 
@@ -102,8 +104,10 @@ final class AuthService {
             didJustAuthenticate = true
             lastSignInWasNewUser = signInResult.additionalUserInfo?.isNewUser ?? false
             lastError = nil
+            logAuthSuccess("google", isNewUser: lastSignInWasNewUser)
         } catch {
             lastError = error.localizedDescription
+            logAuthFailure("google", error)
         }
         #else
         lastError = "Google Sign-In not available. Add the GoogleSignIn Swift Package to enable it."
@@ -125,8 +129,10 @@ final class AuthService {
             // A fresh anonymous account is always new.
             lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? true
             lastError = nil
+            logAuthSuccess("anonymous", isNewUser: lastSignInWasNewUser)
         } catch {
             lastError = error.localizedDescription
+            logAuthFailure("anonymous", error)
         }
     }
 
@@ -169,9 +175,11 @@ final class AuthService {
             didJustAuthenticate = true
             lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? false
             lastError = nil
+            logAuthSuccess("phone", isNewUser: lastSignInWasNewUser)
             return true
         } catch {
             lastError = friendlyAuthMessage(for: error)
+            logAuthFailure("phone", error)
             return false
         }
     }
@@ -193,9 +201,11 @@ final class AuthService {
             didJustAuthenticate = true
             lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? false
             lastError = nil
+            logAuthSuccess("email", isNewUser: lastSignInWasNewUser)
             return true
         } catch {
             lastError = friendlyAuthMessage(for: error)
+            logAuthFailure("email", error)
             return false
         }
     }
@@ -209,11 +219,35 @@ final class AuthService {
             // Freshly created account — new by definition.
             lastSignInWasNewUser = result.additionalUserInfo?.isNewUser ?? true
             lastError = nil
+            logAuthSuccess("email_signup", isNewUser: lastSignInWasNewUser)
             return true
         } catch {
             lastError = friendlyAuthMessage(for: error)
+            logAuthFailure("email_signup", error)
             return false
         }
+    }
+
+    // MARK: - Analytics helpers
+
+    // Records the outcome of an interactive auth attempt. `isNewUser`
+    // separates a sign-UP (acquisition) from a returning sign-IN
+    // (reactivation) — two very different numbers that share one code path.
+    private func logAuthSuccess(_ method: String, isNewUser: Bool) {
+        AnalyticsService.log(.onboardingSignInCompleted, [
+            .method: method,
+            .isNewUser: isNewUser
+        ])
+        AnalyticsService.refreshUserProperties()
+    }
+
+    private func logAuthFailure(_ method: String, _ error: Error) {
+        AnalyticsService.log(.onboardingSignInFailed, [
+            .method: method,
+            // Domain + code ONLY. The localized description can contain the
+            // email the user typed, which must never reach analytics.
+            .reason: "\((error as NSError).domain).\((error as NSError).code)"
+        ])
     }
 
     // Maps the most common FirebaseAuthError codes onto copy that's
@@ -249,6 +283,9 @@ final class AuthService {
     // MARK: - Sign out
 
     func signOut() {
+        // Logged BEFORE the sign-out so the event is still attributed to the
+        // departing user id (setUserID(nil) follows immediately after).
+        AnalyticsService.log(.accountSignedOut)
         try? Auth.auth().signOut()
         #if canImport(GoogleSignIn)
         GIDSignIn.sharedInstance.signOut()
@@ -269,6 +306,9 @@ final class AuthService {
             throw AuthError.notAuthenticated
         }
         let uid = user.uid
+        // Same ordering rationale as signOut: attribute before the uid is
+        // gone. Deletion is the strongest churn signal we get.
+        AnalyticsService.log(.accountDeleted)
         try await UserService.deleteAllUserData(uid: uid)
         try await user.delete()
         #if canImport(GoogleSignIn)

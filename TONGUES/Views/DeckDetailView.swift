@@ -1902,6 +1902,10 @@ struct ArtifactReaderSheet: View {
     // GenerateContentSheet so a revisited artifact can be played back too.
     @State private var speech = SpeechClient.shared
     @State private var readAloudPlayCount = 0
+    // The foreign word the reader tapped — drives the inspect-and-add panel,
+    // mirroring the tappable words in GenerateContentSheet so a saved artifact
+    // is just as explorable as a freshly-generated one.
+    @State private var selectedWord: String?
     // Counts one "comprehension" learning-method session the first time the
     // learner answers a question in this saved artifact.
     @State private var didCountComprehension = false
@@ -1978,7 +1982,12 @@ struct ArtifactReaderSheet: View {
                                     ComprehensionQuestionCard(
                                         index: index,
                                         question: question,
-                                        onFirstAttempt: { _ in
+                                        onFirstAttempt: { correct in
+                                            AnalyticsService.log(.comprehensionAnswered, [
+                                                .isCorrect: correct,
+                                                .language: deckLanguage,
+                                                .kind: current.resolvedKind.rawValue
+                                            ])
                                             if !didCountComprehension {
                                                 didCountComprehension = true
                                                 Task { try? await XPService.recordComprehensionSession() }
@@ -2006,6 +2015,21 @@ struct ArtifactReaderSheet: View {
                 }
             }
         }
+        // Inspect-and-add panel for a tapped foreign word — the same flow as the
+        // generation sheet, so a saved artifact is just as explorable.
+        .overlay(alignment: .bottom) {
+            if let word = selectedWord, let deck {
+                WordAuditPanel(
+                    word: word,
+                    deck: deck,
+                    englishContext: englishContext,
+                    onClose: {
+                        withAnimation(.easeOut(duration: 0.18)) { selectedWord = nil }
+                    }
+                )
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
         .subscriptionCapAlert($capError)
         .alert(
             L("Couldn't generate"),
@@ -2018,6 +2042,7 @@ struct ArtifactReaderSheet: View {
         } message: {
             Text(errorText ?? "")
         }
+        .onAppear { logArtifactOpened() }
         .onDisappear {
             SpeechClient.shared.stop()
             stopGeneratingHaptics()
@@ -2033,6 +2058,16 @@ struct ArtifactReaderSheet: View {
         activeArtifact ?? artifact
     }
 
+    // Logged from the reader's onAppear (see body) so we can measure whether
+    // saved artifacts actually get revisited — the whole premise of keeping
+    // them.
+    private func logArtifactOpened() {
+        AnalyticsService.log(.artifactOpened, [
+            .kind: current.resolvedKind.rawValue,
+            .language: deckLanguage
+        ])
+    }
+
     // The row beneath the passage: "Read aloud" plus, when a deck is available
     // to generate from, "Generate Prequel" / "Generate Sequel". Wrapped in a
     // horizontal scroll so the three capsules never clip on a narrow device or
@@ -2041,30 +2076,39 @@ struct ArtifactReaderSheet: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 readAloudButton
+                // Appears only mid-run, right next to Pause/Resume, so the two
+                // behaviors are visibly distinct choices.
+                if readAloudActive {
+                    restartReadAloudButton
+                }
                 if deck != nil {
                     continuationButton(.prequel)
                     continuationButton(.sequel)
                 }
             }
             .padding(.horizontal)
+            .animation(.easeInOut(duration: 0.2), value: readAloudActive)
         }
     }
 
+    // A read-aloud run is underway (playing, paused, or still fetching audio).
+    // While true the transport offers Pause/Resume plus an explicit Start over,
+    // so it's never ambiguous whether tapping resumes or replays from the top.
+    private var readAloudActive: Bool {
+        speech.isSpeaking || speech.isPaused || speech.isPreparingAudio
+    }
+
+    // Primary transport: starts the passage, pauses it in place, or resumes from
+    // exactly where it stopped. The label always names what the tap will do.
     private var readAloudButton: some View {
         Button {
             Haptics.light()
-            // Toggle play/stop, matching GenerateContentSheet's read-aloud
-            // behavior (SpeechClient has no true pause/resume, so tapping
-            // while playing stops).
             if speech.isSpeaking {
-                SpeechClient.shared.stop()
+                SpeechClient.shared.pause()
+            } else if speech.isPaused {
+                SpeechClient.shared.resume()
             } else {
-                readAloudPlayCount += 1
-                SpeechClient.shared.speak(
-                    foreignText,
-                    language: deckLanguage,
-                    highlightPassage: true
-                )
+                startReadAloud()
             }
         } label: {
             HStack(spacing: 6) {
@@ -2075,10 +2119,10 @@ struct ArtifactReaderSheet: View {
                         .controlSize(.small)
                         .tint(.black)
                 } else {
-                    Image(systemName: speech.isSpeaking ? "stop.fill" : "waveform")
+                    Image(systemName: readAloudIcon)
                         .symbolEffect(.variableColor.iterative.nonReversing, options: .speed(2), value: readAloudPlayCount)
                 }
-                Text(speech.isSpeaking ? L("Stop") : L("Read aloud"))
+                Text(readAloudLabel)
             }
             .font(.system(size: 14, weight: .medium))
             .padding(.horizontal, 16)
@@ -2088,6 +2132,56 @@ struct ArtifactReaderSheet: View {
         }
         .buttonStyle(.plain)
         .disabled(foreignText.isEmpty || speech.isPreparingAudio)
+    }
+
+    private var readAloudIcon: String {
+        if speech.isSpeaking { return "pause.fill" }
+        if speech.isPaused { return "play.fill" }
+        return "waveform"
+    }
+
+    private var readAloudLabel: String {
+        if speech.isSpeaking { return L("Pause") }
+        if speech.isPaused { return L("Resume") }
+        return L("Read aloud")
+    }
+
+    // The explicit "back to the beginning" control — only offered once a run is
+    // underway, so the primary button's Pause/Resume can never be mistaken for
+    // a restart.
+    private var restartReadAloudButton: some View {
+        Button {
+            Haptics.light()
+            startReadAloud()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.counterclockwise")
+                Text(L("Start over"))
+            }
+            .font(.system(size: 14, weight: .medium))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .foregroundStyle(.black)
+            .overlay(Capsule().stroke(Color(white: 0.85)))
+        }
+        .buttonStyle(.plain)
+        .disabled(foreignText.isEmpty)
+    }
+
+    // Plays the passage from the top. `speak` supersedes any in-flight playback
+    // and clears the paused state, so this doubles as the restart path.
+    private func startReadAloud() {
+        readAloudPlayCount += 1
+        AnalyticsService.log(.artifactReadAloud, [
+            .kind: current.resolvedKind.rawValue,
+            .language: deckLanguage,
+            .count: readAloudPlayCount
+        ])
+        SpeechClient.shared.speak(
+            foreignText,
+            language: deckLanguage,
+            highlightPassage: true
+        )
     }
 
     private func continuationButton(_ relation: DeckGenerator.ContinuationRelation) -> some View {
@@ -2258,34 +2352,50 @@ struct ArtifactReaderSheet: View {
         )
     }
 
-    // The story text with a read-along karaoke highlight over the word the
-    // voice is currently speaking. Rendered against `foreignText` — the exact
-    // string handed to `speak()` — so `currentSpokenWordRange` (an NSRange into
-    // that string) maps 1:1 onto what's displayed.
-    private var highlightedStory: AttributedString {
-        var attributed = AttributedString(foreignText)
-        attributed.foregroundColor = .black
-        if let range = speech.currentSpokenWordRange,
-           range.length > 0,
-           let stringRange = Range(range, in: foreignText),
-           let attrRange = Range(stringRange, in: attributed) {
-            attributed[attrRange].backgroundColor = Color.orange.opacity(0.55)
+    // The artifact's English text, used as context when resolving a tapped
+    // foreign word (mirrors GenerateContentSheet's `englishContext`).
+    private var englishContext: String {
+        if !current.pairs.isEmpty {
+            return current.pairs.map(\.english).joined(separator: " ")
         }
-        return attributed
+        if let range = current.prose.range(of: "English:") {
+            return String(current.prose[range.upperBound...])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return ""
+    }
+
+    // Opens the inspect-and-add panel for a tapped foreign word. Requires the
+    // owning deck (to add into); a no-op without it.
+    private func handleWordTap(_ word: String) {
+        guard deck != nil else { return }
+        let trimmed = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        Haptics.light()
+        // NB: the tapped word itself is deliberately NOT logged — that's user
+        // content. Only the fact that a lookup happened, and from where.
+        AnalyticsService.log(.wordInspected, [
+            .source: "saved_artifact",
+            .language: deckLanguage
+        ])
+        withAnimation(.easeOut(duration: 0.18)) { selectedWord = trimmed }
     }
 
     @ViewBuilder
     private var contentBody: some View {
         if isInterleaved, !current.pairs.isEmpty {
             // Pairs from Claude are pre-aligned 1:1, so showing them
-            // straight up is the cleanest line-by-line read.
+            // straight up is the cleanest line-by-line read. The foreign line is
+            // tappable for word lookup + add-to-deck.
             VStack(alignment: .leading, spacing: 14) {
                 ForEach(Array(current.pairs.enumerated()), id: \.offset) { _, pair in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(pair.foreign)
-                            .font(.custom("NeueHaasDisplay-Mediu", size: 17))
-                            .foregroundStyle(.black)
-                            .fixedSize(horizontal: false, vertical: true)
+                        TappableContentText(
+                            text: pair.foreign,
+                            highlightedWord: selectedWord,
+                            highlightedNativeWords: [],
+                            onWordTapped: { word, _ in handleWordTap(word) }
+                        )
                         Text(pair.english)
                             .font(.custom("NeueHaasDisplay-Light", size: 14))
                             .foregroundStyle(.secondary)
@@ -2295,13 +2405,18 @@ struct ArtifactReaderSheet: View {
                 }
             }
         } else {
-            // Story mode: render the foreign passage with the read-along
-            // karaoke highlight (over the exact text that's read aloud), so the
-            // spoken word lights up like it does in the generation sheet.
-            Text(highlightedStory)
-                .font(.custom("NeueHaasDisplay-Light", size: 16))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
+            // Story mode: tappable foreign passage with the read-along karaoke
+            // highlight (over the exact text that's read aloud) — the same
+            // inspect-and-add behavior as the generation sheet.
+            TappableContentText(
+                text: foreignText,
+                highlightedWord: selectedWord,
+                highlightedNativeWords: [],
+                spokenRange: speech.currentSpokenWordRange,
+                onWordTapped: { word, _ in handleWordTap(word) }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

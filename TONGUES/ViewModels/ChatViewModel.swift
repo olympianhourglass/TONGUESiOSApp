@@ -190,6 +190,16 @@ final class ChatViewModel {
         current.messages.append(userMessage)
         conversation = current
 
+        // After the empty-text and re-entrancy guards, so this counts real
+        // user turns only. `turnIndex` lets us see how deep conversations go.
+        AnalyticsService.log(.chatMessageSent, [
+            .language: current.language,
+            .dialect: current.dialect,
+            .level: current.level,
+            .tone: bedsideManner.rawValue,
+            .turnIndex: current.messages.count
+        ])
+
         isSending = true
 
         // Route: meta/planning requests go through the tool-using tutor
@@ -750,6 +760,13 @@ final class ChatViewModel {
         let canonical = canonicalLanguageName(language)
         let id = Conversation.languageID(for: canonical)
         if conversation?.languageID == id { return }
+
+        // After the no-op guard, so this counts genuine switches only.
+        AnalyticsService.log(.chatLanguageSwitched, [
+            .language: canonical,
+            .dialect: dialect,
+            .level: level
+        ])
 
         await persistCurrent()
 

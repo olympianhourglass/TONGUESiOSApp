@@ -1,18 +1,33 @@
 import Foundation
 
-// Subscription tiers. `free` is the implicit baseline for users who
-// haven't purchased anything; the three paid tiers map 1:1 to the
-// App Store Connect products declared in SubscriptionProduct.swift.
+// Subscription tiers. There is NO free tier: `locked` is the
+// no-entitlement state for a user who has never subscribed, or whose
+// trial/subscription has lapsed. It grants nothing — every bucket is
+// zero — and the app hard-gates on it behind the paywall. Access comes
+// from the 1-day introductory free trial, which auto-converts to the
+// paid tier unless the user cancels.
+//
+// The three paid tiers map 1:1 to the App Store Connect products
+// declared in SubscriptionProduct.swift.
 //
 // Caps are enforced per calendar month — see SubscriptionService for
 // the yyyy-MM keying. "Sentences" includes Phrases per product spec;
 // Words is its own bucket; Artifacts (saved long-form content) is the
 // third bucket.
 enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
-    case free
+    // Raw value stays "free" so subscription docs written before the
+    // free tier was retired still decode onto this locked state.
+    case locked = "free"
     case beginner
     case pro
     case max
+
+    // The paid plans, in ladder order. The locked state is never shown as
+    // something you can buy.
+    static var purchasable: [SubscriptionTier] { [.beginner, .pro, .max] }
+
+    // Whether this tier grants access to the app at all.
+    var grantsAccess: Bool { self != .locked }
 
     // Short tab label on the paywall + the noun the cap-error copy
     // uses when referring to a user's plan ("Standard plans support
@@ -20,7 +35,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // one row even at smaller screen widths.
     var displayName: String {
         switch self {
-        case .free:     return "Free"
+        case .locked:   return "Locked"
         case .beginner: return "Standard"
         case .pro:      return "Pro"
         case .max:      return "Max"
@@ -33,7 +48,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // copy in the Figma paywall design.
     var headline: String {
         switch self {
-        case .free:     return "Just Visiting"
+        case .locked:   return "Locked"
         case .beginner: return "Just Exploring"
         case .pro:      return "The Daily Learner"
         case .max:      return "Polyglots & Power Users"
@@ -42,7 +57,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
 
     var tagline: String {
         switch self {
-        case .free:     return "Sign up to start generating."
+        case .locked:   return "Start your free trial to begin."
         case .beginner: return "Just enough to get a feel."
         case .pro:      return "Steady weekly study."
         case .max:      return "Generate without thinking about it."
@@ -53,7 +68,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // generate across every deck. Counts toward `wordsByMonthKey`.
     var monthlyWords: Int {
         switch self {
-        case .free:     return 100
+        case .locked:   return 0
         case .beginner: return 200
         case .pro:      return 1_000
         case .max:      return 5_000
@@ -64,7 +79,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // (the Phrases bucket shares the Sentences counter per spec).
     var monthlySentences: Int {
         switch self {
-        case .free:     return 20
+        case .locked:   return 0
         case .beginner: return 100
         case .pro:      return 600
         case .max:      return 3_000
@@ -76,7 +91,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // users can re-roll without burning the budget.
     var monthlyArtifacts: Int {
         switch self {
-        case .free:     return 5
+        case .locked:   return 0
         case .beginner: return 20
         case .pro:      return 60
         case .max:      return 200
@@ -84,14 +99,13 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     }
 
     // Monthly cap of listen sessions (the ListenSessionView audio
-    // playback). Audio playback is unlimited on every tier — including
-    // Free — via Int.max, so the cap check arithmetic stays uniform with
-    // the other buckets while never blocking playback. (Premium native
-    // voices remain a paid differentiator via monthlyTTSCharacters; Free
-    // simply plays unlimited audio through the on-device Apple voice.)
+    // playback). Unlimited on every PAID tier via Int.max, so the cap
+    // check arithmetic stays uniform with the other buckets while never
+    // blocking a subscriber. Locked users get nothing — they're behind
+    // the paywall entirely.
     var monthlyAudioSessions: Int {
         switch self {
-        case .free:     return Int.max
+        case .locked:   return 0
         case .beginner: return Int.max
         case .pro:      return Int.max
         case .max:      return Int.max
@@ -105,11 +119,10 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // for the rest of the month — playback is never blocked. Sized so the
     // worst case (every character novel and never re-heard) stays a minority
     // of the tier's net revenue after Apple's cut; the shared cache means real
-    // usage sits far below these. Free stays at 0, so premium voices are a
-    // paid differentiator and free users always use the Apple voice. Tunable.
+    // usage sits far below these. Tunable.
     var monthlyTTSCharacters: Int {
         switch self {
-        case .free:     return 0
+        case .locked:   return 0
         case .beginner: return 20_000
         case .pro:      return 60_000
         case .max:      return 150_000
@@ -117,13 +130,14 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     }
 
     // Total cap on saved languages on the user's profile (NOT monthly —
-    // a snapshot count). Beginner keeps the 3-language ceiling; Pro
-    // raises it to 5; Max removes it. Free reuses the Beginner cap so a
-    // brand-new onboarding user can complete language selection without
-    // paying.
+    // a snapshot count). Standard keeps the 3-language ceiling; Pro
+    // raises it to 5; Max removes it. Onboarding runs before any purchase,
+    // so its language step uses `onboardingMaxLanguages` rather than this.
+    static let onboardingMaxLanguages = 3
+
     var maxLanguages: Int {
         switch self {
-        case .free:     return 3
+        case .locked:   return 0
         case .beginner: return 3
         case .pro:      return 5
         case .max:      return Int.max
@@ -139,7 +153,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // cadences in the same "$X / month" format.
     func fallbackPrice(for cycle: SubscriptionBillingCycle) -> String {
         switch (self, cycle) {
-        case (.free, _):                return "Free"
+        case (.locked, _):              return ""
         case (.beginner, .monthly):     return "$8.99"
         case (.beginner, .yearly):      return "$6.99"
         case (.pro, .monthly):          return "$14.99"
@@ -161,7 +175,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // propagates everywhere automatically.
     var freeTrialDays: Int {
         switch self {
-        case .free:                       return 0
+        case .locked:                     return 0
         case .beginner, .pro, .max:       return 1
         }
     }
@@ -179,7 +193,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // value wins.
     var rank: Int {
         switch self {
-        case .free:     return 0
+        case .locked:   return 0
         case .beginner: return 1
         case .pro:      return 2
         case .max:      return 3
@@ -196,7 +210,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // the cheapest model keeps the blast radius small).
     var generationModel: String {
         switch self {
-        case .free:            return "claude-haiku-4-5-20251001"
+        case .locked:          return "claude-haiku-4-5-20251001"
         case .beginner, .pro:  return "claude-sonnet-4-6"
         case .max:             return "claude-opus-4-7"
         }
@@ -206,7 +220,7 @@ enum SubscriptionTier: String, Codable, CaseIterable, Hashable {
     // the user can see the model upgrade is part of the value prop.
     var generationModelLabel: String {
         switch self {
-        case .free:            return "Haiku"
+        case .locked:          return "Haiku"
         case .beginner, .pro:  return "Sonnet"
         case .max:             return "Opus"
         }
@@ -262,14 +276,10 @@ enum SubscriptionError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .capExceeded(let bucket, let tier, let remaining, _):
-            // Free is a one-time allowance, not a monthly one — its copy
-            // deliberately avoids "this month" so it reads correctly for a
-            // non-resetting lockout.
-            if tier == .free {
-                if remaining <= 0 {
-                    return "You've used up your free \(bucket.label). Subscribe to keep generating."
-                }
-                return "Only \(remaining) free \(bucket.label) left. Subscribe for more."
+            // No entitlement at all — the ask is to start the trial, not to
+            // wait for a monthly reset.
+            if tier == .locked {
+                return "Start your free trial to generate \(bucket.label)."
             }
             if remaining <= 0 {
                 return "You've used all of your \(tier.displayName) \(bucket.label) for this month."

@@ -19,8 +19,17 @@ final class Localizer {
     // Whether the first-run native-language picker has been completed.
     private(set) var hasChosen: Bool
 
+    // Guards the remote-adoption path so applying a value fetched from Firestore
+    // doesn't immediately echo it back as a write.
+    private var isAdoptingRemote = false
+
     var language: AppLanguage {
-        didSet { UserDefaults.standard.set(language.rawValue, forKey: Self.languageKey) }
+        didSet {
+            UserDefaults.standard.set(language.rawValue, forKey: Self.languageKey)
+            // Local UserDefaults stays the instant cache; also mirror the choice
+            // to Firestore so it's shared with other devices / the companion app.
+            if !isAdoptingRemote { syncToFirestore() }
+        }
     }
 
     private init() {
@@ -35,6 +44,23 @@ final class Localizer {
         language = lang
         hasChosen = true
         UserDefaults.standard.set(true, forKey: Self.chosenKey)
+    }
+
+    // Best-effort push of the current interface language to the user's Firestore
+    // doc. No-ops when signed out; call again after authentication so a choice
+    // made on the pre-sign-in first-run picker gets persisted.
+    func syncToFirestore() {
+        let code = language.rawValue
+        Task { try? await UserService.saveInterfaceLanguage(code) }
+    }
+
+    // Applies a language fetched from Firestore WITHOUT echoing it back, so a
+    // remote value adopted on launch doesn't trigger a redundant write.
+    func adoptRemote(languageCode code: String) {
+        guard let lang = AppLanguage(rawValue: code), lang != language else { return }
+        isAdoptingRemote = true
+        language = lang
+        isAdoptingRemote = false
     }
 
     // Translated string for the current language; falls back to the English

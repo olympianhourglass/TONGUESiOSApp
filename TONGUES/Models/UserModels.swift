@@ -56,6 +56,17 @@ struct UserProfile: Codable, Hashable {
     var onboarding: OnboardingAnswers?
     var createdAt: Date?
     var updatedAt: Date?
+    // Flat, top-level mirror of the primary (first) language preference, kept in
+    // lock-step by UserService whenever onboarding is saved. These let a
+    // companion app read the active language/dialect straight off `users/{uid}`
+    // without parsing the nested onboarding array.
+    var preferredLanguage: String?
+    var preferredDialect: String?
+    var preferredLevel: String?
+    // The app-interface (native) language the user reads TONGUES in, synced from
+    // Localizer so it's shared across devices / the companion app rather than
+    // living only in this install's UserDefaults.
+    var interfaceLanguage: String?
     // JPEG bytes of the user-uploaded profile avatar. We downscale before
     // writing so a Firestore field stays comfortably under the 1MB
     // document-size limit; the displayed avatar in the app is < 100pt so

@@ -15,6 +15,15 @@ struct ContentView: View {
     @State private var coach = FirstRunCoachController.shared
     // Drives the first-run native-language picker + the app-wide UI language.
     @State private var localizer = Localizer.shared
+    // Drives the hard paywall. There is no free tier, so the app is only
+    // reachable with an active trial, subscription, or promo grant.
+    @State private var subscription = SubscriptionService.shared
+    // False until StoreKit + Firestore have both been consulted, so a cold
+    // launch never flashes the paywall at a paying subscriber.
+    @State private var didResolveEntitlement = false
+    // Churn detection + the win-back banner shown during the grace window.
+    @State private var retention = RetentionService.shared
+    @State private var showWinBackPaywall = false
     // Hosts the audio listening session at the app root so it survives a
     // pull-down into the floating mini-bar above the tab bar (Apple Music-style)
     // and keeps playing across tab switches.
@@ -28,6 +37,11 @@ struct ContentView: View {
                 // Create New Deck, as if the user tapped the button itself.
                 if newValue == .study, tabRouter.current == .study {
                     QuickActionRouter.shared.createDeckTick += 1
+                }
+                // Only log real tab CHANGES — SwiftUI calls this setter with
+                // the same value on a re-tap, which would double-count.
+                if newValue != tabRouter.current {
+                    AnalyticsService.log(.tabSelected, [.tab: newValue.analyticsName])
                 }
                 tabRouter.current = newValue
             }
@@ -108,6 +122,48 @@ struct ContentView: View {
                     .zIndex(1)
             }
 
+            // Hard lock. There is no free tier, so a returning user whose
+            // trial or subscription has lapsed (and anyone from before the
+            // free tier was retired) lands straight back on the paywall.
+            // Their decks and progress are untouched — the moment an
+            // entitlement lands, `hasAccess` flips and the app reappears.
+            // Gated on `didResolveEntitlement` so we never flash the paywall
+            // while StoreKit is still verifying on a cold launch.
+            if auth.isAuthenticated,
+               hasCompletedOnboardingQuestions,
+               !onboardingInProgress,
+               didResolveEntitlement,
+               !subscription.hasAccess {
+                PremiumActionSheet(isMandatory: true)
+                    .transition(.opacity)
+                    .zIndex(2)
+                    // Distinct from paywall_viewed: this is specifically a
+                    // returning user being locked OUT, i.e. involuntary churn
+                    // meeting the wall rather than a first-run funnel step.
+                    .onAppear {
+                        AnalyticsService.log(.paywallLockShown, [
+                            .tier: subscription.currentTier.rawValue
+                        ])
+                    }
+            }
+
+            // Pending cancellation, access not yet lapsed. Driven by StoreKit's
+            // renewal state, so it reaches the majority who cancel from iOS
+            // Settings and never open our own cancel flow. Sits above the tab
+            // bar, below the audio mini-player, and is dismissible for days.
+            if auth.isAuthenticated,
+               hasCompletedOnboardingQuestions,
+               !onboardingInProgress,
+               retention.shouldShowWinBackBanner {
+                VStack {
+                    Spacer()
+                    WinBackBanner(onResubscribe: { showWinBackPaywall = true })
+                        .padding(.bottom, 96)
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(1)
+            }
+
             if coach.isPresented {
                 firstRunCoachLayer
             }
@@ -142,6 +198,30 @@ struct ContentView: View {
             }
         }
         .environment(\.locale, Locale(identifier: localizer.language.localeIdentifier))
+        .sheet(isPresented: $showWinBackPaywall) {
+            PremiumActionSheet()
+        }
+        // Resolve the entitlement before the lock gate is allowed to judge.
+        // Re-runs whenever auth flips so signing in/out re-evaluates access.
+        .task(id: auth.isAuthenticated) {
+            guard auth.isAuthenticated else {
+                didResolveEntitlement = false
+                return
+            }
+            await subscription.refresh()
+            // Let the StoreKit entitlement sync land too — it writes through
+            // to the same state, so a valid receipt unlocks without a relaunch.
+            await StoreKitClient.shared.syncEntitlements()
+            didResolveEntitlement = true
+            // Learn whether a cancellation is pending. Products must be loaded
+            // first, which syncEntitlements above guarantees.
+            await retention.refreshRenewalState()
+            // Stamp the segmentation properties now that tier + trial state
+            // are known, so every subsequent event is segmentable.
+            AnalyticsService.refreshUserProperties(
+                profile: try? await UserService.fetchProfile()
+            )
+        }
         .task {
             // First launch: the SplashView's chime callback dismisses the
             // splash when audio + haptics finish, so we skip the legacy
@@ -187,7 +267,10 @@ struct ContentView: View {
         .onChange(of: isShowingSplash) { _, _ in
             tabRouter.applyStatusBarStyle()
         }
-        .onChange(of: auth.isAuthenticated) { _, _ in
+        .onChange(of: auth.isAuthenticated) { _, isAuthed in
+            // Push the interface language chosen on the pre-sign-in first-run
+            // picker up to Firestore now that there's a user to attach it to.
+            if isAuthed { localizer.syncToFirestore() }
             tabRouter.applyStatusBarStyle()
         }
         // A fresh interactive login/sign-up routes to the Study tab so the
@@ -209,6 +292,11 @@ struct ContentView: View {
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                // A cancellation may have happened in iOS Settings while we
+                // were backgrounded — re-read the renewal state on return.
+                if auth.isAuthenticated {
+                    Task { await retention.refreshRenewalState() }
+                }
                 if auth.isAuthenticated && hasCompletedOnboardingQuestions {
                     Task { await StreakReminderService.shared.requestAuthorizationIfNeeded() }
                 }
@@ -298,18 +386,22 @@ struct ContentView: View {
     private var tabBarLayout: some View {
         TabView(selection: selectedTab) {
             ExploreView()
+                .trackScreen("Explore")
                 .tabItem { tabItemLabel(icon: "Compass", title: L("Explore"), tab: .explore) }
                 .tag(AppTab.explore)
 
             StudyView()
+                .trackScreen("Study")
                 .tabItem { tabItemLabel(icon: "PlusSquare", title: L("Study"), tab: .study) }
                 .tag(AppTab.study)
 
             ChatView()
+                .trackScreen("Chat")
                 .tabItem { tabItemLabel(icon: "Chat", title: L("Chat"), tab: .chat) }
                 .tag(AppTab.chat)
 
             LibraryView()
+                .trackScreen("Library")
                 .tabItem { tabItemLabel(icon: "Books", title: L("Library"), tab: .library) }
                 .tag(AppTab.library)
         }

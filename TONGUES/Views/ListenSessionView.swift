@@ -188,6 +188,14 @@ struct ListenSessionView: View {
             configureRemoteCommands()
             updateNowPlayingInfo()
             playCurrent()
+            AnalyticsService.log(.audioSessionStarted, [
+                .deckId: deck.id ?? "",
+                .language: deck.language,
+                .itemCount: deck.items.count,
+                .theme: selectedGradientTheme.rawValue,
+                .ambientSound: ambientSoundId.isEmpty ? "none" : ambientSoundId,
+                .ambientMusic: ambientMusicId.isEmpty ? "none" : ambientMusicId
+            ])
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 startAmbientBeds()
             }
@@ -547,12 +555,14 @@ struct ListenSessionView: View {
 
     private func minimizeSession() {
         Haptics.light()
+        AnalyticsService.log(.audioMiniplayerAction, [.action: "minimize"])
         beginPresentationAnimation()
         host.minimize()
     }
 
     private func expandSession() {
         Haptics.light()
+        AnalyticsService.log(.audioMiniplayerAction, [.action: "expand"])
         // Clear any leftover drag from the minimize gesture so the full player
         // presents cleanly at rest rather than pre-offset downward.
         dragOffset = 0
@@ -1059,6 +1069,18 @@ struct ListenSessionView: View {
         let elapsed = max(0, Date().timeIntervalSince(sessionStartedAt))
         let advanced = advancedDeckIndices.count
         let completed = didCompletePlaylist
+        // Fires once per session alongside the XP award (same idempotency
+        // guard), so listening time is attributable without a second timer.
+        AnalyticsService.log(.audioSessionEnded, [
+            .deckId: deckId,
+            .language: deck.language,
+            .durationSeconds: Int(elapsed),
+            .cardsAdvanced: advanced,
+            .completed: completed,
+            .theme: selectedGradientTheme.rawValue,
+            .ambientSound: ambientSoundId.isEmpty ? "none" : ambientSoundId,
+            .ambientMusic: ambientMusicId.isEmpty ? "none" : ambientMusicId
+        ])
         // A genuine listen — not an accidental open-and-dismiss — counts toward
         // the daily streak. The streak reads StudySession records, which the XP
         // grants below don't produce, so leave a lightweight session behind.

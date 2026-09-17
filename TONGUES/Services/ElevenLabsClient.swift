@@ -195,6 +195,7 @@ enum ElevenLabsClient {
         if let audio = await MediaCache.fetch(key: key) {
             let alignment = await MediaCache.fetch(key: key, ext: "json")
                 .flatMap { try? JSONDecoder().decode(SpeechAlignment.self, from: $0) }
+            print("ElevenLabs timestamped cache hit (\(audio.count) bytes, no API call)")
             return TimestampedSpeech(audio: audio, alignment: alignment)
         }
 

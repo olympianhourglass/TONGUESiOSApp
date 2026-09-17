@@ -151,7 +151,6 @@ struct ExploreView: View {
                     )
                 ) {
                     activePreset = nil
-                    Task { await SubscriptionService.shared.markFreeDeckUsed() }
                 }
             }
             .task {

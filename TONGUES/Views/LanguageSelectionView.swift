@@ -43,6 +43,11 @@ struct LanguageSelectionView: View {
                     withAnimation(.easeOut(duration: 0.35)) {
                         Localizer.shared.choose(selection)
                     }
+                    // The very first funnel step — logged on CONFIRM, not on
+                    // row tap (tapping a row only live-previews the language).
+                    AnalyticsService.log(.onboardingLanguageSelected, [
+                        .appLanguage: selection.rawValue
+                    ])
                     onDone()
                 } label: {
                     Text(L("Continue"))

@@ -236,6 +236,13 @@ final class LibraryViewModel {
                 applyXPState(state)
             }
             let streakNow = dailyStreak
+            // Library is the one place that knows both numbers, so it owns
+            // stamping them as segmentation properties. Bucketed inside
+            // AnalyticsService to keep cardinality sane.
+            AnalyticsService.refreshUserProperties(
+                deckCount: decks.count,
+                streak: streakNow
+            )
             if streakNow > 0 {
                 if let milestoneGrants = try? await XPService.awardStreakMilestoneIfNeeded(currentStreak: streakNow),
                    !milestoneGrants.isEmpty {

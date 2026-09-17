@@ -10,6 +10,17 @@ enum AppTab: Hashable {
 // dark (black) content. (The inverted Camera tab opts into white
 // separately via `forceLightStatusBar`.)
 extension AppTab {
+    // Stable analytics identifier. Spelled out rather than derived from the
+    // case name so renaming a case can never silently split a metric in two.
+    var analyticsName: String {
+        switch self {
+        case .explore: return "explore"
+        case .study:   return "study"
+        case .library: return "library"
+        case .chat:    return "chat"
+        }
+    }
+
     var needsLightStatusBarContent: Bool {
         switch self {
         case .library, .study: return true

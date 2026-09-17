@@ -180,6 +180,13 @@ struct PromoCodeRedeemSheet: View {
         do {
             let tier = try await SubscriptionService.shared.redeemPromoCode(trimmed)
             Haptics.success()
+            // The code itself is a non-personal campaign identifier, so it's
+            // safe (and useful) to attribute comped signups by it.
+            AnalyticsService.log(.promoCodeRedeemed, [
+                .code: trimmed,
+                .tier: tier.rawValue
+            ])
+            AnalyticsService.refreshUserProperties()
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                 grantedTier = tier
             }

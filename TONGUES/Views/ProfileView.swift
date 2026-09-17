@@ -6,6 +6,9 @@ struct ProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var auth = AuthService.shared
     @State private var subscription = SubscriptionService.shared
+    // Surfaces trial state (is a trial running, when does it convert) and
+    // the route to Apple's manage-subscription sheet.
+    @State private var store = StoreKitClient.shared
     @State private var showPaywall = false
     @State private var profile: UserProfile?
     @State private var isLoading = true
@@ -15,6 +18,9 @@ struct ProfileView: View {
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
     @State private var showFeedbackSheet = false
+    // The pre-cancel interstitial shown before Apple's manage-subscription
+    // sheet. Its "Continue to cancel" is what actually opens Apple's sheet.
+    @State private var showCancellationFlow = false
     @State private var activeEditField: ProfileEditField?
     @State private var showAvatarSourceChooser = false
     @State private var activeImagePickerSource: ImagePickerSource?
@@ -26,6 +32,9 @@ struct ProfileView: View {
     // Streak reminders master switch. Shares the exact UserDefaults key
     // StreakReminderService reads, so this toggle is the single source of
     // truth; its onChange re-runs scheduling.
+    // Mirrors AnalyticsService.isOptedOut so the Settings row re-renders on
+    // toggle (the service reads UserDefaults directly, which isn't observable).
+    @AppStorage("analyticsOptOut") private var analyticsOptOut = false
     @AppStorage("streakRemindersEnabled") private var streakRemindersEnabled = true
     // User-chosen fire times, minutes since midnight, on the same UserDefaults
     // keys the service reads. Defaults match the service's 09:00 / 19:00.
@@ -84,6 +93,12 @@ struct ProfileView: View {
                         title: L("Streak Reminders"),
                         summary: streakRemindersEnabled ? L("On") : L("Off")
                     ) { remindersDetail }
+
+                    settingsLinkRow(
+                        icon: "hand.raised",
+                        title: L("Privacy"),
+                        summary: analyticsOptOut ? L("Analytics off") : L("Analytics on")
+                    ) { privacyDetail }
 
                     // App language is independent of onboarding, so it shows
                     // even before the profile loads.
@@ -191,7 +206,28 @@ struct ProfileView: View {
                 Text(L("This permanently deletes your decks, study history, XP, and profile. This can't be undone."))
             }
             .sheet(isPresented: $showFeedbackSheet) {
-                FeedbackSheet(userName: profile?.onboarding?.name)
+                FeedbackSheet(userName: profile?.onboarding?.name, source: "settings")
+            }
+            .sheet(isPresented: $showCancellationFlow) {
+                CancellationFlowSheet(
+                    onContinueToCancel: {
+                        // Small delay so Apple's sheet doesn't collide with
+                        // this one's dismissal animation.
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(450))
+                            await store.showManageSubscriptions()
+                            // Re-read renewal state on return, so a
+                            // cancellation made just now is reflected at once.
+                            await RetentionService.shared.refreshRenewalState()
+                        }
+                    },
+                    onSendFeedback: {
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(450))
+                            showFeedbackSheet = true
+                        }
+                    }
+                )
             }
             .sheet(isPresented: $showPaywall) {
                 PremiumActionSheet()
@@ -268,23 +304,58 @@ struct ProfileView: View {
     }
 
     // Current plan, one line under the email. Tapping opens the paywall so
-    // the user can change plans from here.
+    // the user can change plans from here. While the 1-day trial is running
+    // we spell out when it converts and offer a direct route to Apple's
+    // manage-subscription sheet, so cancelling is never a scavenger hunt.
     private var subscriptionPlanRow: some View {
-        Button {
-            Haptics.light()
-            showPaywall = true
-        } label: {
-            HStack(spacing: 4) {
-                Text(L("%@ plan", subscription.currentTier.displayName))
-                    .font(.system(size: 13))
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                Haptics.light()
+                showPaywall = true
+            } label: {
+                HStack(spacing: 4) {
+                    Text(L("%@ plan", subscription.currentTier.displayName))
+                        .font(.system(size: 13))
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(.secondary)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            if store.isInTrial, let ends = store.trialExpirationDate {
+                Text(L("Free trial ends %@ · then billing starts", Self.trialDateFormatter.string(from: ends)))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+
+            if subscription.hasAccess {
+                Button {
+                    Haptics.light()
+                    // One interstitial first — asks why, and responds to the
+                    // answer. It always offers "Continue to cancel", which is
+                    // what actually opens Apple's sheet.
+                    showCancellationFlow = true
+                } label: {
+                    Text(L("Manage subscription"))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .underline()
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
     }
+
+    // Short, locale-aware date for the trial-conversion disclosure.
+    private static let trialDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
 
     // Circular avatar that triggers a source-chooser (Take Selfie /
     // Choose from Library) and then UIImagePickerController with
@@ -591,60 +662,49 @@ struct ProfileView: View {
     // "Usage" — this month's consumption of each metered bucket against the
     // current tier's cap, mirroring the limits shown on the paywall. Reads
     // straight off SubscriptionService (refreshed in .task above).
-    private var usageDetail: some View {
-        settingsDetail(title: L("Usage")) {
-            VStack(alignment: .leading, spacing: 16) {
-                // Free is a one-time sample, so free (non-exempt) users get
-                // a dedicated one-off allowance graph sitting on top of the
-                // standard monthly card. Creator-comp redeemers keep the
-                // monthly-refreshing free caps, so they don't see it.
-                if subscription.currentTier == .free, !subscription.isFreeLockoutExempt {
-                    freeAllowanceCard
+    // Analytics opt-out. Honouring this switches the Firebase SDK off
+    // wholesale (not just our custom events), so sessions and screen views
+    // stop too. Kept in Settings rather than buried in a legal page.
+    private var privacyDetail: some View {
+        settingsDetail(title: L("Privacy")) {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: Binding(
+                    get: { !analyticsOptOut },
+                    set: { newValue in
+                        analyticsOptOut = !newValue
+                        AnalyticsService.isOptedOut = !newValue
+                    }
+                )) {
+                    Text(L("Share usage analytics"))
+                        .font(.system(size: 15))
+                        .foregroundStyle(.black)
                 }
-                standardUsageCard
+                .tint(.black)
+
+                Text(L("Helps us see which features are worth building on. We never collect your decks, chats, or the words you study — only which parts of the app get used."))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 
-    // The standard "this month vs current tier cap" card. Shown for every
-    // tier; for a free user it sits below the one-off allowance card above.
+    private var usageDetail: some View {
+        settingsDetail(title: L("Usage")) {
+            standardUsageCard
+        }
+    }
+
+    // The standard "this month vs current tier cap" card.
     private var standardUsageCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             ForEach(SubscriptionBucket.allCases, id: \.self) { bucket in
                 usageRow(bucket)
             }
             Text(L("This month · resets on the 1st"))
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(white: 0.96), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    // The metered buckets that make up the one-off Free allowance. Audio is
-    // unlimited on Free, so it's omitted — only words / sentences /
-    // artifacts have a finite one-time cap.
-    private let freeAllowanceBuckets: [SubscriptionBucket] = [.words, .sentences, .artifacts]
-
-    // One-time Free allowance graph. Free is a single lifetime sample — 100
-    // words / 20 sentences / 5 artifacts across the whole account, never
-    // resetting — so this mirrors the standard bars but reads off cumulative
-    // lifetime usage against the Free caps. Once every bar is full the user
-    // must subscribe to keep generating.
-    private var freeAllowanceCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(L("Free plan · one-time allowance"))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.black)
-            ForEach(freeAllowanceBuckets, id: \.self) { bucket in
-                usageBar(
-                    title: L(bucket.titleLabel),
-                    used: subscription.state.lifetimeUsage(in: bucket),
-                    cap: bucket.cap(for: .free)
-                )
-            }
-            Text(L("Doesn't reset. Subscribe for renewing limits."))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }

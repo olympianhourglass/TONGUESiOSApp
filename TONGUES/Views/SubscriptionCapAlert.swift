@@ -12,11 +12,11 @@ struct SubscriptionCapAlertModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .alert(
-                L("You've hit your monthly limit"),
+                alertTitle,
                 isPresented: alertBinding,
                 presenting: error
             ) { _ in
-                Button(L("Upgrade")) {
+                Button(isLocked ? L("Start Free Trial") : L("Upgrade")) {
                     showPaywall = true
                     error = nil
                 }
@@ -29,6 +29,16 @@ struct SubscriptionCapAlertModifier: ViewModifier {
             .sheet(isPresented: $showPaywall) {
                 PremiumActionSheet()
             }
+    }
+
+    // A user with no entitlement hasn't "hit a monthly limit" — they simply
+    // don't have a subscription yet, so the title has to say that instead.
+    private var isLocked: Bool {
+        !SubscriptionService.shared.hasAccess
+    }
+
+    private var alertTitle: String {
+        isLocked ? L("Subscription required") : L("You've hit your monthly limit")
     }
 
     private var alertBinding: Binding<Bool> {

@@ -231,6 +231,14 @@ struct ChatView: View {
                                 dialect: selectedDialect,
                                 level: selectedLevel
                             )
+                            // Persist the pick as the canonical primary language
+                            // preference in Firestore (companion-app readable),
+                            // not just this conversation.
+                            try? await UserService.setPrimaryLanguagePreference(
+                                language: selectedLanguage,
+                                dialect: selectedDialect,
+                                level: selectedLevel
+                            )
                         }
                     }
                 )

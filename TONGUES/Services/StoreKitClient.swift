@@ -27,10 +27,23 @@ final class StoreKitClient {
     }
 
     private(set) var products: [ProductKey: Product] = [:]
-    private(set) var currentTier: SubscriptionTier = .free
+    private(set) var currentTier: SubscriptionTier = .locked
     private(set) var isPurchasing: Bool = false
     private(set) var isLoadingProducts: Bool = false
     private(set) var lastError: String? = nil
+
+    // Whether this Apple ID may still claim the 1-day introductory free
+    // trial. Eligibility is per subscription GROUP, so one answer covers
+    // every tier/cycle. Starts nil (unknown) and resolves once products
+    // load — the paywall shows trial copy only when it's `true`, so a
+    // returning subscriber is never promised a trial they can't get.
+    private(set) var isEligibleForTrial: Bool? = nil
+
+    // Set while the active entitlement is in its introductory free-trial
+    // period, with the date it converts to paid. Drives the "Trial ends …"
+    // disclosure in Settings so the auto-conversion is never a surprise.
+    private(set) var isInTrial: Bool = false
+    private(set) var trialExpirationDate: Date? = nil
 
     private var updatesTask: Task<Void, Never>? = nil
 
@@ -75,10 +88,48 @@ final class StoreKitClient {
                 map[ProductKey(tier: tier, cycle: cycle)] = product
             }
             self.products = map
+            await refreshTrialEligibility()
         } catch {
             lastError = error.localizedDescription
             print("⚠️ StoreKitClient.loadProducts failed: \(error)")
         }
+    }
+
+    // Asks StoreKit whether this Apple ID can still claim the intro offer.
+    // Eligibility is a property of the subscription group, so any one
+    // product answers for all of them.
+    private func refreshTrialEligibility() async {
+        guard let anyProduct = products.values.first,
+              let subscription = anyProduct.subscription else {
+            isEligibleForTrial = nil
+            return
+        }
+        isEligibleForTrial = await subscription.isEligibleForIntroOffer
+    }
+
+    // Reads the group's renewal state to learn whether the ACTIVE
+    // entitlement is still inside its free trial, and when it converts.
+    private func refreshTrialStatus() async {
+        guard let anyProduct = products.values.first,
+              let subscription = anyProduct.subscription,
+              let statuses = try? await subscription.status else {
+            isInTrial = false
+            trialExpirationDate = nil
+            return
+        }
+        for status in statuses {
+            guard case .verified(let renewalInfo) = status.renewalInfo,
+                  case .verified(let transaction) = status.transaction else { continue }
+            guard status.state == .subscribed || status.state == .inGracePeriod else { continue }
+            if renewalInfo.currentProductID == transaction.productID,
+               transaction.offer?.type == .introductory {
+                isInTrial = true
+                trialExpirationDate = transaction.expirationDate
+                return
+            }
+        }
+        isInTrial = false
+        trialExpirationDate = nil
     }
 
     // MARK: - Purchase
@@ -125,6 +176,43 @@ final class StoreKitClient {
         } catch {
             lastError = error.localizedDescription
             print("⚠️ StoreKitClient.purchase failed: \(error)")
+            return false
+        }
+    }
+
+    // Purchases with an Apple WIN-BACK offer applied — the discounted or free
+    // re-subscribe offer configured in App Store Connect and surfaced to
+    // lapsed subscribers. Separate from `purchase(_:cycle:)` because the offer
+    // has to ride along in the purchase options; everything after that (verify,
+    // mirror the entitlement, finish) is identical.
+    @discardableResult
+    func purchase(
+        product: Product,
+        winBackOffer: Product.SubscriptionOffer
+    ) async -> Bool {
+        guard let tier = SubscriptionProduct.tier(forProductId: product.id) else {
+            lastError = "That plan isn't available right now."
+            return false
+        }
+        isPurchasing = true
+        defer { isPurchasing = false }
+        print("💳 StoreKitClient win-back purchase product=\(product.id) offer=\(winBackOffer.id ?? "?")")
+        do {
+            let result = try await product.purchase(options: [.winBackOffer(winBackOffer)])
+            switch result {
+            case .success(let verification):
+                let transaction = try Self.checkVerified(verification)
+                await recordPurchase(requestedTier: tier, transaction: transaction)
+                await transaction.finish()
+                return true
+            case .userCancelled, .pending:
+                return false
+            @unknown default:
+                return false
+            }
+        } catch {
+            lastError = error.localizedDescription
+            print("⚠️ StoreKitClient win-back purchase failed: \(error)")
             return false
         }
     }
@@ -188,7 +276,7 @@ final class StoreKitClient {
         }
 
         let verifiedAt = Date()
-        print("💳 StoreKitClient.syncEntitlements resolved tier=\(best?.tier.rawValue ?? "free")")
+        print("💳 StoreKitClient.syncEntitlements resolved tier=\(best?.tier.rawValue ?? "locked")")
         if let best {
             await SubscriptionService.shared.applyEntitlement(
                 tier: best.tier,
@@ -199,8 +287,13 @@ final class StoreKitClient {
             currentTier = best.tier
         } else {
             await SubscriptionService.shared.clearEntitlement(verifiedAt: verifiedAt)
-            currentTier = .free
+            currentTier = .locked
         }
+        // Entitlements just changed — re-read whether we're in the trial (and
+        // whether a trial is still claimable) so the paywall and Settings
+        // reflect reality.
+        await refreshTrialStatus()
+        await refreshTrialEligibility()
     }
 
     // Forces the App Store to refresh entitlements (e.g. user signed
@@ -251,6 +344,12 @@ final class StoreKitClient {
     // Opens the system Manage Subscriptions sheet. Required hookup for
     // App Store compliance once a paid subscription is offered.
     func showManageSubscriptions() async {
+        // Opening Apple's manage sheet is the strongest pre-churn signal we
+        // can observe — most cancellations start here.
+        AnalyticsService.log(.manageSubscriptionOpened, [
+            .tier: SubscriptionService.shared.currentTier.rawValue,
+            .isTrial: isInTrial
+        ])
         let scenes = UIApplication.shared.connectedScenes
         guard let scene = scenes.first as? UIWindowScene else { return }
         do {

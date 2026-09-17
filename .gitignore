@@ -30,3 +30,6 @@ GoogleService-Info.plist
 # CocoaPods / Carthage (unused, kept for safety)
 Pods/
 Carthage/Build/
+
+# Sim-capture script backups (ContentView/CreateDeckViewModel snapshots).
+*.bak-simcapture*

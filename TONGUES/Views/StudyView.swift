@@ -48,8 +48,16 @@ struct StudyView: View {
     // makes it fire once, ever; `pendingReviewRequest` is the transient
     // arm set at creation time and consumed on return.
     @Environment(\.requestReview) private var requestReview
-    @AppStorage("didRequestFirstDeckReview") private var didRequestFirstDeckReview = false
     @State private var pendingReviewRequest = false
+    // Owns WHEN we ask for a rating: one ask per install, across every
+    // trigger, and never right after something broke for this user.
+    @State private var reviewPrompts = ReviewPromptCoordinator.shared
+    // Which trigger earned the ask, logged with the prompt.
+    @State private var reviewTrigger: ReviewPromptCoordinator.Trigger = .firstDeck
+    // The neutral "how's it going?" gate, and the feedback composer it routes
+    // an unhappy answer into.
+    @State private var showReviewPrompt = false
+    @State private var showFeedbackSheet = false
     // Catches `SubscriptionError.capExceeded` from the audio cap
     // gate; surfaces it via the shared cap alert + paywall.
     @State private var capError: SubscriptionError?
@@ -169,30 +177,69 @@ struct StudyView: View {
                     initialDirectConversation: createDeckConversation
                 ) {
                     isCreateDeckPresented = false
-                    // First saved deck spends the free-deck grace; the
-                    // next Create New Deck tap will hit the paywall.
                     Task {
-                        await SubscriptionService.shared.markFreeDeckUsed()
                         await vm.loadDecks()
                     }
-                    // First-ever deck creation: arm the review nudge so it
-                    // fires once the sheet dismisses back to the home screen.
-                    if !didRequestFirstDeckReview {
-                        pendingReviewRequest = true
-                    }
+                    // First-ever deck creation: arm the nudge so it fires once
+                    // the sheet dismisses back to the home screen. The
+                    // coordinator has the final say (one ask ever, and not
+                    // after a recent failure) — checked on dismissal below.
+                    pendingReviewRequest = true
                 }
             }
             // The create sheet just dismissed back to home; if this was the
-            // user's first deck, surface Apple's native rating sheet after a
-            // beat so it lands cleanly on the home screen.
+            // user's first deck, ask how it's going after a beat so the
+            // prompt lands cleanly on the home screen. We ask BEFORE
+            // requesting a review so an unhappy user gets a feedback box
+            // instead of being pointed at the public listing.
             .onChange(of: isCreateDeckPresented) { _, presented in
-                guard !presented, pendingReviewRequest, !didRequestFirstDeckReview else { return }
+                guard !presented, pendingReviewRequest else { return }
                 pendingReviewRequest = false
-                didRequestFirstDeckReview = true
+                guard reviewPrompts.shouldAsk(for: .firstDeck) else { return }
+                reviewTrigger = .firstDeck
                 Task {
                     try? await Task.sleep(for: .seconds(1.2))
-                    requestReview()
+                    showReviewPrompt = true
                 }
+            }
+            // A 3-day streak is the strongest positive signal the app has —
+            // the habit stuck. `dailyStreak` is recomputed by loadDecks, so
+            // this observes the value rather than polling.
+            .onChange(of: vm.dailyStreak) { _, streak in
+                guard !showReviewPrompt,
+                      reviewPrompts.shouldAskForStreak(streak) else { return }
+                reviewTrigger = .threeDayStreak
+                Task {
+                    // Longer beat than the deck trigger: this fires on a data
+                    // refresh, so let the home screen settle first.
+                    try? await Task.sleep(for: .seconds(1.8))
+                    showReviewPrompt = true
+                }
+            }
+            // Sentiment gate. Positive → Apple's native rating sheet.
+            // Negative → the feedback composer, pre-tagged with its source.
+            .sheet(isPresented: $showReviewPrompt) {
+                ReviewSentimentPrompt(
+                    trigger: reviewTrigger.rawValue,
+                    onPositive: {
+                        AnalyticsService.log(.appStoreReviewRequested, [.source: reviewTrigger.rawValue])
+                        // A beat so Apple's sheet doesn't fight the dismissal
+                        // animation of the prompt it replaces.
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(450))
+                            requestReview()
+                        }
+                    },
+                    onNegative: {
+                        Task {
+                            try? await Task.sleep(for: .milliseconds(450))
+                            showFeedbackSheet = true
+                        }
+                    }
+                )
+            }
+            .sheet(isPresented: $showFeedbackSheet) {
+                FeedbackSheet(userName: nil, source: "sentiment_prompt")
             }
             .sheet(isPresented: $showPaywall) {
                 PremiumActionSheet()
@@ -255,7 +302,7 @@ struct StudyView: View {
     // free-deck paywall gate. Used by the plain tap (page 0), the
     // long-press quick actions, and the app-icon shortcuts.
     private func openCreateDeck(page: Int, conversation: Bool) {
-        guard subscription.canCreateFreeDeck else {
+        guard subscription.hasAccess else {
             Haptics.medium()
             showPaywall = true
             return

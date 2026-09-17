@@ -10,6 +10,12 @@ struct FeedbackSheet: View {
     // Used to attribute the feedback when the user has a name on file.
     let userName: String?
 
+    // Where this was opened from ("settings", "sentiment_prompt"). Reported
+    // with the analytics events so we can tell whether the sentiment gate is
+    // actually catching unhappy users, or whether feedback only ever comes
+    // from people who go digging in Settings.
+    var source: String = "settings"
+
     @State private var text: String = ""
     @State private var isSubmitting = false
     @State private var didSubmit = false
@@ -75,7 +81,10 @@ struct FeedbackSheet: View {
             } message: {
                 Text(errorMessage ?? "")
             }
-            .onAppear { isEditorFocused = true }
+            .onAppear {
+                isEditorFocused = true
+                AnalyticsService.log(.feedbackOpened, [.source: source])
+            }
         }
     }
 
@@ -121,6 +130,12 @@ struct FeedbackSheet: View {
         defer { isSubmitting = false }
         do {
             try await FeedbackService.submit(text: text, userName: userName)
+            // Length only — never the feedback text itself. The content lives
+            // in Firestore; analytics records that it happened.
+            AnalyticsService.log(.feedbackSubmitted, [
+                .source: source,
+                .characters: text.count
+            ])
             Haptics.success()
             // Brief confirmation state before dismissing so the user
             // can see the send landed — keeps the moment grounded.

@@ -18,6 +18,14 @@ enum MediaCache {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    // Content hash of a binary payload. Used to key DERIVED artifacts (e.g. the
+    // loudness-normalized rendering of a clip) off the exact bytes they came
+    // from, so the expensive derivation runs once per source clip.
+    static func shaKey(data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
     // Returns cached data if present locally or in Firebase Storage.
     // Side effects: hydrates the disk cache on a Firebase hit. `ext` selects
     // the payload type ("mp3" audio by default, "json" for the timestamp

@@ -16,6 +16,9 @@ final class SpeechClient {
     // TTS uses its own willSpeakRange delegate instead). Cancelled whenever
     // playback is stopped or superseded.
     private var highlightTask: Task<Void, Never>?
+    // Stops playback at a preset audio time — used to clip a sentence right
+    // before a hidden fill-in-the-blank answer so it's never voiced.
+    private var clipTask: Task<Void, Never>?
 
     // Fired exactly once when the current utterance finishes playing on its own.
     // Cleared (without firing) when playback is superseded by a new speak() call
@@ -119,6 +122,9 @@ final class SpeechClient {
         appleSynth.stopSpeaking(at: .immediate)
         stopMetering()
         currentSpokenWordRange = nil
+        // A fresh utterance always starts from the top, never "paused".
+        isPaused = false
+        clipTask?.cancel()
         pendingCompletion = onFinish
 
         // Preferred tier: ElevenLabs speaking the TARGET language in a native
@@ -307,22 +313,185 @@ final class SpeechClient {
         await SubscriptionService.shared.reserveTTSCharactersIfAffordable(chars)
     }
 
-    // Public stop — used by ListenSessionView's pause control.
+    // Speaks a full example sentence, optionally CLIPPING playback right before
+    // `hiddenWord` so a fill-in-the-blank card can be heard without giving the
+    // answer away.
+    //
+    // Deliberately synthesizes the WHOLE sentence — one TTS call, which caches
+    // and is reused once the answer is revealed — and trims it locally using
+    // the clip's character timestamps. Voicing a truncated sentence upstream
+    // would be a second, separately-cached generation for the same card.
+    func speakSentence(
+        _ sentence: String,
+        language: String?,
+        hidingWord hiddenWord: String? = nil,
+        rate: Float = 1.0
+    ) {
+        let trimmed = sentence.strippingEmoji().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        pendingCompletion = nil
+        activeTask?.cancel()
+        highlightTask?.cancel()
+        clipTask?.cancel()
+        player?.stop()
+        appleSynth.stopSpeaking(at: .immediate)
+        stopMetering()
+        currentSpokenWordRange = nil
+        isPaused = false
+
+        // Nothing to hide if the answer doesn't appear verbatim (inflected
+        // forms, or the card appended its blank) — the sentence is safe whole.
+        let mustHide = hiddenWord.map { !$0.isEmpty && trimmed.range(of: $0) != nil } ?? false
+        let safePrefix = Self.prefix(of: trimmed, before: mustHide ? hiddenWord : nil)
+
+        guard let language, ElevenLabsClient.isConfigured else {
+            // No native voice — read the safe portion with the on-device voice.
+            speakWithApple(safePrefix, language: language, rate: rate)
+            return
+        }
+
+        isPreparingAudio = true
+        activeTask = Task { [weak self] in
+            guard let self else { return }
+            if let result = await self.nativeElevenLabsTimestamped(for: trimmed, language: language) {
+                if Task.isCancelled { return }
+                // Only play the native clip if we can actually cut it at the
+                // answer — without timings, playing it would leak the answer.
+                let cutoff = mustHide
+                    ? Self.audioTime(startingAt: hiddenWord ?? "", in: trimmed, alignment: result.alignment)
+                    : nil
+                if !mustHide || cutoff != nil {
+                    let audio = await Self.loudnessNormalizedAudio(result.audio)
+                    if Task.isCancelled { return }
+                    self.emitStatus("ElevenLabs native voice (\(language))")
+                    do {
+                        try self.playWithAlignment(
+                            audio: audio,
+                            alignment: result.alignment,
+                            text: trimmed,
+                            rate: rate
+                        )
+                        if let cutoff { self.stopPlayback(at: cutoff) }
+                        return
+                    } catch {
+                        // Playback failed — drop to the on-device voice below.
+                    }
+                }
+            }
+            if Task.isCancelled { return }
+            self.isPreparingAudio = false
+            self.speakWithApple(safePrefix, language: language, rate: rate)
+        }
+    }
+
+    // The sentence up to (not including) the hidden word — what the on-device
+    // voice reads when no trimmable native clip is available.
+    nonisolated private static func prefix(of text: String, before hiddenWord: String?) -> String {
+        guard let hiddenWord, !hiddenWord.isEmpty,
+              let range = text.range(of: hiddenWord) else { return text }
+        return String(text[..<range.lowerBound])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // Audio time (seconds) at which `word` starts speaking, read off the clip's
+    // character timestamps. This is the local cut point that keeps the answer
+    // unheard while still using the single full-sentence generation.
+    nonisolated private static func audioTime(
+        startingAt word: String,
+        in text: String,
+        alignment: ElevenLabsClient.SpeechAlignment?
+    ) -> Double? {
+        guard let alignment,
+              !alignment.characters.isEmpty,
+              let range = text.range(of: word) else { return nil }
+        // The alignment's characters concatenate to the spoken (trimmed) text,
+        // so UTF-16 offsets line up with `text` directly.
+        let target = NSRange(range, in: text).location
+        var offset = 0
+        for (index, character) in alignment.characters.enumerated() {
+            if offset >= target {
+                guard index < alignment.startTimesSeconds.count else { return nil }
+                return alignment.startTimesSeconds[index]
+            }
+            offset += character.utf16.count
+        }
+        return nil
+    }
+
+    // Stops playback exactly at `time`. Polls rather than firing one timed
+    // sleep so the cut stays accurate despite start-up latency, rate changes,
+    // and pauses.
+    private func stopPlayback(at time: TimeInterval) {
+        clipTask?.cancel()
+        clipTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let player = self.player else { return }
+                if self.isPaused {
+                    try? await Task.sleep(for: .milliseconds(60))
+                    continue
+                }
+                guard player.isPlaying else { return }
+                if player.currentTime >= time {
+                    self.stop()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+    }
+
+    // Public stop — discards playback position entirely, so the next `speak`
+    // starts the passage over from the top.
     func stop() {
         pendingCompletion = nil
         activeTask?.cancel()
         highlightTask?.cancel()
+        clipTask?.cancel()
         player?.stop()
         appleSynth.stopSpeaking(at: .immediate)
         currentSpokenWordRange = nil
         isPreparingAudio = false
+        isPaused = false
+    }
+
+    // Suspends the current utterance IN PLACE — unlike `stop()`, the position is
+    // kept so `resume()` picks up exactly where it left off. Both engines
+    // support this natively (AVAudioPlayer.pause / pauseSpeaking(at: .word)).
+    func pause() {
+        guard !isPaused else { return }
+        if let player, player.isPlaying {
+            player.pause()
+            isPaused = true
+        } else if appleSynth.isSpeaking {
+            appleSynth.pauseSpeaking(at: .word)
+            isPaused = true
+        }
+    }
+
+    // Continues a paused utterance from its current position.
+    func resume() {
+        guard isPaused else { return }
+        isPaused = false
+        if let player, !player.isPlaying {
+            player.play()
+        }
+        if appleSynth.isPaused {
+            appleSynth.continueSpeaking()
+        }
     }
 
     // True while audio is actively being produced (Apple TTS, Forvo recording,
     // or ElevenLabs). Used by the listening session's breathing gradient.
+    // Paused playback reads as NOT speaking, even though Apple's synthesizer
+    // keeps reporting `isSpeaking` while suspended.
     var isSpeaking: Bool {
-        appleSynth.isSpeaking || (player?.isPlaying ?? false)
+        !isPaused && (appleSynth.isSpeaking || (player?.isPlaying ?? false))
     }
+
+    // True when an utterance is suspended mid-way and `resume()` would continue
+    // it. Lets a view offer Resume vs. Restart as distinct, obvious choices.
+    private(set) var isPaused = false
 
     // Dedicated path for native-language translation playback. For English
     // it uses ElevenLabs (a natural voice) with an Apple-TTS fallback. For any
@@ -341,6 +510,8 @@ final class SpeechClient {
         player?.stop()
         appleSynth.stopSpeaking(at: .immediate)
         currentSpokenWordRange = nil
+        isPaused = false
+        clipTask?.cancel()
         pendingCompletion = onFinish
 
         let native = AppLanguage.currentNative
@@ -418,9 +589,31 @@ final class SpeechClient {
 
     // Async wrapper that runs the (CPU-bound) normalize off the main actor and
     // always yields playable audio — the original clip if anything goes wrong.
+    //
+    // The normalize is EXPENSIVE for long clips (full MP3 decode → per-sample
+    // scan → PCM re-encode), and it used to re-run on every single play — even
+    // when the source audio came straight from the cache. That made a repeat
+    // read-aloud of a story feel like it was re-fetching. The result is now
+    // cached on disk, keyed by a content hash of the source clip, so the work
+    // happens once per clip and later plays start immediately.
     nonisolated static func loudnessNormalizedAudio(_ data: Data) async -> Data {
         await Task.detached(priority: .userInitiated) {
-            loudnessNormalized(data) ?? data
+            let key = "norm-\(MediaCache.shaKey(data: data))"
+            // A zero-byte "noop" marker means normalizing this clip was a no-op
+            // (already at target), so the original plays as-is — recorded so we
+            // don't repeat the decode just to learn that again.
+            if MediaCache.diskRead(key: key, ext: "noop") != nil {
+                return data
+            }
+            if let cached = MediaCache.diskRead(key: key, ext: "caf") {
+                return cached
+            }
+            guard let normalized = loudnessNormalized(data) else {
+                MediaCache.diskWrite(Data(), key: key, ext: "noop")
+                return data
+            }
+            MediaCache.diskWrite(normalized, key: key, ext: "caf")
+            return normalized
         }.value
     }
 
@@ -546,7 +739,15 @@ final class SpeechClient {
         meteringTask?.cancel()
         meteringTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, let player = self.player, player.isPlaying else { break }
+                guard let self, let player = self.player else { break }
+                // Idle at rest while paused so resuming re-animates the avatar
+                // rather than ending the metering run.
+                if self.isPaused {
+                    self.playbackLevel += (0 - self.playbackLevel) * 0.18
+                    try? await Task.sleep(for: .milliseconds(33))
+                    continue
+                }
+                guard player.isPlaying else { break }
                 player.updateMeters()
                 let norm = Self.normalizedPower(player.averagePower(forChannel: 0))
                 // Ease gently toward the new level so the avatar glides rather
@@ -639,7 +840,14 @@ final class SpeechClient {
 
         highlightTask = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, let player = self.player, player.isPlaying else { break }
+                guard let self, let player = self.player else { break }
+                // Hold the current highlight while paused (instead of tearing it
+                // down) so resuming continues the karaoke from the same word.
+                if self.isPaused {
+                    try? await Task.sleep(for: .milliseconds(80))
+                    continue
+                }
+                guard player.isPlaying else { break }
                 let t = player.currentTime
                 if let idx = Self.lastIndex(of: startTimes, notAfter: t), idx < charOffsets.count {
                     let range = Self.word(in: words, containingUTF16: charOffsets[idx])

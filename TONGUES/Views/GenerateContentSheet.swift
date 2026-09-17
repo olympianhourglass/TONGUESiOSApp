@@ -238,6 +238,11 @@ struct GenerateContentSheet: View {
             await MainActor.run {
                 didSaveArtifact = true
                 Haptics.success()
+                AnalyticsService.log(.artifactSaved, [
+                    .kind: artifact.kind,
+                    .language: deck.language,
+                    .deckId: deck.id ?? ""
+                ])
             }
         } catch let error as SubscriptionError {
             await MainActor.run {
@@ -1461,6 +1466,13 @@ struct GenerateContentSheet: View {
             generatedContent = result.prose
             generatedPairs = result.pairs
             phase = .result
+            AnalyticsService.log(.artifactGenerated, [
+                .kind: kind.rawValue,
+                .language: deck.language,
+                .level: deck.level,
+                .deckId: deck.id ?? "",
+                .count: result.pairs.count
+            ])
             // Signal any curriculum "content" activity that this counts as done
             // (content is on screen; the auto-save below persists it).
             onComplete?()
@@ -1493,9 +1505,20 @@ struct GenerateContentSheet: View {
         } catch let error as SubscriptionError {
             capError = error
             phase = .input
+            AnalyticsService.log(.subscriptionCapHit, [
+                .source: "artifact_generation",
+                .tier: SubscriptionService.shared.currentTier.rawValue,
+                .kind: kind.rawValue
+            ])
         } catch {
             errorText = error.localizedDescription
             phase = .input
+            ReviewPromptCoordinator.shared.noteBadExperience("artifact_generation_failed")
+            AnalyticsService.log(.artifactGenerationFailed, [
+                .kind: kind.rawValue,
+                .language: deck.language,
+                .reason: "\((error as NSError).domain).\((error as NSError).code)"
+            ])
         }
     }
 }
@@ -2192,6 +2215,14 @@ struct WordAuditPanel: View {
             )
             Haptics.success()
             addedSuccess = true
+            // Logged inside the shared panel so it covers every surface that
+            // presents it (generation sheet AND saved-artifact reader) without
+            // duplicating the call. The word itself is user content and is
+            // deliberately not sent.
+            AnalyticsService.log(.wordAddedToDeck, [
+                .language: deck.language,
+                .deckId: deckId
+            ])
             // Hand the saved item back up so the parent can append it
             // to its local deck snapshot — Firestore already has it,
             // but the in-memory @State copy in DeckDetailView needs to

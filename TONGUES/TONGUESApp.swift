@@ -175,6 +175,9 @@ struct TONGUESApp: App {
 
     init() {
         FirebaseApp.configure()
+        // Must follow FirebaseApp.configure() — applies the stored analytics
+        // opt-out and stamps the install date used for cohorting.
+        AnalyticsService.start()
         registerCustomFonts()
         configureAudioSessionForStartupChime()
         // Kick off the StoreKit transaction listener + initial

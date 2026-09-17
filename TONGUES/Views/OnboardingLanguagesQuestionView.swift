@@ -23,12 +23,15 @@ struct OnboardingLanguagesQuestionView: View {
     @State private var subscription = SubscriptionService.shared
     @State private var capError: SubscriptionError?
 
-    // Per-tier ceiling. Free/Beginner/Pro share a 3-language cap;
-    // Max returns Int.max for "unlimited". Driven by the live tier
-    // so a mid-onboarding sign-in + purchase lifts the cap
-    // immediately.
+    // Per-tier ceiling: Standard/Pro allow 3–5, Max is unlimited. This step
+    // runs BEFORE the paywall, so a user with no entitlement yet falls back
+    // to the onboarding allowance rather than the locked tier's zero — they
+    // must be able to choose what they're here to learn. Reading the live
+    // tier means an already-subscribed account still gets its real ceiling.
     private var maxLanguages: Int {
-        subscription.currentTier.maxLanguages
+        subscription.hasAccess
+            ? subscription.currentTier.maxLanguages
+            : SubscriptionTier.onboardingMaxLanguages
     }
 
     private var languageCapCopy: String {

@@ -3,6 +3,13 @@
 Export the consented marketing list from Firestore as CSV, ready to import
 into any email platform (Loops, Mailchimp, Resend, Kit, Beehiiv…).
 
+TWO SOURCES, ONE LIST
+    • iOS app  — users/{uid}/marketing/consent (collection-group query)
+    • website  — marketingContacts/{sha256(email)}, written by
+                 mytongues.com's /api/subscribe route
+    Deduplicated by lowercased address; the app record wins when both exist,
+    because it carries the learner profile used for segmentation.
+
 WHY A SCRIPT AND NOT A SYNC
     Until there's a real audience, a periodic export beats standing up a
     Cloud Function: nothing to deploy, nothing to keep alive, no API key to
@@ -113,6 +120,33 @@ def main() -> None:
         else:
             deliverable.append(row)
 
+    # ---- Website signups (marketingContacts) ----
+    # Deduplicated against the app records above: the app record wins because
+    # it carries language/level for segmentation.
+    seen = {row["email"].lower() for row in deliverable + relay}
+    web_added = 0
+    for doc in db.collection("marketingContacts").where("optIn", "==", True).stream():
+        contact = doc.to_dict() or {}
+        email = (contact.get("email") or "").strip()
+        if not email or email.lower() in seen:
+            continue
+        seen.add(email.lower())
+        web_added += 1
+        row = {
+            "email": email,
+            "firstName": "",
+            "targetLanguage": "",
+            "level": "",
+            "interfaceLanguage": "",
+            "source": contact.get("source") or "website",
+            "consentedAt": _iso(contact.get("optInAt")),
+            "userId": "",
+        }
+        if email.lower().endswith(APPLE_RELAY_SUFFIX):
+            relay.append(row)
+        else:
+            deliverable.append(row)
+
     args.out.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
     wrote = []
@@ -122,6 +156,7 @@ def main() -> None:
         wrote.append(_write(args.out / f"marketing-{stamp}-apple-relay.csv", relay))
 
     print(f"consented contacts : {len(deliverable) + len(relay)}")
+    print(f"  from website     : {web_added}")
     print(f"  standard         : {len(deliverable)}")
     print(f"  apple relay      : {len(relay)}")
     if missing_email:

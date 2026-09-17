@@ -35,6 +35,17 @@ service cloud.firestore {
       }
     }
 
+    // ---- Marketing contacts (website signups) ----
+    // Written ONLY by the website's /api/subscribe route via the Admin SDK,
+    // which bypasses these rules entirely. Denying all client access keeps
+    // the collection from becoming either a spam funnel (anyone could write)
+    // or an address harvest (anyone could read). The iOS app records its own
+    // consent under users/{uid}/marketing/consent, which the per-user rule
+    // above already restricts to the owner.
+    match /marketingContacts/{contactId} {
+      allow read, write: if false;
+    }
+
     // ---- Public deck discovery ----
     // collectionGroup("decks") query, filtered to isPublic == true. Owner
     // CRUD on their own decks is already granted by the per-user rule

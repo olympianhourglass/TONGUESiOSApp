@@ -35,6 +35,9 @@ struct ProfileView: View {
     // Mirrors AnalyticsService.isOptedOut so the Settings row re-renders on
     // toggle (the service reads UserDefaults directly, which isn't observable).
     @AppStorage("analyticsOptOut") private var analyticsOptOut = false
+    // Marketing consent, read from its private subcollection (not the profile
+    // doc, which other signed-in users can read).
+    @State private var marketingOptIn = false
     @AppStorage("streakRemindersEnabled") private var streakRemindersEnabled = true
     // User-chosen fire times, minutes since midnight, on the same UserDefaults
     // keys the service reads. Defaults match the service's 09:00 / 19:00.
@@ -685,6 +688,46 @@ struct ProfileView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+                    .padding(.vertical, 2)
+
+                // Marketing consent, withdrawable at any time — which GDPR
+                // requires and which is also just decent. Reads from the
+                // loaded profile so it reflects the real stored value rather
+                // than local state that could drift.
+                Toggle(isOn: Binding(
+                    get: { marketingOptIn },
+                    set: { newValue in
+                        // Optimistic local update so the toggle doesn't snap
+                        // back while the write is in flight.
+                        marketingOptIn = newValue
+                        Task {
+                            do {
+                                try await UserService.setMarketingOptIn(newValue)
+                                AnalyticsService.log(.marketingOptInSet, [
+                                    .source: "settings",
+                                    .completed: newValue
+                                ])
+                            } catch {
+                                // Never claim a consent state the server
+                                // didn't accept — re-read the truth.
+                                marketingOptIn =
+                                    await UserService.fetchMarketingConsent()?.optIn ?? false
+                            }
+                        }
+                    }
+                )) {
+                    Text(L("Email me tips and product news"))
+                        .font(.system(size: 15))
+                        .foregroundStyle(.black)
+                }
+                .tint(.black)
+
+                Text(L("Occasional emails about new features and learning tips. Unsubscribe any time."))
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1013,6 +1056,8 @@ struct ProfileView: View {
         defer { isLoading = false }
         do {
             profile = try await UserService.fetchProfile()
+            // Consent lives in a private subcollection, so it's a separate read.
+            marketingOptIn = await UserService.fetchMarketingConsent()?.optIn ?? false
         } catch {
             loadError = error.localizedDescription
         }

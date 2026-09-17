@@ -1,0 +1,408 @@
+import Foundation
+import FirebaseAuth
+import FirebaseFirestore
+import Observation
+
+// Subscription state singleton. Fronts the Firestore doc at
+// users/{uid}/subscription/state and exposes the resolved tier +
+// current-month usage to the UI as an @Observable so progress
+// rows and "X / Y left this month" hints refresh live without
+// view-model plumbing.
+//
+// Service pattern mirrors AuthService (@MainActor @Observable
+// .shared). Persistence reads/writes mirror XPService (defensive
+// fetchState, single commit per mutation, merged setData).
+@MainActor
+@Observable
+final class SubscriptionService {
+    static let shared = SubscriptionService()
+
+    // Live local copy of the user's state. UI binds against this.
+    // Refreshed by `refresh()` on launch + after every mutation.
+    private(set) var state: UserSubscriptionState = UserSubscriptionState()
+
+    // Set to `true` while the initial fetch from Firestore is in flight
+    // so views don't flash "0 / X used" before the real numbers land.
+    private(set) var isLoading: Bool = false
+
+    private init() {}
+
+    // MARK: - Month key
+
+    // Stable, locale-independent month key mirroring XPService's
+    // dayKeyFormatter. yyyy-MM in the user's current timezone.
+    private static let monthKeyFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone.current
+        f.dateFormat = "yyyy-MM"
+        return f
+    }()
+
+    static func monthKey(for date: Date) -> String {
+        monthKeyFormatter.string(from: date)
+    }
+
+    var currentMonthKey: String {
+        Self.monthKey(for: Date())
+    }
+
+    // Convenience for views.
+    var currentTier: SubscriptionTier {
+        if UserDefaults.standard.bool(forKey: "tonguesSimCaptureBypass") { return .max }
+        return state.resolvedTier
+    }
+
+    // The single gate for app access. There is no free tier: a user is
+    // either inside an active trial/subscription (or a promo grant) or they
+    // are locked out behind the paywall.
+    var hasAccess: Bool {
+        if UserDefaults.standard.bool(forKey: "tonguesSimCaptureBypass") { return true }
+        return currentTier.grantsAccess
+    }
+
+    // MARK: - Promo codes
+
+    // Validates a user-typed promo code against the in-app table and, on a
+    // match, records the grant on the user's Firestore subscription doc.
+    // The grant lands in promoTier/promoExpiresAt, which `resolvedTier`
+    // layers over the StoreKit tier — so every gated feature unlocks
+    // immediately and the grant survives the launch entitlement sync.
+    // Returns the granted tier. Throws `.invalidCode` for an unknown code,
+    // or a Firestore/auth error if the write fails.
+    @discardableResult
+    func redeemPromoCode(_ input: String) async throws -> SubscriptionTier {
+        guard let match = PromoCode.match(input) else {
+            throw PromoRedemptionError.invalidCode
+        }
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw SubscriptionError.notAuthenticated
+        }
+
+        // Claim a slot against the code's global redemption cap FIRST, so a
+        // capped-out code never grants. This is atomic across all users and
+        // idempotent per account (see claimRedemptionSlot).
+        try await Self.claimRedemptionSlot(
+            code: match.code,
+            uid: uid,
+            maxRedemptions: match.maxRedemptions
+        )
+
+        let now = Date()
+        let expiry = Calendar.current.date(
+            byAdding: .day,
+            value: match.durationDays,
+            to: now
+        ) ?? now
+
+        state.promoTier = match.tier.rawValue
+        state.promoExpiresAt = expiry
+        state.promoCode = match.code
+        state.promoRedeemedAt = now
+        do {
+            try await commit()
+        } catch {
+            // Roll the local optimism back to whatever Firestore actually
+            // holds so the UI never shows an unlock the server rejected.
+            await refresh()
+            throw error
+        }
+        return match.tier
+    }
+
+    // Atomically claims one redemption slot for `code` on behalf of `uid`.
+    // Uses a Firestore transaction over a shared counter doc
+    // (promoCodes/{code}.redeemedCount) plus a per-user ledger doc
+    // (promoCodes/{code}/redemptions/{uid}):
+    //   • If the user already has a ledger doc → idempotent no-op (repeat
+    //     redemptions / reinstalls never consume a second slot).
+    //   • Else if the counter is already at `maxRedemptions` → throws
+    //     `.capReached`.
+    //   • Else writes the ledger doc and bumps the counter by one.
+    // The counter/ledger docs are created lazily on first redemption, so
+    // no App Store Connect or console pre-seeding is required.
+    private static func claimRedemptionSlot(
+        code: String,
+        uid: String,
+        maxRedemptions: Int
+    ) async throws {
+        let codeRef = db.collection("promoCodes").document(code)
+        let redemptionRef = codeRef.collection("redemptions").document(uid)
+
+        _ = try await db.runTransaction { transaction, errorPointer -> Any? in
+            let redemptionSnap: DocumentSnapshot
+            do {
+                redemptionSnap = try transaction.getDocument(redemptionRef)
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+            // Same account re-redeeming — allow, but don't take a new slot.
+            if redemptionSnap.exists { return true }
+
+            let codeSnap: DocumentSnapshot
+            do {
+                codeSnap = try transaction.getDocument(codeRef)
+            } catch let error as NSError {
+                errorPointer?.pointee = error
+                return nil
+            }
+            let count = (codeSnap.data()?["redeemedCount"] as? Int) ?? 0
+            if count >= maxRedemptions {
+                errorPointer?.pointee = PromoRedemptionError.capReached as NSError
+                return nil
+            }
+
+            transaction.setData([
+                "uid": uid,
+                "redeemedAt": FieldValue.serverTimestamp()
+            ], forDocument: redemptionRef)
+            transaction.setData([
+                "redeemedCount": count + 1,
+                "maxRedemptions": maxRedemptions,
+                "updatedAt": FieldValue.serverTimestamp()
+            ], forDocument: codeRef, merge: true)
+            return false
+        }
+    }
+
+    // MARK: - Firestore plumbing
+
+    private static let db = Firestore.firestore()
+
+    private static func docRef() throws -> DocumentReference {
+        guard let uid = Auth.auth().currentUser?.uid else {
+            throw SubscriptionError.notAuthenticated
+        }
+        return db.collection("users")
+            .document(uid)
+            .collection("subscription")
+            .document("state")
+    }
+
+    // Reads the user's subscription state. Missing doc → fresh empty
+    // state (free tier). Decode failure → THROW (XPService pattern) so
+    // we never silently overwrite a real doc with zeros on the next
+    // commit when the schema evolves.
+    static func fetchState() async throws -> UserSubscriptionState {
+        let ref = try docRef()
+        let snap = try await ref.getDocument()
+        guard snap.exists else { return UserSubscriptionState() }
+        return try snap.data(as: UserSubscriptionState.self)
+    }
+
+    // Pulls the latest state down from Firestore and republishes it.
+    // Safe to call on app launch even before the user has signed in —
+    // the auth check inside docRef throws, we swallow it, and the
+    // local state stays at the default free tier until the next call
+    // following a successful sign-in.
+    func refresh() async {
+        guard Auth.auth().currentUser != nil else {
+            state = UserSubscriptionState()
+            return
+        }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            state = try await Self.fetchState()
+        } catch {
+            print("⚠️ SubscriptionService.refresh failed: \(error)")
+        }
+    }
+
+    // MARK: - Cap arithmetic
+
+    // Remaining quota in the given bucket for the current month under
+    // the current tier. Negative results clamp to 0 — over-budget can
+    // happen briefly if the user downgrades mid-month while sitting
+    // above the lower tier's cap.
+    func remaining(in bucket: SubscriptionBucket) -> Int {
+        let cap = bucket.cap(for: currentTier)
+        let used = state.usage(in: bucket, monthKey: currentMonthKey)
+        return Swift.max(0, cap - used)
+    }
+
+    // Throws `.languageCapExceeded` when adding one more language
+    // would exceed the tier's saved-language ceiling. Unlike monthly
+    // buckets, this is a snapshot count, not a per-month counter — the
+    // caller passes the user's current language total.
+    func ensureLanguageSlotAvailable(currentCount: Int) async throws {
+        let max = currentTier.maxLanguages
+        if currentCount >= max {
+            throw SubscriptionError.languageCapExceeded(tier: currentTier, max: max)
+        }
+    }
+
+    // Convenience used by the listen-session call sites: refreshes
+    // tier state, gates on the audio cap, and increments by 1. Wraps
+    // the boilerplate that would otherwise have to live at every
+    // ListenSessionView presentation point.
+    func tryStartAudioSession() async throws {
+        await refresh()
+        try await ensureCapacity(in: .audioSessions, requested: 1)
+        await consume(1, in: .audioSessions)
+    }
+
+    // Throws `.capExceeded` when `requested` is greater than the
+    // remaining quota. Otherwise no-op. Generation call sites use this
+    // pre-flight so the API call is never even fired when over budget.
+    // Async so non-isolated callers (e.g. DeckGenerator) hop to the
+    // MainActor cleanly via `try await`.
+    func ensureCapacity(in bucket: SubscriptionBucket, requested: Int) async throws {
+        // No entitlement → nothing is permitted. The paywall is the only
+        // way forward, and every locked cap is 0 so this is belt-and-braces
+        // against a caller that somehow got past the access gate.
+        guard hasAccess else {
+            throw SubscriptionError.capExceeded(
+                bucket: bucket,
+                tier: currentTier,
+                remaining: 0,
+                requested: requested
+            )
+        }
+
+        let cap = bucket.cap(for: currentTier)
+        // Unlimited buckets (audio on every paid tier, and any paid bucket
+        // that uses Int.max) never block — bail before any arithmetic so a
+        // huge `used` can't overflow the subtraction below.
+        if cap == Int.max { return }
+
+        // Paid tiers meter per calendar month.
+        let used = state.usage(in: bucket, monthKey: currentMonthKey)
+        let remaining = Swift.max(0, cap - used)
+        if requested > remaining {
+            throw SubscriptionError.capExceeded(
+                bucket: bucket,
+                tier: currentTier,
+                remaining: remaining,
+                requested: requested
+            )
+        }
+    }
+
+    // MARK: - Consumption
+
+    // Increments the in-memory + on-disk usage counters. Called on
+    // successful generation/save. Mutation is local-first (so the UI
+    // updates immediately) then merged into Firestore. We re-read on
+    // failure to keep local in sync.
+    func consume(_ amount: Int, in bucket: SubscriptionBucket) async {
+        guard amount > 0 else { return }
+        let monthKey = currentMonthKey
+
+        switch bucket {
+        case .words:         state.wordsByMonthKey[monthKey, default: 0] += amount
+        case .sentences:     state.sentencesByMonthKey[monthKey, default: 0] += amount
+        case .artifacts:     state.artifactsByMonthKey[monthKey, default: 0] += amount
+        case .audioSessions: state.audioSessionsByMonthKey[monthKey, default: 0] += amount
+        }
+
+        do {
+            let ref = try Self.docRef()
+            try await ref.setData(from: state, merge: true)
+        } catch {
+            print("⚠️ SubscriptionService.consume failed: \(error)")
+            await refresh()
+        }
+    }
+
+    // MARK: - ElevenLabs TTS character budget
+
+    // Remaining ElevenLabs characters the user may generate this month before
+    // native-voice TTS falls back to Apple. Reads the live in-memory state — a
+    // soft budget doesn't warrant a Firestore fetch per spoken phrase.
+    func remainingTTSCharacters() -> Int {
+        let cap = currentTier.monthlyTTSCharacters
+        let used = state.ttsCharsByMonthKey[currentMonthKey, default: 0]
+        return Swift.max(0, cap - used)
+    }
+
+    // Check-and-reserve. If `chars` fits the remaining monthly TTS budget,
+    // increment the counter (so two phrases racing for the last of it can't
+    // both spend it) and return true; otherwise return false so the caller
+    // falls back to Apple TTS. Called ONLY on a cache miss — cache hits are
+    // free and never reach here. Reserves optimistically: if the subsequent
+    // API call fails, the small over-count is harmless and self-heals next
+    // month.
+    @discardableResult
+    func reserveTTSCharactersIfAffordable(_ chars: Int) async -> Bool {
+        guard chars > 0 else { return true }
+        guard remainingTTSCharacters() >= chars else { return false }
+        state.ttsCharsByMonthKey[currentMonthKey, default: 0] += chars
+        do {
+            let ref = try Self.docRef()
+            try await ref.setData(from: state, merge: true)
+        } catch {
+            print("⚠️ SubscriptionService.reserveTTSCharacters failed: \(error)")
+        }
+        return true
+    }
+
+    // MARK: - Entitlement application (called by StoreKitClient)
+
+    // Writes the resolved tier through to Firestore. Idempotent: same
+    // transactionId / productId → silent no-op so the StoreKit update
+    // listener can fire repeatedly without churn.
+    func applyEntitlement(
+        tier: SubscriptionTier,
+        productId: String?,
+        transactionId: String?,
+        verifiedAt: Date
+    ) async {
+        let alreadyApplied = state.tier == tier.rawValue
+            && state.activeTransactionId == transactionId
+            && state.activeProductId == productId
+        if alreadyApplied {
+            state.lastVerifiedAt = verifiedAt
+            await commitLogging("applyEntitlement(noop)")
+            return
+        }
+
+        state.tier = tier.rawValue
+        state.activeProductId = productId
+        state.activeTransactionId = transactionId
+        state.lastVerifiedAt = verifiedAt
+        if state.tierStartedAt == nil || tier == .locked {
+            state.tierStartedAt = tier == .locked ? nil : verifiedAt
+        } else if state.activeTransactionId != transactionId {
+            state.tierStartedAt = verifiedAt
+        }
+        print("💳 SubscriptionService: applying tier=\(tier.rawValue) product=\(productId ?? "nil")")
+        await commitLogging("applyEntitlement(\(tier.rawValue))")
+    }
+
+    // Wraps commit() so a Firestore write failure is surfaced rather than
+    // swallowed by `try?`. A silent failure here is what leaves an upgraded
+    // plan looking unchanged (the doc never advances), so it must be loud.
+    private func commitLogging(_ context: String) async {
+        do {
+            try await commit()
+        } catch {
+            print("⚠️ SubscriptionService.commit failed [\(context)]: \(error)")
+        }
+    }
+
+    // Drops the user back to the free tier. Used when StoreKit reports
+    // no active entitlements (e.g. subscription expired, refund).
+    func clearEntitlement(verifiedAt: Date) async {
+        if state.tier == SubscriptionTier.locked.rawValue
+            && state.activeTransactionId == nil
+            && state.activeProductId == nil {
+            state.lastVerifiedAt = verifiedAt
+            await commitLogging("clearEntitlement(noop)")
+            return
+        }
+        state.tier = SubscriptionTier.locked.rawValue
+        state.activeProductId = nil
+        state.activeTransactionId = nil
+        state.tierStartedAt = nil
+        state.lastVerifiedAt = verifiedAt
+        await commitLogging("clearEntitlement")
+    }
+
+    private func commit() async throws {
+        let ref = try Self.docRef()
+        try await ref.setData(from: state, merge: true)
+    }
+}

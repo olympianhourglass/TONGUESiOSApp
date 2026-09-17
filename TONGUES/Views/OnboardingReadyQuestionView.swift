@@ -68,8 +68,37 @@ struct OnboardingReadyQuestionView: View {
                 .padding(.bottom, 32)
             } else {
                 VStack(spacing: 10) {
+                    // Marketing consent. Sits above the Yes button — the last
+                    // deliberate tap in onboarding — because consent has to be
+                    // an affirmative act the user actually sees. Unticked by
+                    // default; the Yes button works either way, so declining
+                    // costs nothing and nothing is bundled into "Yes".
+                    Button {
+                        Haptics.light()
+                        state.marketingOptIn.toggle()
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            Image(systemName: state.marketingOptIn ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 18))
+                                .foregroundStyle(state.marketingOptIn ? .black : Color(white: 0.6))
+                            Text(L("Email me occasional learning tips and product news. No spam, unsubscribe anytime."))
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, 4)
+
                     Button {
                         Haptics.medium()
+                        AnalyticsService.log(.marketingOptInSet, [
+                            .source: "onboarding",
+                            .completed: state.marketingOptIn
+                        ])
                         onNext()
                     } label: {
                         Text(L("Yes"))

@@ -127,6 +127,10 @@ enum AnalyticsService {
         case appStoreReviewRequested    = "appstore_review_requested"
         case feedbackOpened             = "feedback_opened"
         case feedbackSubmitted          = "feedback_submitted"
+        // Marketing-email consent granted or withdrawn. `completed` carries
+        // the resulting value, `source` where it happened — so opt-in rate is
+        // measurable per surface.
+        case marketingOptInSet          = "marketing_opt_in_set"
 
         // Account lifecycle.
         case accountSignedOut           = "account_signed_out"

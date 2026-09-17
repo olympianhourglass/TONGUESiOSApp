@@ -89,9 +89,62 @@ enum UserService {
         }
 
         try await ref.setData(payload, merge: true)
+        // Persist marketing consent to its private subcollection. Only when
+        // the question was actually answered — nil means "never asked", and
+        // writing that would clobber a later Settings change.
+        if let optIn = answers.marketingOptIn {
+            try? await setMarketingOptIn(optIn, source: "onboarding")
+        }
+
         // Keep the on-device cache in lock-step so the next cold start
         // seeds the freshly-saved language preferences instantly.
         cacheOnboarding(answers)
+    }
+
+    // MARK: - Marketing consent
+    //
+    // Lives at `users/{uid}/marketing/consent`, deliberately NOT on the
+    // profile doc: firestore.rules lets any signed-in user read any
+    // `users/{uid}` document, so an address stored there would be visible to
+    // every other user. Subcollections are owner-only.
+
+    private static func marketingDoc(uid: String) -> DocumentReference {
+        userDoc(uid: uid).collection("marketing").document("consent")
+    }
+
+    // Records or withdraws consent. Withdrawal keeps the timestamp and source
+    // (audit trail) but DELETES the stored address, so a later export can't
+    // include someone who opted out.
+    static func setMarketingOptIn(_ optIn: Bool, source: String = "settings") async throws {
+        guard let uid = currentUID else { throw AuthError.notAuthenticated }
+        var payload: [String: Any] = [
+            "optIn": optIn,
+            "optInAt": FieldValue.serverTimestamp(),
+            "source": source
+        ]
+        if optIn, let email = Auth.auth().currentUser?.email {
+            payload["email"] = email
+            payload["isAppleRelay"] = isAppleRelay(email)
+        } else if !optIn {
+            payload["email"] = FieldValue.delete()
+            payload["isAppleRelay"] = FieldValue.delete()
+        }
+        try await marketingDoc(uid: uid).setData(payload, merge: true)
+    }
+
+    // Current consent, or nil when never asked.
+    static func fetchMarketingConsent() async -> MarketingConsent? {
+        guard let uid = currentUID else { return nil }
+        guard let snap = try? await marketingDoc(uid: uid).getDocument(),
+              snap.exists else { return nil }
+        return try? snap.data(as: MarketingConsent.self)
+    }
+
+    // Apple private-relay aliases deliver only if the sending domain is
+    // registered with Apple; otherwise they hard-bounce and damage sender
+    // reputation for the whole list.
+    static func isAppleRelay(_ email: String) -> Bool {
+        email.lowercased().hasSuffix("@privaterelay.appleid.com")
     }
 
     static func fetchProfile() async throws -> UserProfile? {

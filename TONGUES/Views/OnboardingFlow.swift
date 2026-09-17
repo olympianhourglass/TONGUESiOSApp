@@ -15,6 +15,11 @@ final class OnboardingState {
     // The starter-deck titles suggested on the final onboarding page.
     // Captured so they can be auto-generated into the library after sign-up.
     var sampleDecks: [String] = []
+    // Marketing-email consent from the final question. Defaults to FALSE:
+    // valid consent has to be an affirmative action, never a pre-ticked box.
+    // Carried here because the question is asked before sign-in, then
+    // persisted with the rest of the answers once an account exists.
+    var marketingOptIn: Bool = false
 
     func record(answer: String, forQuestion n: Int) {
         let value = answer.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -60,6 +65,7 @@ final class OnboardingState {
             firstUnderstand: firstUnderstand,
             heritageBackground: heritageBackground,
             interests: interests.isEmpty ? nil : interests,
+            marketingOptIn: marketingOptIn,
             completedAt: Date()
         )
     }

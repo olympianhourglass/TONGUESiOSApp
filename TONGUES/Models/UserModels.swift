@@ -49,6 +49,11 @@ struct OnboardingAnswers: Codable, Hashable {
     var firstUnderstand: String?        // What they'd most love to understand right now
     var heritageBackground: String?     // Whether they grew up around the language
     var interests: [String]?            // Selected profession/hobby/custom chips
+    // Explicit marketing-email consent, captured on the final onboarding
+    // question. Nil means never asked (distinct from false = actively
+    // declined), which matters: you may re-ask someone who was never asked,
+    // but not someone who said no.
+    var marketingOptIn: Bool?
     let completedAt: Date
 }
 
@@ -67,6 +72,7 @@ struct UserProfile: Codable, Hashable {
     // Localizer so it's shared across devices / the companion app rather than
     // living only in this install's UserDefaults.
     var interfaceLanguage: String?
+
     // JPEG bytes of the user-uploaded profile avatar. We downscale before
     // writing so a Firestore field stays comfortably under the 1MB
     // document-size limit; the displayed avatar in the app is < 100pt so
@@ -91,4 +97,34 @@ struct PublicUserProfile: Codable, Hashable, Identifiable {
     let avatarImage: Data?
     let bio: String?
     let joinedAt: Date?
+}
+
+
+// Marketing-email consent. Stored at `users/{uid}/marketing/consent` — a
+// SUBCOLLECTION, not the profile doc, because firestore.rules grants every
+// signed-in user read access to any `users/{uid}` document (the app needs
+// that to show friend names and deck authors, and Firestore can't project
+// fields). Subcollections are owner-only, so the stored address is never
+// readable by another user.
+//
+// The export tooling reads these with the Admin SDK via a collection-group
+// query, which bypasses rules.
+struct MarketingConsent: Codable, Hashable {
+    // True = consented. False = actively declined. A MISSING document means
+    // never asked — a meaningful third state, since you may re-ask someone
+    // who was never asked but not someone who said no.
+    var optIn: Bool = false
+    var optInAt: Date? = nil
+    // Snapshot of the address at consent time. Auth remains the source of
+    // truth for login, but a mailing list needs a queryable copy, and the
+    // address someone consented with is the one they expect to hear from.
+    var email: String? = nil
+    // Where consent happened ("onboarding", "settings") — the audit trail if
+    // consent is ever challenged.
+    var source: String? = nil
+    // Apple private-relay alias (@privaterelay.appleid.com). Delivers ONLY if
+    // the sending domain is registered under "Sign in with Apple for Email
+    // Communication"; otherwise it hard-bounces. Flagged so the list can be
+    // segmented before a send rather than after the damage.
+    var isAppleRelay: Bool? = nil
 }
